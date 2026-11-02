@@ -8,12 +8,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"runtime"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/hinshun/vt10x"
 )
 
 type ptyRun struct {
@@ -76,6 +77,45 @@ func readUntil(events <-chan readerEvent, output *[]byte, marker string) (bool, 
 			}
 		case <-deadline.C:
 			return false, fmt.Errorf("PTY read timed out waiting for %q", marker)
+		}
+	}
+}
+
+func readUntilAll(
+	events <-chan readerEvent,
+	output *[]byte,
+	markers []string,
+) (bool, error) {
+	start := len(*output)
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	for {
+		observed := true
+		for _, marker := range markers {
+			if !bytes.Contains((*output)[start:], []byte(marker)) {
+				observed = false
+				break
+			}
+		}
+		if observed {
+			return true, nil
+		}
+		select {
+		case event, ok := <-events:
+			if !ok {
+				return false, nil
+			}
+			if len(event.data) > 0 {
+				*output = append(*output, event.data...)
+			}
+			if event.err != nil {
+				return false, event.err
+			}
+			if event.done {
+				return false, nil
+			}
+		case <-deadline.C:
+			return false, fmt.Errorf("PTY read timed out waiting for %v", markers)
 		}
 	}
 }
@@ -206,14 +246,132 @@ func runEditorSmoke(logPath string) int {
 	return 0
 }
 
-func runResizeSmoke(logPath string) int {
+func runLongOutputSmoke(logPath, scriptPath string) int {
+	const lineCount = 50000
+	absoluteScript, err := filepath.Abs(scriptPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "resolve long output script failed: %v\n", err)
+		return 1
+	}
+	quoted := strings.ReplaceAll(absoluteScript, "'", "'\\''")
+	started := time.Now()
+	run, err := runPTYSession(
+		fmt.Sprintf("exec '%s' %d\r", quoted, lineCount),
+		logPath,
+	)
+	elapsed := time.Since(started).Milliseconds()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	text := string(run.output)
+	lines := strings.Count(text, "QWE-LINE-")
+	countOK := lines == lineCount
+	firstOK := strings.Contains(text, "QWE-LINE-00050000")
+	lastOK := strings.Contains(text, "QWE-LINE-00000001")
+	passed := run.exitCode == 0 && countOK && firstOK && lastOK
+	fmt.Printf(
+		`{"contract":"qwe-poc/0.1","feature":"long-output","implementation":"go","exit_code":%d,"bytes":%d,"lines":%d,"elapsed_ms":%d,"checks":{"count":%t,"first":%t,"last":%t}}`+"\n",
+		run.exitCode,
+		len(run.output),
+		lines,
+		elapsed,
+		countOK,
+		firstOK,
+		lastOK,
+	)
+	if !passed {
+		return 1
+	}
+	return 0
+}
+
+func runVTSmoke(logPath, fixturePath string) int {
+	absoluteFixture, err := filepath.Abs(fixturePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "resolve VT fixture failed: %v\n", err)
+		return 1
+	}
+	quoted := strings.ReplaceAll(absoluteFixture, "'", "'\\''")
+	run, err := runPTYSession(
+		fmt.Sprintf("exec python3 '%s'\r", quoted),
+		logPath,
+	)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
+	terminal := vt10x.New(vt10x.WithSize(80, 24))
+	_, _ = terminal.Write(run.output)
+	text := terminal.String()
+	cell00 := terminal.Cell(0, 0)
+	cellR := terminal.Cell(0, 1)
+	cellB := terminal.Cell(4, 1)
+	cellErase := terminal.Cell(1, 2)
+	cursor := terminal.Cursor()
+	cjkCell := terminal.Cell(0, 3)
+	rows := strings.Split(text, "\n")
+	baseText := strings.Contains(text, "QWE_BASE")
+	colors := cellR.Char == 'R' && cellR.FG == vt10x.Red &&
+		cellB.Char == 'B' &&
+		(cellB.FG == vt10x.Blue || cellB.FG == vt10x.LightBlue)
+	erase := cell00.Char == 'Q' && cellErase.Char == ' '
+	cursorOK := cursor.X == 10 && cursor.Y == 5 && !terminal.CursorVisible()
+	unicodeOK := strings.Contains(text, "中文") &&
+		strings.Contains(text, "😀")
+	wideOK := cjkCell.Char == '中' && len(rows) > 3 &&
+		strings.HasPrefix(rows[3], "中文 😀 e")
+	titleOK := terminal.Title() == "QWE_VT_TEST"
+	t05 := run.exitCode == 0 && baseText && colors && erase && cursorOK && titleOK
+	t06 := run.exitCode == 0 && unicodeOK && wideOK
+	fmt.Printf(
+		`{"contract":"qwe-poc/0.1","feature":"vt-state","implementation":"go","exit_code":%d,"checks":{"base_text":%t,"colors":%t,"erase":%t,"cursor":%t,"title":%t,"unicode":%t,"wide":%t}}`+"\n",
+		run.exitCode,
+		baseText,
+		colors,
+		erase,
+		cursorOK,
+		titleOK,
+		unicodeOK,
+		wideOK,
+	)
+	if !t05 || !t06 {
+		fmt.Fprintf(
+			os.Stderr,
+			"VT diagnostic: row1=%q/%d %q/%d erase=%q cjk=%q row3=%q cursor=%d,%d visible=%t\n",
+			cellR.Char,
+			cellR.FG,
+			cellB.Char,
+			cellB.FG,
+			cellErase.Char,
+			cjkCell.Char,
+			func() string {
+				if len(rows) > 3 {
+					return rows[3]
+				}
+				return ""
+			}(),
+			cursor.X,
+			cursor.Y,
+			terminal.CursorVisible(),
+		)
+		return 1
+	}
+	return 0
+}
+
+func runResizeSmoke(logPath, watcherPath string) int {
+	absoluteWatcher, err := filepath.Abs(watcherPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "resolve resize watcher failed: %v\n", err)
+		return 1
+	}
 	command := exec.Command("sh")
 	command.Env = append(
 		os.Environ(),
 		"TERM=xterm-256color",
-		"QWE_READY_MARKER=QWE_RESIZE_READY",
-		"QWE_WINCH_MARKER=QWE_WINCH",
-		"QWE_SIZE_MARKER=QWE_SIZE",
+		"QWE_WATCHER_PATH="+absoluteWatcher,
 	)
 
 	terminal, err := pty.StartWithSize(command, &pty.Winsize{Rows: 24, Cols: 80})
@@ -224,18 +382,10 @@ func runResizeSmoke(logPath string) int {
 	defer terminal.Close()
 
 	events := startReader(terminal)
-	_, err = terminal.WriteString(
-		"trap 'printf \"%s \" \"$QWE_WINCH_MARKER\"; stty size' WINCH; " +
-			"printf '%s ' \"$QWE_READY_MARKER\"; stty size; " +
-			"while IFS= read -r line; do " +
-			"[ \"$line\" = exit ] && break; " +
-			"printf '%s ' \"$QWE_SIZE_MARKER\"; stty size; done; exit 0\r",
-	)
-	if err != nil {
+	if _, err := terminal.WriteString(`exec python3 "$QWE_WATCHER_PATH"` + "\r"); err != nil {
 		fmt.Fprintf(os.Stderr, "PTY write failed: %v\n", err)
 		return 1
 	}
-
 	var output []byte
 	ready, err := readUntil(events, &output, "QWE_RESIZE_READY 24 80")
 	if err != nil {
@@ -266,7 +416,6 @@ func runResizeSmoke(logPath string) int {
 	winchChecks := true
 	sizeLabels := make([]string, 0, len(sizes))
 	for _, size := range sizes {
-		start := len(output)
 		if err := pty.Setsize(terminal, &pty.Winsize{
 			Rows: size.rows,
 			Cols: size.cols,
@@ -274,19 +423,32 @@ func runResizeSmoke(logPath string) int {
 			fmt.Fprintf(os.Stderr, "PTY resize failed: %v\n", err)
 			return 1
 		}
-		if runtime.GOOS == "darwin" {
-			if err := syscall.Kill(-command.Process.Pid, syscall.SIGWINCH); err != nil {
-				fmt.Fprintf(os.Stderr, "PTY resize notification failed: %v\n", err)
-				return 1
-			}
-		}
 		if _, err := terminal.WriteString("check\r"); err != nil {
 			fmt.Fprintf(os.Stderr, "PTY write failed: %v\n", err)
 			return 1
 		}
+		time.Sleep(10 * time.Millisecond)
+		if err := syscall.Kill(-command.Process.Pid, syscall.SIGWINCH); err != nil {
+			fmt.Fprintf(os.Stderr, "PTY resize notification failed: %v\n", err)
+			return 1
+		}
+		time.Sleep(10 * time.Millisecond)
+		if err := syscall.Kill(-command.Process.Pid, syscall.SIGWINCH); err != nil {
+			fmt.Fprintf(os.Stderr, "PTY resize notification failed: %v\n", err)
+			return 1
+		}
 
 		sizeMarker := fmt.Sprintf("QWE_SIZE %d %d", size.rows, size.cols)
-		observedSize, err := readUntil(events, &output, sizeMarker)
+		winchMarker := fmt.Sprintf(
+			"QWE_WINCH %d %d",
+			size.rows,
+			size.cols,
+		)
+		observed, err := readUntilAll(
+			events,
+			&output,
+			[]string{sizeMarker, winchMarker},
+		)
 		if err != nil {
 			if logPath != "" {
 				_ = os.WriteFile(logPath, output, 0o644)
@@ -301,14 +463,8 @@ func runResizeSmoke(logPath string) int {
 			)
 			return 1
 		}
-		winchMarker := fmt.Sprintf(
-			"QWE_WINCH %d %d",
-			size.rows,
-			size.cols,
-		)
-		observedWinch := bytes.Contains(output[start:], []byte(winchMarker))
-		sizeChecks = sizeChecks && observedSize
-		winchChecks = winchChecks && observedWinch
+		sizeChecks = sizeChecks && observed
+		winchChecks = winchChecks && observed
 		sizeLabels = append(
 			sizeLabels,
 			fmt.Sprintf("%dx%d", size.rows, size.cols),
@@ -382,12 +538,51 @@ func main() {
 			logPath = os.Args[2]
 		}
 		os.Exit(runEditorSmoke(logPath))
+	case "long-output-smoke":
+		logPath := ""
+		if len(os.Args) > 2 {
+			logPath = os.Args[2]
+		}
+		scriptPath := "poc/test-data/scripts/long_output.sh"
+		if len(os.Args) > 3 {
+			scriptPath = os.Args[3]
+		}
+		os.Exit(runLongOutputSmoke(logPath, scriptPath))
+	case "vt-smoke":
+		logPath := ""
+		if len(os.Args) > 2 {
+			logPath = os.Args[2]
+		}
+		fixturePath := "poc/test-data/scripts/vt_fixture.py"
+		if len(os.Args) > 3 {
+			fixturePath = os.Args[3]
+		}
+		os.Exit(runVTSmoke(logPath, fixturePath))
 	case "resize-smoke":
 		logPath := ""
 		if len(os.Args) > 2 {
 			logPath = os.Args[2]
 		}
-		os.Exit(runResizeSmoke(logPath))
+		watcherPath := "poc/test-data/scripts/resize_watcher.py"
+		if len(os.Args) > 3 {
+			watcherPath = os.Args[3]
+		}
+		os.Exit(runResizeSmoke(logPath, watcherPath))
+	case "daemon":
+		if len(os.Args) != 4 {
+			fmt.Fprintln(os.Stderr, "usage: qwe-poc daemon <socket-path> <sqlite-path>")
+			os.Exit(2)
+		}
+		if err := runRuntimeDaemon(os.Args[2], os.Args[3]); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon failed: %v\n", err)
+			os.Exit(1)
+		}
+	case "task-start":
+		os.Exit(runRuntimeClient("START"))
+	case "task-status":
+		os.Exit(runRuntimeClient("STATUS"))
+	case "task-stop":
+		os.Exit(runRuntimeClient("STOP"))
 	case "help":
 		fmt.Println(
 			"usage: qwe-poc <probe|pty-smoke|editor-smoke|resize-smoke> [log-path]",

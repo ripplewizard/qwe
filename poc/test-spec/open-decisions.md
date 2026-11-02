@@ -6,19 +6,19 @@ behavior.
 
 ## P0 — Blocking
 
-1. **Automation contract:** define how tests create PTYs, write input, resize,
-   detach/attach, start tasks, query state, and collect logs.
+1. **Automation contract:** PTY, task lifecycle, IPC, and evidence collection
+   are defined for the current slice. Detach/attach and lease commands remain.
 2. **Terminal state baseline:** select a comparable VT state model and record
    which emulator/parser component provides it.
 3. **Session recovery boundary:** specify separately what happens to the child
    process, PTY, shell state, terminal screen, and input stream after daemon
    restart.
-4. **Task identity:** define a stable identity beyond PID, including process
-   start time or an equivalent platform mechanism.
-5. **IPC errors:** define request IDs, timeouts, idempotency keys, and
-   transport-versus-business error responses.
-6. **Result ownership:** decide whether raw logs and binaries are retained
-   locally or published as CI artifacts.
+4. **Task identity:** the POC uses PID plus Linux `/proc` start time or macOS
+   `ps` start time. Produce a more precise macOS token before production.
+5. **IPC errors:** the POC contract defines request IDs, idempotency keys, and
+   JSON success/error responses for START, STATUS, and STOP.
+6. **Result ownership:** structured results stay in Git candidates; raw logs
+   and local environment captures remain ignored local evidence.
 
 ## Measurement Definitions
 
@@ -32,7 +32,7 @@ behavior.
 ## Deferred Until Evidence Exists
 
 - Final terminal parser or emulator choice.
-- Final TaskIdentity representation.
+- Final TaskIdentity representation beyond the POC process-start token.
 - GPU attribution method when no reliable hardware association exists.
 - Production CLI/TUI design.
 

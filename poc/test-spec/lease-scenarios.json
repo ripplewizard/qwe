@@ -1,0 +1,83 @@
+{
+  "lease_ms": 300,
+  "scenarios": [
+    {
+      "id": "claim",
+      "steps": [
+        ["CLAIM", "client-a"],
+        ["STATUS"]
+      ],
+      "expect": {
+        "state": "owned",
+        "owner": "client-a"
+      }
+    },
+    {
+      "id": "touch",
+      "steps": [
+        ["CLAIM", "client-a"],
+        ["WAIT", 200],
+        ["TOUCH", "client-a"],
+        ["WAIT", 200],
+        ["STATUS"]
+      ],
+      "expect": {
+        "state": "owned",
+        "owner": "client-a"
+      }
+    },
+    {
+      "id": "release",
+      "steps": [
+        ["CLAIM", "client-a"],
+        ["RELEASE", "client-a"],
+        ["CLAIM", "client-b"]
+      ],
+      "expect": {
+        "state": "owned",
+        "owner": "client-b"
+      }
+    },
+    {
+      "id": "expiry-takeover",
+      "steps": [
+        ["CLAIM", "client-a"],
+        ["WAIT", 400],
+        ["TAKEOVER", "client-b"],
+        ["TOUCH", "client-a"]
+      ],
+      "expect": {
+        "state": "owned",
+        "owner": "client-b",
+        "last_error": "not_owner"
+      }
+    },
+    {
+      "id": "output-is-not-input",
+      "steps": [
+        ["CLAIM", "client-a"],
+        ["EMIT_OUTPUT", 400],
+        ["STATUS"]
+      ],
+      "expect": {
+        "state": "expired",
+        "owner": null
+      }
+    },
+    {
+      "id": "heartbeat-extends",
+      "steps": [
+        ["CLAIM", "client-a"],
+        ["HEARTBEAT", "client-a", 200],
+        ["WAIT", 200],
+        ["HEARTBEAT", "client-a", 200],
+        ["WAIT", 200],
+        ["STATUS"]
+      ],
+      "expect": {
+        "state": "owned",
+        "owner": "client-a"
+      }
+    }
+  ]
+}

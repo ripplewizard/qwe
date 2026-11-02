@@ -6,7 +6,7 @@ baseline, Rust/Go/C++ POC, and extension boundaries.
 
 ## Project Structure & Module Organization
 
-- `docs/qwe-design-baseline-v0.2.md` defines the current product baseline.
+- `docs/qwe-design-baseline-v0.2.md` defines the product baseline.
 - `docs/qwe-technical-poc-specification-v0.1.md` defines the POC plan.
 - `docs/qwe-extension-architecture-notes-v0.1.md` records extension boundaries.
 - `Justfile` is the only POC orchestration entry point.
@@ -14,7 +14,7 @@ baseline, Rust/Go/C++ POC, and extension boundaries.
   specifications, evidence, and reports stay outside language directories.
 - Production source must wait for the recorded language decision.
 
-Keep POC behavior comparable and identify reused components and owned
+Keep POC behavior comparable and identify reused components and
 responsibilities in each implementation.
 
 ## Build, Test, and Development Commands
@@ -24,13 +24,14 @@ just doctor              # Check environment and toolchains
 just build all           # Build Rust, Go, and C++
 just verify-skeleton     # Verify all POC skeletons
 just verify-fixtures     # Verify shared test workloads
-just test-macos          # Run macOS-specific terminal tests
-just test-linux          # Run Linux-specific tests on Linux
+just test-macos          # Run the full macOS suite
+just test-linux          # Run the full Linux suite
+just test-linux-remote   # Run on istoria and pull Linux evidence
 ```
 
 ## Coding Style & Naming Conventions
 
-Use UTF-8 Markdown with descriptive headings and language-tagged code fences.
+Use UTF-8 Markdown with clear headings and language-tagged code fences.
 Preserve established design identifiers such as `D###` and `PD###`. Name new
 documents by topic, for example `docs/ipc-protocol.md`.
 

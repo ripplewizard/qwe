@@ -61,7 +61,7 @@ must include reviewer notes; a passing process exit alone is not evidence.
 | DX01 | CLI and IPC | Auto | Time-to-demo, dependencies, errors |
 | DX02 | SQLite and TUI | Both | Persistence check and basic screen |
 | DX03 | Build and test workflow | Auto | Build/test time and failure clarity |
-| XP01 | Platform matrix | Both | Linux baseline and macOS secondary |
+| XP01 | Platform matrix | Both | Fedora x86_64 baseline and macOS secondary |
 | EX01 | Extension boundaries | Review | Model-impact review against registry |
 | MC01 | Dependency health | Review | Licenses, activity, releases, risks |
 

@@ -7,4 +7,11 @@ poc/results/**/environment/
 poc/results/**/*.pty.log
 poc/results/**/*.stdout.json
 poc/results/**/*.stderr.log
+poc/results/**/*.jsonl
+poc/results/**/*.task.log
+poc/results/**/*.daemon.log
+poc/results/**/*.sqlite
+poc/results/**/*.sqlite-*
+poc/results/**/*.json
+poc/results/**/runtime-*/
 

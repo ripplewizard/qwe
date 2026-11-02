@@ -1,16 +1,20 @@
 # QWE POC Workspace
 
-Status: Stage 1 started. This directory implements the workspace and evidence
-rules defined by
+Status: Stage 1 runtime recovery slice implemented. This directory implements
+the workspace and evidence rules defined by
 [`qwe-technical-poc-specification-v0.1.md`](../docs/qwe-technical-poc-specification-v0.1.md).
 Implemented capabilities are PTY creation, Shell launch, initial and dynamic
-window sizes, SIGWINCH delivery, and a Neovim rendering preflight. Terminal
-Emulator state, Daemon, and recovery behavior are not implemented yet.
+window sizes, SIGWINCH delivery, a Neovim rendering preflight, Unix socket IPC,
+SQLite TaskInstance persistence, process-group control, daemon crash recovery,
+concurrent IPC, corruption rejection, SQLite write-error handling, and
+50,000-line PTY output integrity. Native ANSI/VT screen state and Unicode are
+covered; attach/detach, sustained load, and resource monitoring remain.
 
 ## Baseline Decisions
 
-- Official comparison runs use Ubuntu 24.04 LTS, x86_64, at least 4 cores,
-  8 GB RAM, and SSD storage.
+- Official comparison runs use Fedora Linux x86_64, at least 4 cores, 8 GB RAM,
+  and SSD storage. Record the exact Fedora release; the current reference is
+  Fedora 35.
 - macOS ARM64 is a development and preflight environment only. Its results do
   not enter the primary comparison unless the decision report says otherwise.
 - Rust, Go, and C++ receive identical test definitions and workloads.
@@ -57,13 +61,16 @@ just verify-skeleton         # Verify build and contract parity
 just verify-fixtures         # Verify shared workload behavior
 just terminal-smoke-macos    # Run terminal tests on macOS
 just terminal-smoke-linux    # Run terminal tests on Linux
+just runtime-smoke-macos     # Run process/IPC/SQLite/recovery tests on macOS
+just runtime-smoke-linux     # Run process/IPC/SQLite/recovery tests on Linux
 just test-macos              # Run the macOS validation suite
 just test-linux              # Run the Linux validation suite
+just test-linux-remote       # Run the suite on istoria and pull results
 ```
 
 The `pty-smoke` command creates a real operating-system PTY, launches `sh`,
 sets an initial 24x80 window, sends a command, and reads the captured output.
-It is valid T01/T02 preflight evidence on macOS, but not an official Linux
+It is valid T01/T02 preflight evidence on macOS, but not an official Fedora
 comparison score.
 
 The `editor-smoke` command runs Neovim in the same PTY, renders a marker sourced
@@ -71,16 +78,22 @@ from the child environment, and exits. It is recorded as T03 `blocked` until
 manual cursor, scrolling, full-screen, and interaction checks are complete.
 
 The `resize-smoke` command changes the PTY through 120x40, 80x24, 160x50, and
-40x15 and verifies both `stty size` and the WINCH trap. macOS requires explicit
-SIGWINCH delivery after `TIOCSWINSZ`; Linux uses the native PTY behavior.
+40x15 and verifies both `stty size` and the WINCH trap. The implementation sends
+a real SIGWINCH to the foreground process group after `TIOCSWINSZ` so behavior
+does not depend on platform-specific automatic signal delivery.
 
 Results are written to `results/macos-<arch>/` or `results/linux-<arch>/`.
 Runs under the old `results/<language>/` layout predate this split and are
 macOS preflight evidence only.
 
+The runtime contract is defined in
+[`test-spec/runtime-contract.md`](test-spec/runtime-contract.md). It covers a
+real three-level process tree, idempotent task start, daemon SIGKILL, restart
+recovery, stable process identity, SQLite history, and process-group stop.
+
 ## Execution Order
 
-1. Validate the official Linux environment and freeze toolchain versions.
+1. Validate the Fedora x86_64 environment and freeze toolchain versions.
 2. Complete Stage 1: PTY, Shell, Process Group, Signal, IPC, and SQLite.
 3. Execute Terminal Runtime tests first; record automated and manual evidence.
 4. Run Process and Daemon reliability tests, including crash recovery.

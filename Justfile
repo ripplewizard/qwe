@@ -2,6 +2,8 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 poc := justfile_directory() / "poc"
+linux_host := env_var_or_default("QWE_LINUX_HOST", "istoria")
+linux_repo := env_var_or_default("QWE_LINUX_REPO", "project/uranus/bianca")
 
 default:
     @just --list
@@ -58,6 +60,8 @@ doctor:
     printf 'rustc=%s\n' "$(version_of rustc)"
     printf 'cargo=%s\n' "$(version_of cargo)"
     printf 'go=%s\n' "$(if command -v go >/dev/null 2>&1; then go version; else printf missing; fi)"
+    printf 'gopath=%s\n' "$(if command -v go >/dev/null 2>&1; then go env GOPATH 2>/dev/null || printf unavailable; else printf missing; fi)"
+    printf 'gocache=%s\n' "$(if command -v go >/dev/null 2>&1; then go env GOCACHE 2>/dev/null || printf unavailable; else printf missing; fi)"
     printf 'cxx=%s\n' "$(version_of c++)"
     printf 'cmake=%s\n' "$(version_of cmake)"
     printf 'ninja=%s\n' "$(version_of ninja)"
@@ -88,10 +92,12 @@ build language="all":
     }
 
     build_go() {
-      mkdir -p "$build_root/go"
+      mkdir -p "$build_root/go/gopath" "$build_root/go/cache"
       (
         cd "$root/go"
-        go build -trimpath -o "$build_root/go/qwe-poc" ./cmd/qwe-poc
+        GOPATH="$build_root/go/gopath" \
+        GOCACHE="$build_root/go/cache" \
+          go build -trimpath -o "$build_root/go/qwe-poc" ./cmd/qwe-poc
       )
     }
 
@@ -271,6 +277,41 @@ terminal-smoke-linux:
     }
     exec just --justfile "{{ justfile() }}" _terminal-smoke "linux-$(uname -m)"
 
+runtime-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) platform="macos-$(uname -m)" ;;
+      Linux) platform="linux-$(uname -m)" ;;
+      *) printf 'unsupported platform: %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    exec just --justfile "{{ justfile() }}" _runtime-smoke "$platform"
+
+runtime-smoke-macos:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Darwin" ] || {
+      printf 'macOS runtime smoke must run on Darwin\n' >&2
+      exit 2
+    }
+    exec just --justfile "{{ justfile() }}" _runtime-smoke "macos-$(uname -m)"
+
+runtime-smoke-linux:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'Linux runtime smoke must run on Linux\n' >&2
+      exit 2
+    }
+    exec just --justfile "{{ justfile() }}" _runtime-smoke "linux-$(uname -m)"
+
+sync-linux-results:
+    rsync -az "{{ linux_host }}:{{ linux_repo }}/poc/results/linux-x86_64/" "{{ poc }}/results/linux-x86_64/"
+
+test-linux-remote:
+    ssh "{{ linux_host }}" "TERM=dumb zsh -lic 'cd {{ linux_repo }} && just test-linux'"
+    just --justfile "{{ justfile() }}" sync-linux-results
+
 _terminal-smoke platform:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -279,21 +320,32 @@ _terminal-smoke platform:
     platform="{{ platform }}"
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     run_id="$stamp-$$"
-    source_commit="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || printf uncommitted)"
+    if git -C "$repo_root" rev-parse --verify HEAD >/dev/null 2>&1; then
+      source_commit="$(git -C "$repo_root" rev-parse --short HEAD)"
+      if ! git -C "$repo_root" diff --quiet HEAD --; then
+        source_commit="$source_commit-dirty"
+      fi
+    else
+      source_commit="uncommitted"
+    fi
     os_name="$(uname -s)"
     architecture="$(uname -m)"
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    toolchain_value="$(printf 'rust=%s; go=%s; cxx=%s' \
+      "$(rustc --version 2>/dev/null || printf unknown)" \
+      "$(go version 2>/dev/null || printf unknown)" \
+      "$(c++ --version 2>/dev/null | sed -n '1p' || printf unknown)")"
     failed=0
     results_root="$root/results/$platform"
 
     case "$platform" in
       macos-*)
-        platform_limitation="macOS preflight run; not an official Linux comparison score"
-        resize_limitation="macOS requires explicit SIGWINCH delivery after TIOCSWINSZ"
+        platform_limitation="macOS preflight run; not an official Fedora x86_64 comparison score"
+        resize_limitation="PTY resize sends an explicit SIGWINCH to the foreground process group"
         ;;
       linux-*)
-        platform_limitation="Linux run; confirm this environment matches the official comparison baseline"
-        resize_limitation="Linux resize behavior was observed through the native PTY driver"
+        platform_limitation="Fedora Linux x86_64 target; verify Fedora release and source cleanliness before final scoring"
+        resize_limitation="PTY resize sends an explicit SIGWINCH to the foreground process group"
         ;;
       *)
         printf 'unsupported result platform: %s\n' "$platform" >&2
@@ -520,6 +572,7 @@ _terminal-smoke platform:
       start_ms="$(python3 -c 'import time; print(time.time_ns() // 1_000_000)')"
       set +e
       "$root/build/$language/qwe-poc" resize-smoke "$resize_raw_file" \
+        "$root/test-data/scripts/resize_watcher.py" \
         >"$resize_stdout_file" 2>"$resize_stderr_file"
       resize_binary_status=$?
       set -e
@@ -617,9 +670,214 @@ _terminal-smoke platform:
           ]
         }' >"$resize_result_file"
 
+      long_raw_name="T10-$run_id.pty.log"
+      long_stdout_name="T10-$run_id.stdout.json"
+      long_stderr_name="T10-$run_id.stderr.log"
+      long_raw_file="$result_dir/$long_raw_name"
+      long_stdout_file="$result_dir/$long_stdout_name"
+      long_stderr_file="$result_dir/$long_stderr_name"
+      long_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      long_start_ms="$(python3 -c 'import time; print(time.time_ns() // 1_000_000)')"
+      set +e
+      "$root/build/$language/qwe-poc" long-output-smoke "$long_raw_file" \
+        "$root/test-data/scripts/long_output.sh" \
+        >"$long_stdout_file" 2>"$long_stderr_file"
+      long_binary_status=$?
+      set -e
+      long_end_ms="$(python3 -c 'import time; print(time.time_ns() // 1_000_000)')"
+      long_duration_ms=$((long_end_ms - long_start_ms))
+      long_summary="$(cat "$long_stdout_file")"
+      long_summary_valid=false
+      if printf '%s' "$long_summary" | jq -e \
+        --arg language "$language" \
+        '.feature == "long-output" and
+         .implementation == $language and
+         .exit_code == 0 and
+         .lines == 50000 and
+         .checks.count == true and
+         .checks.first == true and
+         .checks.last == true' >/dev/null; then
+        long_summary_valid=true
+      fi
+      long_lines="$(grep -c 'QWE-LINE-' "$long_raw_file" 2>/dev/null || true)"
+      long_markers_valid=false
+      if [ "$long_lines" -eq 50000 ] &&
+         grep -Fq 'QWE-LINE-00050000' "$long_raw_file" &&
+         grep -Fq 'QWE-LINE-00000001' "$long_raw_file"; then
+        long_markers_valid=true
+      fi
+      long_status=fail
+      if [ "$long_binary_status" -eq 0 ] &&
+         [ "$long_summary_valid" = true ] &&
+         [ "$long_markers_valid" = true ]; then
+        long_status=pass
+      else
+        failed=1
+      fi
+      if [ -n "$long_summary" ] &&
+         printf '%s' "$long_summary" | jq -e . >/dev/null 2>&1; then
+        long_metrics="$(printf '%s' "$long_summary" | jq -c \
+          '{bytes, lines, elapsed_ms}')"
+        long_checks="$(printf '%s' "$long_summary" | jq -c '.checks')"
+      else
+        long_metrics='{}'
+        long_checks='{}'
+      fi
+      long_result_file="$result_dir/T10-$source_commit-$run_id.json"
+      jq -n \
+        --arg language "$language" \
+        --arg status "$long_status" \
+        --arg source_commit "$source_commit" \
+        --arg os "$os_name" \
+        --arg architecture "$architecture" \
+        --arg toolchain "$toolchain_value" \
+        --arg command "poc/build/$language/qwe-poc long-output-smoke $long_raw_file" \
+        --arg started_at "$long_started_at" \
+        --argjson duration_ms "$long_duration_ms" \
+        --argjson metrics "$long_metrics" \
+        --argjson checks "$long_checks" \
+        --arg raw "poc/results/$platform/$language/$long_raw_name" \
+        --arg stdout "poc/results/$platform/$language/$long_stdout_name" \
+        --arg stderr "poc/results/$platform/$language/$long_stderr_name" \
+        --arg environment_record "poc/results/$platform/environment/$run_id.txt" \
+        --arg platform_limitation "$platform_limitation" \
+        '{
+          case_id: "T10",
+          language: $language,
+          status: $status,
+          source_commit: $source_commit,
+          environment: {
+            os: $os,
+            architecture: $architecture,
+            toolchain: $toolchain,
+            environment_record: $environment_record
+          },
+          command: $command,
+          started_at: $started_at,
+          duration_ms: $duration_ms,
+          metrics: $metrics,
+          checks: $checks,
+          evidence: [$raw, $stdout, $stderr],
+          known_limitations: [
+            $platform_limitation,
+            "Single-run throughput is not yet a stable performance benchmark"
+          ]
+        }' >"$long_result_file"
+
+      vt_raw_name="T05-T06-$run_id.pty.log"
+      vt_stdout_name="T05-T06-$run_id.stdout.json"
+      vt_stderr_name="T05-T06-$run_id.stderr.log"
+      vt_raw_file="$result_dir/$vt_raw_name"
+      vt_stdout_file="$result_dir/$vt_stdout_name"
+      vt_stderr_file="$result_dir/$vt_stderr_name"
+      vt_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      vt_start_ms="$(python3 -c 'import time; print(time.time_ns() // 1_000_000)')"
+      set +e
+      "$root/build/$language/qwe-poc" vt-smoke "$vt_raw_file" \
+        "$root/test-data/scripts/vt_fixture.py" \
+        >"$vt_stdout_file" 2>"$vt_stderr_file"
+      vt_binary_status=$?
+      set -e
+      vt_end_ms="$(python3 -c 'import time; print(time.time_ns() // 1_000_000)')"
+      vt_duration_ms=$((vt_end_ms - vt_start_ms))
+      vt_summary="$(cat "$vt_stdout_file")"
+
+      t05_status=fail
+      if [ "$vt_binary_status" -eq 0 ] &&
+         printf '%s' "$vt_summary" | jq -e \
+           --arg language "$language" \
+           '.feature == "vt-state" and
+            .implementation == $language and
+            .exit_code == 0 and
+            .checks.base_text == true and
+            .checks.colors == true and
+            .checks.erase == true and
+            .checks.cursor == true' >/dev/null; then
+        t05_status=pass
+      else
+        failed=1
+      fi
+      t06_status=fail
+      if [ "$vt_binary_status" -eq 0 ] &&
+         printf '%s' "$vt_summary" | jq -e \
+           --arg language "$language" \
+           '.feature == "vt-state" and
+            .implementation == $language and
+            .exit_code == 0 and
+            .checks.unicode == true and
+            .checks.wide == true' >/dev/null; then
+        t06_status=pass
+      else
+        failed=1
+      fi
+      if [ -n "$vt_summary" ] &&
+         printf '%s' "$vt_summary" | jq -e . >/dev/null 2>&1; then
+        vt_metrics="$(printf '%s' "$vt_summary" | jq -c \
+          --argjson bytes "$(wc -c <"$vt_raw_file" | tr -d ' ')" \
+          '{bytes:$bytes}')"
+      else
+        vt_metrics='{}'
+      fi
+      for vt_case in T05 T06; do
+        vt_result_file="$result_dir/$vt_case-$source_commit-$run_id.json"
+        if [ "$vt_case" = T05 ]; then
+          vt_status="$t05_status"
+          vt_checks="$(printf '%s' "$vt_summary" | jq -c \
+            '.checks | {base_text, colors, erase, cursor}' 2>/dev/null ||
+            printf '{}')"
+          vt_limitation="SGR color, line erase, and cursor state covered; title and alternate-screen behavior remain"
+        else
+          vt_status="$t06_status"
+          vt_checks="$(printf '%s' "$vt_summary" | jq -c \
+            '.checks | {unicode, wide}' 2>/dev/null || printf '{}')"
+          vt_limitation="CJK, emoji, and one combining sequence covered; broader grapheme shaping remains manual"
+        fi
+        jq -n \
+          --arg case_id "$vt_case" \
+          --arg language "$language" \
+          --arg status "$vt_status" \
+          --arg source_commit "$source_commit" \
+          --arg os "$os_name" \
+          --arg architecture "$architecture" \
+          --arg toolchain "$toolchain_value" \
+          --arg command "poc/build/$language/qwe-poc vt-smoke $vt_raw_file" \
+          --arg started_at "$vt_started_at" \
+          --argjson duration_ms "$vt_duration_ms" \
+          --argjson metrics "$vt_metrics" \
+          --argjson checks "$vt_checks" \
+          --arg raw "poc/results/$platform/$language/$vt_raw_name" \
+          --arg stdout "poc/results/$platform/$language/$vt_stdout_name" \
+          --arg stderr "poc/results/$platform/$language/$vt_stderr_name" \
+          --arg environment_record "poc/results/$platform/environment/$run_id.txt" \
+          --arg platform_limitation "$platform_limitation" \
+          --arg limitation "$vt_limitation" \
+          '{
+            case_id: $case_id,
+            language: $language,
+            status: $status,
+            source_commit: $source_commit,
+            environment: {
+              os: $os,
+              architecture: $architecture,
+              toolchain: $toolchain,
+              environment_record: $environment_record
+            },
+            command: $command,
+            started_at: $started_at,
+            duration_ms: $duration_ms,
+            metrics: $metrics,
+            checks: $checks,
+            evidence: [$raw, $stdout, $stderr],
+            known_limitations: [$platform_limitation, $limitation]
+          }' >"$vt_result_file"
+      done
+
       printf 'terminal smoke %-4s %s\n' "$language" "$case_status"
       printf 'editor smoke   %-4s %s\n' "$language" "$editor_status"
       printf 'resize smoke   %-4s %s\n' "$language" "$resize_status"
+      printf 'long output    %-4s %s\n' "$language" "$long_status"
+      printf 'VT state       %-4s T05=%s T06=%s\n' \
+        "$language" "$t05_status" "$t06_status"
     done
 
     if [ "$failed" -ne 0 ]; then
@@ -663,9 +921,663 @@ _terminal-smoke platform:
     printf 'result structure verification PASS (%s results)\n' "$result_count"
     printf 'terminal smoke verification PASS\n'
 
+_runtime-smoke platform:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ poc }}"
+    repo_root="$(CDPATH= cd -- "$root/.." && pwd)"
+    platform="{{ platform }}"
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    run_id="$stamp-$$"
+    if git -C "$repo_root" rev-parse --verify HEAD >/dev/null 2>&1; then
+      source_commit="$(git -C "$repo_root" rev-parse --short HEAD)"
+      if ! git -C "$repo_root" diff --quiet HEAD --; then
+        source_commit="$source_commit-dirty"
+      fi
+    else
+      source_commit="uncommitted"
+    fi
+    os_name="$(uname -s)"
+    architecture="$(uname -m)"
+    results_root="$root/results/$platform"
+    environment_dir="$results_root/environment"
+    mkdir -p "$environment_dir"
+    environment_file="$environment_dir/runtime-$run_id.txt"
+    just --justfile "{{ justfile() }}" doctor >"$environment_file"
+    just --justfile "{{ justfile() }}" build all
+
+    case "$platform" in
+      macos-*)
+        platform_limitation="macOS preflight run; not an official Fedora x86_64 comparison score"
+        identity_limitation="macOS process start token currently has one-second resolution"
+        ;;
+      linux-*)
+        platform_limitation="Fedora Linux x86_64 target; verify release and source cleanliness before final scoring"
+        identity_limitation="Linux process start token uses /proc start time"
+        ;;
+      *)
+        printf 'unsupported result platform: %s\n' "$platform" >&2
+        exit 2
+        ;;
+    esac
+
+    toolchain="$(printf 'rust=%s; go=%s; cxx=%s' \
+      "$(rustc --version 2>/dev/null || printf unknown)" \
+      "$(go version 2>/dev/null || printf unknown)" \
+      "$(c++ --version 2>/dev/null | sed -n '1p' || printf unknown)")"
+
+    write_runtime_result() {
+      local case_id="$1"
+      local status="$2"
+      local checks="$3"
+      local result_file="$result_dir/$case_id-$source_commit-$run_id.json"
+      jq -n \
+        --arg case_id "$case_id" \
+        --arg language "$language" \
+        --arg status "$status" \
+        --arg source_commit "$source_commit" \
+        --arg os "$os_name" \
+        --arg architecture "$architecture" \
+        --arg toolchain "$toolchain" \
+        --arg command "runtime contract: daemon -> task-start/status/stop -> SIGKILL -> restart" \
+        --arg started_at "$started_at" \
+        --argjson duration_ms "$duration_ms" \
+        --argjson metrics "$metrics" \
+        --argjson checks "$checks" \
+        --arg environment_record "poc/results/$platform/environment/runtime-$run_id.txt" \
+        --arg platform_limitation "$platform_limitation" \
+        --arg identity_limitation "$identity_limitation" \
+        --arg initial "$evidence_initial" \
+        --arg duplicate "$evidence_duplicate" \
+        --arg before "$evidence_before" \
+        --arg after "$evidence_after" \
+        --arg stop "$evidence_stop" \
+        --arg task_log "$evidence_task_log" \
+        --arg daemon_log "$evidence_daemon_log" \
+        --arg database "$evidence_database" \
+        --arg concurrency "$evidence_concurrency" \
+        --arg disconnect "$evidence_disconnect" \
+        --arg corrupt_log "$evidence_corrupt_log" \
+        --arg corrupt_db "$evidence_corrupt_db" \
+        --arg persistence_log "$evidence_persistence_log" \
+        --arg edge_log "$evidence_edge_log" \
+        --arg long_run_log "$evidence_long_run_log" \
+        '{
+          case_id: $case_id,
+          language: $language,
+          status: $status,
+          source_commit: $source_commit,
+          environment: {
+            os: $os,
+            architecture: $architecture,
+            toolchain: $toolchain,
+            environment_record: $environment_record
+          },
+          command: $command,
+          started_at: $started_at,
+          duration_ms: $duration_ms,
+          metrics: $metrics,
+          checks: $checks,
+          evidence: [
+            $initial, $duplicate, $before, $after, $stop,
+            $task_log, $daemon_log, $database,
+            $concurrency, $disconnect, $corrupt_log, $corrupt_db,
+            $persistence_log, $edge_log, $long_run_log
+          ],
+          known_limitations: [
+            $platform_limitation,
+            $identity_limitation,
+            "Async task exit codes are not yet persisted",
+            "SQLite lock contention, disk-full, and upgrade compatibility are not covered"
+          ]
+        }' >"$result_file"
+    }
+
+    failed=0
+    for language in rust go cpp; do
+      result_dir="$results_root/$language"
+      runtime_dir="$result_dir/runtime-$run_id"
+      mkdir -p "$runtime_dir"
+      socket="/tmp/qwe-runtime-$language-$$.sock"
+      database="$runtime_dir/tasks.sqlite"
+      task_log="$runtime_dir/task.log"
+      daemon_log="$runtime_dir/daemon.log"
+      binary="$root/build/$language/qwe-poc"
+      daemon_pid=""
+      task_pgid=""
+      started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      start_ms="$(python3 -c 'import time; print(time.time_ns() // 1_000_000)')"
+
+      cleanup_runtime() {
+        if [ -n "$task_pgid" ]; then
+          kill -TERM -- "-$task_pgid" 2>/dev/null || true
+        fi
+        if [ -n "$daemon_pid" ]; then
+          kill -TERM "$daemon_pid" 2>/dev/null || true
+          wait "$daemon_pid" 2>/dev/null || true
+        fi
+        rm -f "$socket"
+      }
+      trap cleanup_runtime EXIT
+
+      wait_ready() {
+        for _ in $(seq 1 100); do
+          if [ -n "$("$binary" task-status "$socket" __ready__ 2>/dev/null || true)" ]; then
+            return 0
+          fi
+          sleep 0.05
+        done
+        return 1
+      }
+
+      QWE_PROCESS_TEST_ENV=expected "$binary" daemon "$socket" "$database" \
+        >"$daemon_log" 2>&1 &
+      daemon_pid=$!
+      wait_ready
+      "$binary" task-start \
+        "$socket" recovery-key "$task_log" \
+        "$root/test-data/scripts/spawn_tree.sh" 3 300 \
+        >"$runtime_dir/start-initial.jsonl"
+      initial="$(cat "$runtime_dir/start-initial.jsonl")"
+      task_id="$(printf '%s' "$initial" | jq -r '.task_id')"
+      task_pid="$(printf '%s' "$initial" | jq -r '.pid')"
+      task_pgid="$(printf '%s' "$initial" | jq -r '.pgid')"
+      initial_pgid="$task_pgid"
+      start_token="$(printf '%s' "$initial" | jq -r '.start_token')"
+
+      "$binary" task-start \
+        "$socket" recovery-key "$task_log" \
+        "$root/test-data/scripts/spawn_tree.sh" 3 300 \
+        >"$runtime_dir/start-duplicate.jsonl"
+      duplicate="$(cat "$runtime_dir/start-duplicate.jsonl")"
+
+      "$binary" task-status "$socket" "$task_id" \
+        >"$runtime_dir/status-before.jsonl"
+      before="$(cat "$runtime_dir/status-before.jsonl")"
+
+      for _ in $(seq 1 100); do
+        [ "$(grep -c '^QWE-PROCESS' "$task_log" 2>/dev/null || true)" -ge 3 ] && break
+        sleep 0.02
+      done
+      process_tree_lines="$(
+        grep -c '^QWE-PROCESS' "$task_log" 2>/dev/null || true
+      )"
+      [ "$process_tree_lines" -ge 3 ]
+
+      kill -KILL "$daemon_pid"
+      set +e
+      wait "$daemon_pid" 2>/dev/null
+      set -e
+      daemon_pid=""
+      alive_after_crash=false
+      if kill -0 -- "-$task_pgid" 2>/dev/null; then
+        alive_after_crash=true
+      fi
+
+      QWE_PROCESS_TEST_ENV=expected "$binary" daemon "$socket" "$database" \
+        >>"$daemon_log" 2>&1 &
+      daemon_pid=$!
+      wait_ready
+      recovered=false
+      if "$binary" task-status "$socket" "$task_id" \
+        >"$runtime_dir/status-after.jsonl" &&
+         jq -e '.ok == true and .state == "running"' \
+           "$runtime_dir/status-after.jsonl" >/dev/null; then
+        recovered=true
+      fi
+      after="$(cat "$runtime_dir/status-after.jsonl")"
+      identity_preserved=false
+      if printf '%s' "$after" | jq -e \
+        --arg task_id "$task_id" \
+        --argjson pid "$task_pid" \
+        --argjson pgid "$task_pgid" \
+        --arg token "$start_token" \
+        '.ok == true and
+         .state == "running" and
+         .task_id == $task_id and
+         .pid == $pid and
+         .pgid == $pgid and
+         .start_token == $token' >/dev/null; then
+        identity_preserved=true
+      fi
+
+      concurrency_dir="$runtime_dir/concurrency"
+      mkdir -p "$concurrency_dir"
+      client_pids=()
+      for request_index in $(seq 1 20); do
+        "$binary" task-status "$socket" "$task_id" \
+          >"$concurrency_dir/status-$request_index.jsonl" 2>&1 &
+        client_pids+=("$!")
+        "$binary" task-start \
+          "$socket" recovery-key "$task_log" \
+          "$root/test-data/scripts/spawn_tree.sh" 3 300 \
+          >"$concurrency_dir/start-$request_index.jsonl" 2>&1 &
+        client_pids+=("$!")
+      done
+      concurrent_clients_ok=true
+      for client_pid in "${client_pids[@]}"; do
+        if ! wait "$client_pid"; then
+          concurrent_clients_ok=false
+        fi
+      done
+      concurrent_payload_ok=true
+      for response_file in "$concurrency_dir"/*.jsonl; do
+        if ! jq -e \
+          --arg task_id "$task_id" \
+          --argjson pid "$task_pid" \
+          '.ok == true and .task_id == $task_id and .pid == $pid' \
+          "$response_file" >/dev/null; then
+          concurrent_payload_ok=false
+        fi
+      done
+      concurrent_ok=false
+      if [ "$concurrent_clients_ok" = true ] &&
+         [ "$concurrent_payload_ok" = true ]; then
+        concurrent_ok=true
+      fi
+
+      long_run_dir="$runtime_dir/long-run"
+      mkdir -p "$long_run_dir"
+      rss_before="$(ps -o rss= -p "$daemon_pid" | tr -d ' ')"
+      long_run_requests_ok=true
+      for request_index in $(seq 1 100); do
+        "$binary" task-status "$socket" "$task_id" \
+          >"$long_run_dir/status-$request_index.jsonl" 2>&1 || {
+          long_run_requests_ok=false
+          break
+        }
+        jq -e '.ok == true and .state == "running"' \
+          "$long_run_dir/status-$request_index.jsonl" >/dev/null || {
+          long_run_requests_ok=false
+          break
+        }
+        sleep 0.02
+      done
+      rss_after="$(ps -o rss= -p "$daemon_pid" | tr -d ' ')"
+      long_run_daemon_alive=false
+      kill -0 "$daemon_pid" 2>/dev/null && long_run_daemon_alive=true
+      long_run_ok=false
+      if [ "$long_run_requests_ok" = true ] &&
+         [ "$long_run_daemon_alive" = true ]; then
+        long_run_ok=true
+      fi
+
+      disconnect_sent=false
+      if python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(sys.argv[1]); s.sendall(b"STATUS\tpartial"); s.close()' "$socket"; then
+        disconnect_sent=true
+      fi
+      disconnect_after_ok=false
+      "$binary" task-status "$socket" "$task_id" \
+        >"$runtime_dir/client-disconnect.log" 2>&1 || true
+      if jq -e '.ok == true and .state == "running"' \
+          "$runtime_dir/client-disconnect.log" >/dev/null; then
+        disconnect_after_ok=true
+      fi
+      disconnect_ok=false
+      if [ "$disconnect_sent" = true ] &&
+         [ "$disconnect_after_ok" = true ]; then
+        disconnect_ok=true
+      fi
+
+      "$binary" task-stop "$socket" "$task_id" \
+        >"$runtime_dir/stop.jsonl"
+      stop="$(cat "$runtime_dir/stop.jsonl")"
+      group_stopped=false
+      for _ in $(seq 1 100); do
+        if ! kill -0 -- "-$task_pgid" 2>/dev/null; then
+          group_stopped=true
+          break
+        fi
+        sleep 0.02
+      done
+      [ "$group_stopped" = true ]
+      task_pgid=""
+
+      edge_dir="$runtime_dir/edge"
+      mkdir -p "$edge_dir"
+
+      "$binary" task-start \
+        "$socket" p01-key "$edge_dir/p01.log" \
+        sh -c 'printf "QWE_SINGLE_OK\n"; exit 0' \
+        >"$edge_dir/p01-start.jsonl"
+      p01_id="$(jq -r '.task_id' "$edge_dir/p01-start.jsonl")"
+      p01_state=""
+      for _ in $(seq 1 100); do
+        "$binary" task-status "$socket" "$p01_id" \
+          >"$edge_dir/p01-status.jsonl" 2>&1 || true
+        p01_state="$(jq -r '.state // empty' "$edge_dir/p01-status.jsonl")"
+        [ "$p01_state" = "exited" ] && break
+        sleep 0.02
+      done
+      p01_ok=false
+      if [ "$p01_state" = "exited" ] &&
+         grep -Fq 'QWE_SINGLE_OK' "$edge_dir/p01.log"; then
+        p01_ok=true
+      fi
+
+      "$binary" task-start \
+        "$socket" p05-key "$edge_dir/p05.log" \
+        "$root/test-data/scripts/child_crash.sh" fail \
+        >"$edge_dir/p05-start.jsonl"
+      p05_id="$(jq -r '.task_id' "$edge_dir/p05-start.jsonl")"
+      p05_state=""
+      for _ in $(seq 1 100); do
+        "$binary" task-status "$socket" "$p05_id" \
+          >"$edge_dir/p05-status.jsonl" 2>&1 || true
+        p05_state="$(jq -r '.state // empty' "$edge_dir/p05-status.jsonl")"
+        [ "$p05_state" = "exited" ] && break
+        sleep 0.02
+      done
+      p05_ok=false
+      if [ "$p05_state" = "exited" ] &&
+         grep -Fq 'QWE-CHILD-Crash' "$edge_dir/p05.log"; then
+        p05_ok=true
+      fi
+
+      "$binary" task-start \
+        "$socket" p06-key "$edge_dir/p06.log" \
+        sh -c 'sleep 30 & echo "QWE_CHILD_PID=$!"; exit 0' \
+        >"$edge_dir/p06-start.jsonl"
+      p06_id="$(jq -r '.task_id' "$edge_dir/p06-start.jsonl")"
+      p06_pgid="$(jq -r '.pgid' "$edge_dir/p06-start.jsonl")"
+      p06_state=""
+      for _ in $(seq 1 100); do
+        "$binary" task-status "$socket" "$p06_id" \
+          >"$edge_dir/p06-status.jsonl" 2>&1 || true
+        p06_state="$(jq -r '.state // empty' "$edge_dir/p06-status.jsonl")"
+        [ "$p06_state" = "exited" ] && break
+        sleep 0.02
+      done
+      p06_child_pid="$(
+        sed -n 's/^QWE_CHILD_PID=//p' "$edge_dir/p06.log" | tail -n 1
+      )"
+      p06_child_alive=false
+      if [ -n "$p06_child_pid" ] &&
+         kill -0 "$p06_child_pid" 2>/dev/null; then
+        p06_child_alive=true
+      fi
+      p06_ok=false
+      if [ "$p06_state" = "exited" ] &&
+         [ "$p06_child_alive" = true ]; then
+        p06_ok=true
+      fi
+      kill -TERM -- "-$p06_pgid" 2>/dev/null || true
+      for _ in $(seq 1 100); do
+        kill -0 -- "-$p06_pgid" 2>/dev/null || break
+        sleep 0.02
+      done
+      kill -KILL -- "-$p06_pgid" 2>/dev/null || true
+
+      "$binary" task-start \
+        "$socket" p11-key "$edge_dir/p11.log" \
+        sh -c 'printf "QWE_CWD=%s\n" "$(pwd)"; printf "QWE_ENV=%s\n" "$QWE_PROCESS_TEST_ENV"' \
+        >"$edge_dir/p11-start.jsonl"
+      p11_id="$(jq -r '.task_id' "$edge_dir/p11-start.jsonl")"
+      p11_state=""
+      for _ in $(seq 1 100); do
+        "$binary" task-status "$socket" "$p11_id" \
+          >"$edge_dir/p11-status.jsonl" 2>&1 || true
+        p11_state="$(jq -r '.state // empty' "$edge_dir/p11-status.jsonl")"
+        [ "$p11_state" = "exited" ] && break
+        sleep 0.02
+      done
+      p11_ok=false
+      if [ "$p11_state" = "exited" ] &&
+         grep -Fq "QWE_CWD=$repo_root" "$edge_dir/p11.log" &&
+         grep -Fq 'QWE_ENV=expected' "$edge_dir/p11.log"; then
+        p11_ok=true
+      fi
+
+      sqlite3 "$database" \
+        "CREATE TRIGGER reject_insert BEFORE INSERT ON tasks BEGIN SELECT RAISE(ABORT, 'injected persistence failure'); END;"
+      "$binary" task-start \
+        "$socket" persistence-failure-key "$runtime_dir/persistence-failure-task.log" \
+        "$root/test-data/scripts/spawn_tree.sh" 2 300 \
+        >"$runtime_dir/sqlite-write-failure.jsonl" 2>&1 || true
+      sqlite3 "$database" "DROP TRIGGER reject_insert;"
+      persistence_error_explicit=false
+      if jq -e '.ok == false and (.message | contains("injected persistence failure"))' \
+          "$runtime_dir/sqlite-write-failure.jsonl" >/dev/null; then
+        persistence_error_explicit=true
+      fi
+      persistence_recovered=false
+      "$binary" task-status "$socket" "$task_id" \
+        >"$runtime_dir/sqlite-write-recovery.jsonl" 2>&1 || true
+      if jq -e '.ok == true and .state == "stopped"' \
+          "$runtime_dir/sqlite-write-recovery.jsonl" >/dev/null; then
+        persistence_recovered=true
+      fi
+
+      idempotent=false
+      if printf '%s' "$duplicate" | jq -e \
+        --arg task_id "$task_id" \
+        --argjson pid "$task_pid" \
+        '.ok == true and .created == false and
+         .task_id == $task_id and .pid == $pid' >/dev/null; then
+        idempotent=true
+      fi
+      ipc_ok=false
+      if printf '%s' "$initial" | jq -e '.ok == true and .created == true' \
+          >/dev/null &&
+         printf '%s' "$before" | jq -e '.ok == true and .state == "running"' \
+          >/dev/null &&
+         printf '%s' "$stop" | jq -e '.ok == true and .state == "stopped"' \
+          >/dev/null; then
+        ipc_ok=true
+      fi
+      db_state="$(
+        sqlite3 "$database" "select state from tasks where id='$task_id';"
+      )"
+      task_records="$(
+        sqlite3 "$database" "select count(*) from tasks where idempotency_key='recovery-key';"
+      )"
+      history_ok=false
+      if [ "$db_state" = "stopped" ] && [ "$task_records" -eq 1 ]; then
+        history_ok=true
+      fi
+
+      corrupt_socket="/tmp/qwe-corrupt-$language-$$.sock"
+      corrupt_database="$runtime_dir/corrupt.sqlite"
+      corrupt_log="$runtime_dir/corrupt-daemon.log"
+      printf 'not a sqlite database\n' >"$corrupt_database"
+      "$binary" daemon "$corrupt_socket" "$corrupt_database" \
+        >"$corrupt_log" 2>&1 &
+      corrupt_pid=$!
+      corrupt_rejected=false
+      for _ in $(seq 1 100); do
+        if ! kill -0 "$corrupt_pid" 2>/dev/null; then
+          corrupt_rejected=true
+          break
+        fi
+        sleep 0.02
+      done
+      if [ "$corrupt_rejected" != true ]; then
+        kill -TERM "$corrupt_pid" 2>/dev/null || true
+      fi
+      set +e
+      wait "$corrupt_pid" 2>/dev/null
+      corrupt_exit=$?
+      set -e
+      rm -f "$corrupt_socket"
+      if [ "$corrupt_exit" -eq 0 ] || [ ! -s "$corrupt_log" ]; then
+        corrupt_rejected=false
+      fi
+
+      duration_ms=$((
+        $(python3 -c 'import time; print(time.time_ns() // 1_000_000)') -
+        start_ms
+      ))
+      metrics="$(
+        jq -nc \
+          --argjson pid "$task_pid" \
+          --argjson pgid "$initial_pgid" \
+          --argjson depth "$process_tree_lines" \
+          --argjson records "$task_records" \
+          --argjson rss_before "$rss_before" \
+          --argjson rss_after "$rss_after" \
+          '{pid: $pid, pgid: $pgid, process_tree_lines: $depth,
+            task_records: $records, concurrent_requests: 40,
+            daemon_rss_kib_before: $rss_before, daemon_rss_kib_after: $rss_after}'
+      )"
+      evidence_initial="poc/results/$platform/$language/runtime-$run_id/start-initial.jsonl"
+      evidence_duplicate="poc/results/$platform/$language/runtime-$run_id/start-duplicate.jsonl"
+      evidence_before="poc/results/$platform/$language/runtime-$run_id/status-before.jsonl"
+      evidence_after="poc/results/$platform/$language/runtime-$run_id/status-after.jsonl"
+      evidence_stop="poc/results/$platform/$language/runtime-$run_id/stop.jsonl"
+      evidence_task_log="poc/results/$platform/$language/runtime-$run_id/task.log"
+      evidence_daemon_log="poc/results/$platform/$language/runtime-$run_id/daemon.log"
+      evidence_database="poc/results/$platform/$language/runtime-$run_id/tasks.sqlite"
+      evidence_concurrency="poc/results/$platform/$language/runtime-$run_id/concurrency"
+      evidence_disconnect="poc/results/$platform/$language/runtime-$run_id/client-disconnect.log"
+      evidence_corrupt_log="poc/results/$platform/$language/runtime-$run_id/corrupt-daemon.log"
+      evidence_corrupt_db="poc/results/$platform/$language/runtime-$run_id/corrupt.sqlite"
+      evidence_persistence_log="poc/results/$platform/$language/runtime-$run_id/sqlite-write-failure.jsonl"
+      evidence_edge_log="poc/results/$platform/$language/runtime-$run_id/edge"
+      evidence_long_run_log="poc/results/$platform/$language/runtime-$run_id/long-run"
+
+      checks="$(jq -nc --argjson value "$ipc_ok" '{request_responses:$value}')"
+      status=pass; [ "$ipc_ok" = true ] || { status=fail; failed=1; }
+      write_runtime_result D01 "$status" "$checks"
+
+      checks="$(jq -nc --argjson value "$idempotent" '{idempotent_start:$value}')"
+      status=pass; [ "$idempotent" = true ] || { status=fail; failed=1; }
+      write_runtime_result D07 "$status" "$checks"
+
+      tree_ok=false
+      [ "$process_tree_lines" -ge 3 ] && tree_ok=true
+      checks="$(jq -nc --argjson value "$tree_ok" '{process_tree:$value}')"
+      status=pass; [ "$tree_ok" = true ] || { status=fail; failed=1; }
+      write_runtime_result P02 "$status" "$checks"
+
+      checks="$(jq -nc \
+        --argjson crash "$alive_after_crash" \
+        --argjson recovery "$recovered" \
+        '{task_survived_daemon_crash:$crash, daemon_restarted:$recovery}')"
+      status=pass
+      { [ "$alive_after_crash" = true ] && [ "$recovered" = true ]; } ||
+        { status=fail; failed=1; }
+      write_runtime_result P08 "$status" "$checks"
+
+      checks="$(jq -nc \
+        --argjson identity "$identity_preserved" \
+        '{pid_and_start_token_preserved:$identity}')"
+      status=pass; [ "$identity_preserved" = true ] || { status=fail; failed=1; }
+      write_runtime_result P09 "$status" "$checks"
+
+      signal_ok=false
+      if printf '%s' "$stop" | jq -e '.ok == true and .state == "stopped"' \
+          >/dev/null && [ "$group_stopped" = true ]; then
+        signal_ok=true
+      fi
+      checks="$(jq -nc \
+        --argjson stop "$signal_ok" \
+        --argjson group "$group_stopped" \
+        '{termination_request:$stop, process_group_stopped:$group}')"
+      status=pass; [ "$signal_ok" = true ] || { status=fail; failed=1; }
+      write_runtime_result P03 "$status" "$checks"
+
+      checks="$(jq -nc \
+        --argjson recovered "$recovered" \
+        --argjson identity "$identity_preserved" \
+        '{restart_ready:$recovered, identity_preserved:$identity}')"
+      status=pass
+      { [ "$recovered" = true ] && [ "$identity_preserved" = true ]; } ||
+        { status=fail; failed=1; }
+      write_runtime_result D03 "$status" "$checks"
+
+      checks="$(jq -nc \
+        --argjson history "$history_ok" \
+        '{sqlite_history:$history}')"
+      status=pass; [ "$history_ok" = true ] || { status=fail; failed=1; }
+      write_runtime_result P12 "$status" "$checks"
+
+      checks="$(jq -nc \
+        --argjson alive "$long_run_daemon_alive" \
+        --argjson stable "$long_run_requests_ok" \
+        '{daemon_alive:$alive, requests_stable:$stable}')"
+      status=pass; [ "$long_run_ok" = true ] || { status=fail; failed=1; }
+      write_runtime_result D08 "$status" "$checks"
+
+      checks="$(jq -nc --argjson value "$p01_ok" '{single_process_exit:$value}')"
+      status=pass; [ "$p01_ok" = true ] || { status=fail; failed=1; }
+      write_runtime_result P01 "$status" "$checks"
+
+      checks="$(jq -nc --argjson value "$p05_ok" '{child_crash_detected:$value}')"
+      status=pass; [ "$p05_ok" = true ] || { status=fail; failed=1; }
+      write_runtime_result P05 "$status" "$checks"
+
+      checks="$(jq -nc --argjson value "$p06_ok" \
+        '{parent_exit_and_child_observed:$value}')"
+      status=pass; [ "$p06_ok" = true ] || { status=fail; failed=1; }
+      write_runtime_result P06 "$status" "$checks"
+
+      checks="$(jq -nc --argjson value "$p11_ok" '{cwd_and_env_inherited:$value}')"
+      status=pass; [ "$p11_ok" = true ] || { status=fail; failed=1; }
+      write_runtime_result P11 "$status" "$checks"
+
+      checks="$(jq -nc \
+        --argjson clients "$concurrent_clients_ok" \
+        --argjson state "$concurrent_payload_ok" \
+        '{concurrent_clients:$clients, state_consistent:$state}')"
+      status=pass; [ "$concurrent_ok" = true ] || { status=fail; failed=1; }
+      write_runtime_result D02 "$status" "$checks"
+
+      checks="$(jq -nc \
+        --argjson sent "$disconnect_sent" \
+        --argjson alive "$disconnect_after_ok" \
+        '{partial_request_closed:$sent, daemon_still_serving:$alive}')"
+      status=pass; [ "$disconnect_ok" = true ] || { status=fail; failed=1; }
+      write_runtime_result D05 "$status" "$checks"
+
+      checks="$(jq -nc \
+        --argjson rejected "$corrupt_rejected" \
+        --argjson write_error "$persistence_error_explicit" \
+        --argjson recovered "$persistence_recovered" \
+        '{corrupt_database_rejected:$rejected,
+          write_error_explicit:$write_error,
+          daemon_recovered_after_write_error:$recovered}')"
+      status=pass
+      { [ "$corrupt_rejected" = true ] &&
+        [ "$persistence_error_explicit" = true ] &&
+        [ "$persistence_recovered" = true ]; } ||
+        { status=fail; failed=1; }
+      write_runtime_result D04 "$status" "$checks"
+
+      cleanup_runtime
+      trap - EXIT
+      printf 'runtime %-8s %s\n' "$language" "$status"
+    done
+
+    if [ "$failed" -ne 0 ]; then
+      printf 'runtime verification FAIL\n' >&2
+      exit 1
+    fi
+
+    runtime_result_count=0
+    for language in rust go cpp; do
+      for case_id in P01 P02 P03 P05 P06 P08 P09 P11 P12 D01 D02 D03 D04 D05 D07 D08; do
+        result_file="$results_root/$language/$case_id-$source_commit-$run_id.json"
+        jq -e \
+          --arg case_id "$case_id" \
+          --arg language "$language" \
+          '.case_id == $case_id and
+           .language == $language and
+           (.status | IN("pass", "fail", "blocked", "unsupported", "not-run")) and
+           ((.checks // {}) | type == "object" and all(.[]; type == "boolean")) and
+           (.evidence | type == "array" and length > 0)' \
+          "$result_file" >/dev/null
+        while IFS= read -r evidence_path; do
+          [ -e "$evidence_path" ]
+        done < <(jq -r '.evidence[]' "$result_file")
+        runtime_result_count=$((runtime_result_count + 1))
+      done
+    done
+    printf 'runtime result verification PASS (%s results)\n' "$runtime_result_count"
+    printf 'runtime verification PASS\n'
+
 fmt:
     cargo fmt --manifest-path "{{ poc }}/rust/Cargo.toml" -- --check
-    @test -z "$(gofmt -d {{ poc }}/go/cmd/qwe-poc/main.go)"
+    @test -z "$(gofmt -d {{ poc }}/go/cmd/qwe-poc)"
 
 lint:
     #!/usr/bin/env bash
@@ -673,7 +1585,9 @@ lint:
     cargo clippy --manifest-path "{{ poc }}/rust/Cargo.toml" --release -- -D warnings
     (
       cd "{{ poc }}/go"
-      go vet ./...
+      GOPATH="{{ poc }}/build/go/gopath" \
+      GOCACHE="{{ poc }}/build/go/cache" \
+        go vet ./...
     )
     build_root="$(mktemp -d "${TMPDIR:-/tmp}/qwe-cpp-lint.XXXXXX")"
     cmake -S "{{ poc }}/cpp" -B "$build_root" -G Ninja \
@@ -691,6 +1605,7 @@ test-macos:
     just --justfile "{{ justfile() }}" verify-skeleton
     just --justfile "{{ justfile() }}" verify-fixtures
     just --justfile "{{ justfile() }}" terminal-smoke-macos
+    just --justfile "{{ justfile() }}" runtime-smoke-macos
     printf 'macOS POC tests completed\n'
 
 test-linux:
@@ -704,4 +1619,5 @@ test-linux:
     just --justfile "{{ justfile() }}" verify-skeleton
     just --justfile "{{ justfile() }}" verify-fixtures
     just --justfile "{{ justfile() }}" terminal-smoke-linux
+    just --justfile "{{ justfile() }}" runtime-smoke-linux
     printf 'Linux POC tests completed\n'

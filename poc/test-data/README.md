@@ -17,3 +17,9 @@ machine-readable identifiers, and clean up children on failure.
 failure-injection operation against a real process, not a simulated recovery
 result.
 
+`resize_watcher.py` is a real terminal workload used by T07. It reads the
+kernel PTY size and handles SIGWINCH without relying on shell trap behavior.
+
+`vt_fixture.py` emits deterministic ANSI/VT and Unicode sequences. Native
+terminal emulators parse its PTY output for T05/T06.
+
