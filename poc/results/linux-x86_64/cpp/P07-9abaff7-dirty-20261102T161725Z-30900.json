@@ -1,0 +1,36 @@
+{
+  "case_id": "P07",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "c++ (GCC) 14.2.1 20240912 (Red Hat 14.2.1-3)",
+    "environment_record": "poc/results/linux-x86_64/cpp/P07-timeout-20261102T161725Z-30900/environment.txt"
+  },
+  "command": "just timeout-smoke cpp",
+  "started_at": "2026-11-02T16:17:25Z",
+  "duration_ms": 356,
+  "metrics": {
+    "timeout_ms": 250,
+    "deadline_elapsed_ms": 285
+  },
+  "checks": {
+    "start_accepted": true,
+    "deadline_observed": true,
+    "state_timed_out": true,
+    "process_group_stopped": true,
+    "sqlite_timed_out": true,
+    "output_preserved": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/cpp/P07-timeout-20261102T161725Z-30900/task.log",
+    "poc/results/linux-x86_64/cpp/P07-timeout-20261102T161725Z-30900/daemon.log",
+    "poc/results/linux-x86_64/cpp/P07-timeout-20261102T161725Z-30900/environment.txt"
+  ],
+  "known_limitations": [
+    "The POC deadline watcher is in memory and is not recovered after daemon restart.",
+    "Graceful termination uses a fixed short grace period."
+  ]
+}

@@ -1,0 +1,6 @@
+os=Linux
+release=6.11.4-301.fc41.x86_64
+architecture=x86_64
+platform=linux-x86_64
+language=rust
+toolchain=rustc 1.99.1 (58cf8f9c3 2026-10-13)

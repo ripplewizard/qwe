@@ -7,14 +7,17 @@ Implemented capabilities are PTY creation, Shell launch, initial and dynamic
 window sizes, SIGWINCH delivery, a Neovim rendering preflight, Unix socket IPC,
 SQLite TaskInstance persistence, process-group control, daemon crash recovery,
 concurrent IPC, corruption rejection, SQLite write-error handling, and
-50,000-line PTY output integrity. Native ANSI/VT screen state and Unicode are
-covered; attach/detach, sustained load, and resource monitoring remain.
+50,000-line PTY output integrity. Session Lease ownership transitions and the
+boundary between program output and user activity are covered. Session
+detach/reattach preserves the PTY, shell, accumulated output, and accepted
+input. Native ANSI/VT screen state and Unicode are covered; manual interactive
+screen review, sustained load, and resource monitoring remain.
 
 ## Baseline Decisions
 
-- Official comparison runs use Fedora Linux x86_64, at least 4 cores, 8 GB RAM,
-  and SSD storage. Record the exact Fedora release; the current reference is
-  Fedora 35.
+- Official comparison runs use Linux x86_64, at least 4 cores, 8 GB RAM, and
+  SSD storage. No specific Linux distribution version is required; record the
+  actual distribution, kernel, and toolchain versions with each run.
 - macOS ARM64 is a development and preflight environment only. Its results do
   not enter the primary comparison unless the decision report says otherwise.
 - Rust, Go, and C++ receive identical test definitions and workloads.
@@ -63,6 +66,19 @@ just terminal-smoke-macos    # Run terminal tests on macOS
 just terminal-smoke-linux    # Run terminal tests on Linux
 just runtime-smoke-macos     # Run process/IPC/SQLite/recovery tests on macOS
 just runtime-smoke-linux     # Run process/IPC/SQLite/recovery tests on Linux
+just lease-smoke all         # Run T09 Session Lease against all implementations
+just attach-smoke all        # Run T08 session continuity against all implementations
+just terminal-interaction-smoke all # Run T04/T11/T12 automated preflights
+just developer-experience-smoke all # Run DX01-DX03 measurements and TUI checks
+just platform-comparison     # Generate XP01 coverage/performance comparison
+just review-results          # Materialize EX01/MC01 reviews as structured results
+just verify-results          # Validate latest result schema and evidence paths
+just timeout-smoke all       # Run P07 task deadline checks against all implementations
+just restart-smoke all       # Run P10 restart policies and TaskInstance history
+just upgrade-smoke all       # Run D06 legacy SQLite schema migration checks
+just process-acceptance-smoke all # Run P01/P03-P05/P09/P12 process checks
+just resource-smoke all      # Run RM01-RM05 resource monitoring checks
+just daemon-depth-smoke all  # Run D01/D02/D04/D05/D08 daemon failure checks
 just test-macos              # Run the macOS validation suite
 just test-linux              # Run the Linux validation suite
 just test-linux-remote       # Run the suite on istoria and pull results
@@ -70,7 +86,7 @@ just test-linux-remote       # Run the suite on istoria and pull results
 
 The `pty-smoke` command creates a real operating-system PTY, launches `sh`,
 sets an initial 24x80 window, sends a command, and reads the captured output.
-It is valid T01/T02 preflight evidence on macOS, but not an official Fedora
+It is valid T01/T02 preflight evidence on macOS, but not an official Linux
 comparison score.
 
 The `editor-smoke` command runs Neovim in the same PTY, renders a marker sourced
@@ -93,7 +109,7 @@ recovery, stable process identity, SQLite history, and process-group stop.
 
 ## Execution Order
 
-1. Validate the Fedora x86_64 environment and freeze toolchain versions.
+1. Validate the Linux x86_64 environment and freeze toolchain versions.
 2. Complete Stage 1: PTY, Shell, Process Group, Signal, IPC, and SQLite.
 3. Execute Terminal Runtime tests first; record automated and manual evidence.
 4. Run Process and Daemon reliability tests, including crash recovery.

@@ -1,0 +1,35 @@
+{
+  "case_id": "RM03",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "go version go1.27.3 linux/amd64"
+  },
+  "command": "resource-smoke go RM03",
+  "started_at": "2026-11-02T16:47:37Z",
+  "duration_ms": 398,
+  "metrics": {
+    "process_count": 1,
+    "cpu_percent": 100,
+    "memory_bytes": 3538944,
+    "gpu_supported": true,
+    "sample_latency_100_ms": 7.76,
+    "sample_latency_500_ms": 6.52,
+    "sample_latency_1000_ms": 5.17,
+    "sample_latency_5000_ms": 5.55
+  },
+  "checks": {
+    "intervals": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/go/resource-20261102T164737Z-66792/daemon.log",
+    "poc/results/linux-x86_64/go/resource-20261102T164737Z-66792/tasks.sqlite"
+  ],
+  "known_limitations": [
+    "RSS sums may double-count shared pages.",
+    "CPU is lifetime average percentage reported by ps, not an instantaneous scheduler event."
+  ]
+}

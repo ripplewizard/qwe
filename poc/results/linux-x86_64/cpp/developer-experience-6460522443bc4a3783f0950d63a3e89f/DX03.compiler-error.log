@@ -1,0 +1,12 @@
+$ c++ -std=c++20 -fsyntax-only /home/project/uranus/bianca/poc/results/linux-x86_64/cpp/developer-experience-6460522443bc4a3783f0950d63a3e89f/DX03-cpp-build/broken.cpp
+exit=1
+--- stdout ---
+
+--- stderr ---
+/home/project/uranus/bianca/poc/results/linux-x86_64/cpp/developer-experience-6460522443bc4a3783f0950d63a3e89f/DX03-cpp-build/broken.cpp: In function ‘int main()’:
+/home/project/uranus/bianca/poc/results/linux-x86_64/cpp/developer-experience-6460522443bc4a3783f0950d63a3e89f/DX03-cpp-build/broken.cpp:2:26: error: invalid conversion from ‘const char*’ to ‘int’ [-fpermissive]
+    2 | int main() { int value = "no"; }
+      |                          ^~~~
+      |                          |
+      |                          const char*
+

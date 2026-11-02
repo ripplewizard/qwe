@@ -1,27 +1,23 @@
 # Linux x86_64 Results
 
-This directory contains Fedora Linux x86_64 runs. Current evidence was produced
-on Fedora 35.
+Primary POC result directory. Distribution and release are environment
+metadata, not target restrictions.
 
-Run `just test-linux` on the Fedora host. Final scoring requires a clean source
-tree and an environment record confirming Fedora x86_64, at least 4 CPU cores,
-8 GB RAM, and the required toolchain versions.
+Run `just test-linux` on the Linux host. Current full-suite evidence revision is
+`9abaff7-dirty`; final scoring requires regeneration from a clean commit.
 
-Latest target-platform run: 2026-11-02, source `f44f72e-dirty`.
+Current coverage:
 
-- T01/T02: Rust, Go, and C++ passed.
-- T03: automation passed; status remains `blocked` pending manual interaction.
-- T05/T06: all three native terminal parsers passed color, erase, cursor,
-  Unicode, emoji, and wide-character state checks.
-- T07: Rust, Go, and C++ passed all four dynamic resize and SIGWINCH checks.
-- T10: Rust, Go, and C++ preserved all 50,000 output sequence boundaries.
-- P02/P03/P08/P09/P12: process tree, process-group stop, daemon crash survival,
-  stable identity, and SQLite history passed.
-- P01/P05/P11: short-process exit, child-crash detection, cwd/env inheritance,
-  and exited-task history passed.
-- D01/D03/D07: IPC responses, daemon restart, and idempotent start passed.
-- D02/D04/D05: concurrent clients, corrupt SQLite rejection, and client
-  disconnect isolation passed. D04 also covers an injected SQLite write error.
-- D08: 100 sequential requests over a running-daemon interval passed with RSS
-  before/after recorded.
+- T01/T02 and T05–T07/T09/T10 pass for Rust, Go, and C++.
+- T03/T04/T08/T11 have automated preflights and platform manual notes, but
+  remain `blocked` pending independent human sign-off.
+- T12 records the current negative boundary: daemon restart does not recover
+  terminal process/session/PTY/screen/input.
+- P01–P12 pass for all implementations.
+- D01–D08 pass, including isolated-filesystem ENOSPC.
+- RM01–RM05 pass with explicit GPU capability reporting.
+- DX01–DX03 pass, including the persisted alternate-screen TUI.
+- XP01/EX01/MC01 are generated for every language.
 
+Manual observations are under `manual/`. Structured per-case evidence is linked
+from `poc/test-spec/matrix.md`.

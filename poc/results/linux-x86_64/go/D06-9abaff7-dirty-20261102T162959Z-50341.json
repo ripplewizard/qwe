@@ -1,0 +1,37 @@
+{
+  "case_id": "D06",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "go version go1.27.3 linux/amd64",
+    "environment_record": "poc/results/linux-x86_64/go/D06-upgrade-20261102T162959Z-50341/environment.txt"
+  },
+  "command": "just upgrade-smoke go",
+  "started_at": "2026-11-02T16:29:59Z",
+  "duration_ms": 117,
+  "metrics": {
+    "schema_version": 2
+  },
+  "checks": {
+    "legacy_opens": true,
+    "task_preserved": true,
+    "schema_upgraded": true,
+    "new_tables_created": true,
+    "migration_idempotent": true,
+    "daemon_restart_compatible": true,
+    "future_schema_rejected": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/go/D06-upgrade-20261102T162959Z-50341/daemon.log",
+    "poc/results/linux-x86_64/go/D06-upgrade-20261102T162959Z-50341/future-daemon.log",
+    "poc/results/linux-x86_64/go/D06-upgrade-20261102T162959Z-50341/environment.txt",
+    "poc/results/linux-x86_64/go/D06-upgrade-20261102T162959Z-50341/legacy.sqlite"
+  ],
+  "known_limitations": [
+    "Online upgrade while another daemon owns the database is not covered.",
+    "Only additive schema migrations are implemented in this POC slice."
+  ]
+}

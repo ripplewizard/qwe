@@ -1,0 +1,9 @@
+/home/project/uranus/bianca/poc/results/linux-x86_64/rust/developer-experience-1ae3697f1f254423bcade73c29470698/DX03-rust-build/target/release/deps/thiserror-1efba935c59fa55d.d: /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/lib.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/aserror.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/display.rs
+
+/home/project/uranus/bianca/poc/results/linux-x86_64/rust/developer-experience-1ae3697f1f254423bcade73c29470698/DX03-rust-build/target/release/deps/libthiserror-1efba935c59fa55d.rlib: /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/lib.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/aserror.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/display.rs
+
+/home/project/uranus/bianca/poc/results/linux-x86_64/rust/developer-experience-1ae3697f1f254423bcade73c29470698/DX03-rust-build/target/release/deps/libthiserror-1efba935c59fa55d.rmeta: /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/lib.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/aserror.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/display.rs
+
+/usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/lib.rs:
+/usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/aserror.rs:
+/usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/thiserror-1.0.69/src/display.rs:

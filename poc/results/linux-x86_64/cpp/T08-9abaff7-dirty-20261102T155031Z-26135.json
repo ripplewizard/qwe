@@ -1,0 +1,44 @@
+{
+  "case_id": "T08",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "c++ (GCC) 14.2.1 20240912 (Red Hat 14.2.1-3)",
+    "environment_record": "poc/results/linux-x86_64/cpp/T08-attach-t08-bcdf790c3e6d481db1a982a3f2bf85ac/environment.txt"
+  },
+  "command": "attach-smoke cpp",
+  "started_at": "2026-11-02T15:50:31Z",
+  "duration_ms": 1143,
+  "metrics": {
+    "output_bytes": 239
+  },
+  "checks": {
+    "duplicate_start_rejected": true,
+    "session_started": true,
+    "wrong_owner_rejected": true,
+    "initial_attach": true,
+    "malformed_input_rejected": true,
+    "initial_input": true,
+    "detach": true,
+    "pty_survives": true,
+    "lease_preserved": true,
+    "detached_input_rejected": true,
+    "reattach": true,
+    "screen_restored": true,
+    "detached_input_not_executed": true,
+    "input_after_reattach": true,
+    "process_exited_cleanly": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/cpp/T08-attach-t08-bcdf790c3e6d481db1a982a3f2bf85ac/session.pty.log",
+    "poc/results/linux-x86_64/cpp/T08-attach-t08-bcdf790c3e6d481db1a982a3f2bf85ac/daemon.log",
+    "poc/results/linux-x86_64/cpp/T08-attach-t08-bcdf790c3e6d481db1a982a3f2bf85ac/environment.txt"
+  ],
+  "known_limitations": [
+    "Snapshot is the complete raw PTY stream, not a compact VT state delta.",
+    "Interactive manual screen review remains required."
+  ]
+}

@@ -1,0 +1,9 @@
+$ go build -trimpath -o /home/project/uranus/bianca/poc/results/linux-x86_64/go/developer-experience-7aafa671e2284cfcb1f5a6643b69705c/DX03-go-build/qwe-poc ./cmd/qwe-poc
+exit=0
+--- stdout ---
+
+--- stderr ---
+go: downloading github.com/creack/pty v1.1.24
+go: downloading github.com/mattn/go-sqlite3 v1.14.52
+go: downloading github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02
+

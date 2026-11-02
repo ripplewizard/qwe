@@ -1,0 +1,40 @@
+{
+  "case_id": "P07",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "go version go1.27.3 linux/amd64",
+    "environment_record": "poc/results/linux-x86_64/go/P07-timeout-20261102T161949Z-34991/environment.txt"
+  },
+  "command": "just timeout-smoke go",
+  "started_at": "2026-11-02T16:19:49Z",
+  "duration_ms": 1112,
+  "metrics": {
+    "timeout_ms": 400,
+    "deadline_elapsed_ms": 429,
+    "sigkill_elapsed_ms": 609
+  },
+  "checks": {
+    "start_accepted": true,
+    "deadline_observed": true,
+    "state_timed_out": true,
+    "process_group_stopped": true,
+    "sqlite_timed_out": true,
+    "output_preserved": true,
+    "sigkill_escalation": true,
+    "predeadline_exit_preserved": true,
+    "invalid_timeout_rejected": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/go/P07-timeout-20261102T161949Z-34991/task.log",
+    "poc/results/linux-x86_64/go/P07-timeout-20261102T161949Z-34991/daemon.log",
+    "poc/results/linux-x86_64/go/P07-timeout-20261102T161949Z-34991/environment.txt"
+  ],
+  "known_limitations": [
+    "The POC deadline watcher is in memory and is not recovered after daemon restart.",
+    "Graceful termination uses a fixed short grace period."
+  ]
+}

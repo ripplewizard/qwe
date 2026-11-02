@@ -1,0 +1,6 @@
+[?1049h[H[2JQWE POC DASHBOARD
+database: /home/project/uranus/bianca/poc/results/linux-x86_64/rust/developer-experience-f413f35fa6dd4260abb6819d7c6c5927/dx02.sqlite
+tasks=1 running=1
+latest: id=task-86928-1793640954214034366 key=dx02-dashboard-task state=running
+
+[q] quit (one-shot POC screen)[?1049l

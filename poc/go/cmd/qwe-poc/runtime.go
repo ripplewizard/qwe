@@ -33,6 +33,7 @@ type runtimeResponse struct {
 	OK         bool   `json:"ok"`
 	RequestID  string `json:"request_id"`
 	TaskID     string `json:"task_id,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
 	PID        int    `json:"pid,omitempty"`
 	PGID       int    `json:"pgid,omitempty"`
 	StartToken string `json:"start_token,omitempty"`
@@ -41,6 +42,8 @@ type runtimeResponse struct {
 	Error      string `json:"error,omitempty"`
 	Message    string `json:"message,omitempty"`
 }
+
+const currentSchemaVersion = 2
 
 type requestError struct {
 	code    string
@@ -57,6 +60,19 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	database.SetMaxOpenConns(1)
+	var version int
+	if err := database.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		database.Close()
+		return nil, err
+	}
+	if version > currentSchemaVersion {
+		database.Close()
+		return nil, fmt.Errorf(
+			"database schema version %d is newer than supported version %d",
+			version,
+			currentSchemaVersion,
+		)
+	}
 	if _, err := database.Exec(`
 		PRAGMA journal_mode=WAL;
 		CREATE TABLE IF NOT EXISTS tasks (
@@ -71,9 +87,52 @@ func openDB(path string) (*sql.DB, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS restart_tasks (
+			task_key TEXT PRIMARY KEY,
+			policy TEXT NOT NULL,
+			max_attempts INTEGER NOT NULL,
+			log_prefix TEXT NOT NULL,
+			command TEXT NOT NULL,
+			state TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS task_instances (
+			id TEXT PRIMARY KEY,
+			task_key TEXT NOT NULL,
+			attempt INTEGER NOT NULL,
+			pid INTEGER NOT NULL,
+			pgid INTEGER NOT NULL,
+			start_token TEXT NOT NULL,
+			state TEXT NOT NULL,
+			exit_code INTEGER,
+			log_path TEXT NOT NULL,
+			started_at INTEGER NOT NULL,
+			ended_at INTEGER,
+			UNIQUE(task_key, attempt)
+		);
 	`); err != nil {
 		database.Close()
 		return nil, err
+	}
+	if _, err := database.Exec(fmt.Sprintf(
+		"PRAGMA user_version = %d",
+		currentSchemaVersion,
+	)); err != nil {
+		database.Close()
+		return nil, err
+	}
+	if err := database.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		database.Close()
+		return nil, err
+	}
+	if version != currentSchemaVersion {
+		database.Close()
+		return nil, fmt.Errorf(
+			"database schema migration left version %d, expected %d",
+			version,
+			currentSchemaVersion,
+		)
 	}
 	return database, nil
 }
@@ -130,6 +189,21 @@ func updateTaskState(database *sql.DB, id, state string) error {
 		id,
 	)
 	return err
+}
+
+func transitionTaskState(database *sql.DB, id, from, to string) (bool, error) {
+	result, err := database.Exec(
+		"UPDATE tasks SET state = ?, updated_at = ? WHERE id = ? AND state = ?",
+		to,
+		time.Now().Unix(),
+		id,
+		from,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows == 1, err
 }
 
 func processStartToken(pid int) (string, error) {
@@ -276,9 +350,6 @@ func startTask(
 		return nil, false, err
 	}
 	pid := command.Process.Pid
-	go func() {
-		_ = command.Wait()
-	}()
 	startToken := ""
 	state := "running"
 	for attempt := 0; attempt < 10; attempt++ {
@@ -328,8 +399,19 @@ func startTask(
 	)
 	if err != nil {
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_ = command.Wait()
 		return nil, false, err
 	}
+	if err := registerTaskInstance(database, task); err != nil {
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_ = command.Wait()
+		_ = updateTaskState(database, task.ID, "failed")
+		return nil, false, err
+	}
+	go func() {
+		_ = command.Wait()
+		finishTaskInstance(database, task.ID, processExitCode(command.ProcessState))
+	}()
 	return task, true, nil
 }
 
@@ -362,7 +444,66 @@ func stopTask(database *sql.DB, id string) (*taskRecord, error) {
 	return task, nil
 }
 
-func handleRuntimeRequest(database *sql.DB, line string) runtimeResponse {
+func startTaskWithTimeout(
+	database *sql.DB,
+	key, logPath, timeoutText, program string,
+	arguments []string,
+) (*taskRecord, bool, error) {
+	timeoutMS, err := strconv.ParseInt(timeoutText, 10, 64)
+	if err != nil || timeoutMS <= 0 {
+		return nil, false, requestError{
+			code:    "invalid_request",
+			message: "timeout must be a positive integer",
+		}
+	}
+	started := time.Now()
+	task, created, err := startTask(database, key, logPath, program, arguments)
+	if err != nil || !created || task.State != "running" {
+		return task, created, err
+	}
+	remaining := time.Duration(timeoutMS)*time.Millisecond - time.Since(started)
+	if remaining < 0 {
+		remaining = 0
+	}
+	go enforceTaskTimeout(database, *task, remaining)
+	return task, created, nil
+}
+
+func enforceTaskTimeout(database *sql.DB, task taskRecord, timeout time.Duration) {
+	time.Sleep(timeout)
+	current, err := loadTaskByID(database, task.ID)
+	if err != nil || current == nil || current.State != "running" ||
+		!taskAlive(current) {
+		return
+	}
+	claimed, err := transitionTaskState(database, current.ID, "running", "timing_out")
+	if err != nil || !claimed {
+		return
+	}
+	_ = syscall.Kill(-current.PGID, syscall.SIGTERM)
+	graceDeadline := time.Now().Add(200 * time.Millisecond)
+	for groupAlive(current.PGID) && time.Now().Before(graceDeadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if groupAlive(current.PGID) {
+		_ = syscall.Kill(-current.PGID, syscall.SIGKILL)
+	}
+	for attempt := 0; attempt < 50 && groupAlive(current.PGID); attempt++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	finalState := "timed_out"
+	if groupAlive(current.PGID) {
+		finalState = "timeout_failed"
+	}
+	_, _ = transitionTaskState(database, current.ID, "timing_out", finalState)
+}
+
+func handleRuntimeRequest(
+	database *sql.DB,
+	leases *leaseManager,
+	sessions *sessionManager,
+	line string,
+) any {
 	fields := strings.Split(strings.TrimSuffix(line, "\n"), "\t")
 	requestID := "unknown"
 	if len(fields) > 1 {
@@ -381,6 +522,40 @@ func handleRuntimeRequest(database *sql.DB, line string) runtimeResponse {
 			return errorJSON(requestID, "internal", err.Error())
 		}
 		return taskJSON(requestID, task, &created)
+	case len(fields) >= 6 && fields[0] == "TIMEOUT_START":
+		task, created, err := startTaskWithTimeout(
+			database,
+			fields[2],
+			fields[3],
+			fields[4],
+			fields[5],
+			fields[6:],
+		)
+		if err != nil {
+			code := "internal"
+			if request, ok := err.(requestError); ok {
+				code = request.code
+			}
+			return errorJSON(requestID, code, err.Error())
+		}
+		return taskJSON(requestID, task, &created)
+	case len(fields) >= 7 && fields[0] == "RESTART_START":
+		return startRestartTask(
+			database,
+			requestID,
+			fields[2],
+			fields[3],
+			fields[4],
+			fields[5],
+			fields[6],
+			fields[7:],
+		)
+	case len(fields) == 3 && fields[0] == "RESTART_STATUS":
+		response, err := restartStatus(database, requestID, fields[2], nil)
+		if err != nil {
+			return restartError(requestID, "internal", err.Error())
+		}
+		return response
 	case len(fields) == 3 && fields[0] == "STATUS":
 		task, err := loadTaskByID(database, fields[2])
 		if err != nil {
@@ -404,6 +579,50 @@ func handleRuntimeRequest(database *sql.DB, line string) runtimeResponse {
 			return errorJSON(requestID, code, err.Error())
 		}
 		return taskJSON(requestID, task, nil)
+	case len(fields) == 3 && fields[0] == "TASK_HISTORY":
+		response, err := taskHistory(database, requestID, fields[2])
+		if err != nil {
+			return errorJSON(requestID, "internal", err.Error())
+		}
+		return response
+	case len(fields) == 4 && fields[0] == "TASK_SIGNAL":
+		return signalTask(database, requestID, fields[2], fields[3])
+	case len(fields) == 3 && fields[0] == "TASK_RESOURCE":
+		return taskResource(database, requestID, fields[2])
+	case len(fields) == 5 && fields[0] == "TASK_RESOURCE_SAMPLE":
+		return taskResourceSamples(
+			database,
+			requestID,
+			fields[2],
+			fields[3],
+			fields[4],
+		)
+	case len(fields) == 4 && fields[0] == "LEASE_CLAIM":
+		return leases.claim(requestID, fields[2], fields[3])
+	case len(fields) == 4 && fields[0] == "LEASE_TOUCH":
+		return leases.touch(requestID, fields[2], fields[3])
+	case len(fields) == 4 && fields[0] == "LEASE_RELEASE":
+		return leases.release(requestID, fields[2], fields[3])
+	case len(fields) == 3 && fields[0] == "LEASE_STATUS":
+		return leases.status(requestID, fields[2])
+	case len(fields) == 4 && fields[0] == "LEASE_TAKEOVER":
+		return leases.takeover(requestID, fields[2], fields[3])
+	case len(fields) >= 5 && fields[0] == "SESSION_START":
+		return sessions.start(
+			requestID,
+			fields[2],
+			fields[3],
+			fields[4],
+			fields[5:],
+		)
+	case len(fields) == 4 && fields[0] == "SESSION_ATTACH":
+		return sessions.attach(requestID, fields[2], fields[3])
+	case len(fields) == 4 && fields[0] == "SESSION_DETACH":
+		return sessions.detach(requestID, fields[2], fields[3])
+	case len(fields) == 5 && fields[0] == "SESSION_INPUT":
+		return sessions.input(requestID, fields[2], fields[3], fields[4])
+	case len(fields) == 3 && fields[0] == "SESSION_STATUS":
+		return sessions.status(requestID, fields[2])
 	default:
 		return errorJSON(requestID, "invalid_request", "unsupported request")
 	}
@@ -418,6 +637,8 @@ func runRuntimeDaemon(socketPath, databasePath string) error {
 	if err := recoverTasks(database); err != nil {
 		return err
 	}
+	leases := newLeaseManager()
+	sessions := newSessionManager(leases)
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
 		return err
 	}
@@ -436,11 +657,11 @@ func runRuntimeDaemon(socketPath, databasePath string) error {
 		go func(client net.Conn) {
 			defer client.Close()
 			line, readErr := bufio.NewReader(client).ReadString('\n')
-			var response runtimeResponse
+			var response any
 			if readErr != nil {
 				response = errorJSON("unknown", "invalid_request", readErr.Error())
 			} else {
-				response = handleRuntimeRequest(database, line)
+				response = handleRuntimeRequest(database, leases, sessions, line)
 			}
 			data, _ := json.Marshal(response)
 			_, _ = client.Write(append(data, '\n'))
@@ -454,11 +675,78 @@ func runRuntimeClient(operation string) int {
 	if operation == "START" {
 		minimum = 4
 	}
+	if operation == "TIMEOUT_START" {
+		minimum = 5
+	}
+	if operation == "RESTART_START" {
+		minimum = 6
+	}
+	if operation == "TASK_SIGNAL" {
+		minimum = 3
+	}
+	if operation == "TASK_RESOURCE_SAMPLE" {
+		minimum = 4
+	}
+	if operation == "LEASE_CLAIM" ||
+		operation == "LEASE_TOUCH" ||
+		operation == "LEASE_RELEASE" ||
+		operation == "LEASE_TAKEOVER" {
+		minimum = 3
+	}
+	sessionStart := operation == "SESSION_START"
+	if sessionStart {
+		minimum = 4
+	}
+	if operation == "SESSION_ATTACH" ||
+		operation == "SESSION_DETACH" {
+		minimum = 3
+	}
+	if operation == "SESSION_INPUT" {
+		minimum = 4
+	}
 	if len(arguments) < minimum {
 		fmt.Fprintln(os.Stderr, "invalid runtime client arguments")
 		return 2
 	}
-	if operation != "START" && len(arguments) != 2 {
+	if operation != "START" &&
+		operation != "TIMEOUT_START" &&
+		operation != "RESTART_START" &&
+		operation != "TASK_SIGNAL" &&
+		operation != "TASK_RESOURCE_SAMPLE" &&
+		operation != "LEASE_CLAIM" &&
+		operation != "LEASE_TOUCH" &&
+		operation != "LEASE_RELEASE" &&
+		operation != "LEASE_TAKEOVER" &&
+		operation != "SESSION_ATTACH" &&
+		operation != "SESSION_DETACH" &&
+		operation != "SESSION_INPUT" &&
+		!sessionStart &&
+		len(arguments) != 2 {
+		fmt.Fprintln(os.Stderr, "invalid runtime client arguments")
+		return 2
+	}
+	if (operation == "LEASE_CLAIM" ||
+		operation == "LEASE_TOUCH" ||
+		operation == "LEASE_RELEASE" ||
+		operation == "LEASE_TAKEOVER") &&
+		len(arguments) != 3 {
+		fmt.Fprintln(os.Stderr, "invalid runtime client arguments")
+		return 2
+	}
+	if (operation == "SESSION_ATTACH" || operation == "SESSION_DETACH") &&
+		len(arguments) != 3 {
+		fmt.Fprintln(os.Stderr, "invalid runtime client arguments")
+		return 2
+	}
+	if operation == "SESSION_INPUT" && len(arguments) != 4 {
+		fmt.Fprintln(os.Stderr, "invalid runtime client arguments")
+		return 2
+	}
+	if operation == "TASK_SIGNAL" && len(arguments) != 3 {
+		fmt.Fprintln(os.Stderr, "invalid runtime client arguments")
+		return 2
+	}
+	if operation == "TASK_RESOURCE_SAMPLE" && len(arguments) != 4 {
 		fmt.Fprintln(os.Stderr, "invalid runtime client arguments")
 		return 2
 	}

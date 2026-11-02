@@ -1,0 +1,50 @@
+{
+  "case_id": "P09",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rust=rustc 1.99.1 (58cf8f9c3 2026-10-13); go=go version go1.27.3 linux/amd64; cxx=c++ (GCC) 14.2.1 20240912 (Red Hat 14.2.1-3)",
+    "environment_record": "poc/results/linux-x86_64/environment/runtime-20261102T154503Z-18509.txt"
+  },
+  "command": "runtime contract: daemon -> task-start/status/stop -> SIGKILL -> restart",
+  "started_at": "2026-11-02T15:45:08Z",
+  "duration_ms": 4481,
+  "metrics": {
+    "pid": 19434,
+    "pgid": 19434,
+    "process_tree_lines": 3,
+    "task_records": 1,
+    "concurrent_requests": 40,
+    "daemon_rss_kib_before": 8488,
+    "daemon_rss_kib_after": 9256
+  },
+  "checks": {
+    "pid_and_start_token_preserved": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/start-initial.jsonl",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/start-duplicate.jsonl",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/status-before.jsonl",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/status-after.jsonl",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/stop.jsonl",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/task.log",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/daemon.log",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/tasks.sqlite",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/concurrency",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/client-disconnect.log",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/corrupt-daemon.log",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/corrupt.sqlite",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/sqlite-write-failure.jsonl",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/edge",
+    "poc/results/linux-x86_64/go/runtime-20261102T154503Z-18509/long-run"
+  ],
+  "known_limitations": [
+    "Linux x86_64 target; verify source cleanliness before final scoring",
+    "Linux process start token uses /proc start time",
+    "Async task exit codes are not yet persisted",
+    "SQLite lock contention, disk-full, and upgrade compatibility are not covered"
+  ]
+}

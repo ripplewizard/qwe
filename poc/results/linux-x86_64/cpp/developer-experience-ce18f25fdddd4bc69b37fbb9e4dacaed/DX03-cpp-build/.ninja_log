@@ -1,0 +1,4 @@
+# ninja log v7
+1	1375	1793640422931720797	CMakeFiles/qwe-poc.dir/src/main.cpp.o	57d86098bbeb141
+1	3227	1793640422931720797	CMakeFiles/qwe-poc.dir/src/runtime.cpp.o	24ca95efa00ab604
+3227	3265	1793640426156975622	qwe-poc	c7a8b6dfc7c308a4

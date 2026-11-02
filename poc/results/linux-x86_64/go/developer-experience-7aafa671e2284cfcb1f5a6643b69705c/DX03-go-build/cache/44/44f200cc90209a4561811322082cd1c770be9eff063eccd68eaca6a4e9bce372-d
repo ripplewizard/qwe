@@ -1,0 +1,8 @@
+./dashboard.go
+./lease.go
+./main.go
+./resource.go
+./restart.go
+./runtime.go
+./session.go
+./task_history.go

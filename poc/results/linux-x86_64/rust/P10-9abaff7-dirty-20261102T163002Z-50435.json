@@ -1,0 +1,52 @@
+{
+  "case_id": "P10",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/environment.txt"
+  },
+  "command": "just restart-smoke rust",
+  "started_at": "2026-11-02T16:30:02Z",
+  "duration_ms": 468,
+  "metrics": {
+    "never_attempts": 1,
+    "on_failure_attempts": 2,
+    "always_attempts": 3
+  },
+  "checks": {
+    "never_policy": true,
+    "on_failure_policy": true,
+    "always_policy": true,
+    "independent_instances": true,
+    "exit_codes_persisted": true,
+    "idempotent_start": true,
+    "sqlite_history": true,
+    "invalid_policy_rejected": true,
+    "invalid_max_attempts_rejected": true,
+    "concurrent_start_idempotent": true,
+    "signal_exit_code": true,
+    "spawn_failure_reported": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/daemon.log",
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/environment.txt",
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/always.1.log",
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/always.2.log",
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/always.3.log",
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/concurrent.1.log",
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/daemon.log",
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/failure.1.log",
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/failure.2.log",
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/missing.1.log",
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/never.1.log",
+    "poc/results/linux-x86_64/rust/P10-restart-20261102T163002Z-50435/signal.1.log"
+  ],
+  "known_limitations": [
+    "In-progress restart sequences are not recovered after daemon restart.",
+    "The POC has no configurable delay or backoff between attempts."
+  ]
+}

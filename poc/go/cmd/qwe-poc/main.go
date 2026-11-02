@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -144,8 +145,8 @@ func readToDone(events <-chan readerEvent, output *[]byte) error {
 	}
 }
 
-func runPTYSession(input, logPath string) (ptyRun, error) {
-	command := exec.Command("sh")
+func runPTYSession(shell, input, logPath string) (ptyRun, error) {
+	command := exec.Command(shell)
 	command.Env = append(
 		os.Environ(),
 		"TERM=xterm-256color",
@@ -189,27 +190,63 @@ func runPTYSession(input, logPath string) (ptyRun, error) {
 }
 
 func runPTYSmoke(logPath string) int {
-	run, err := runPTYSession(
-		"printf 'QWE_PTY_READY\\n'; printf 'QWE_PTY_SIZE '; stty size; printf 'QWE_PTY_END\\n'; exit 0\r",
-		logPath,
-	)
+	// Warm up Go's lazily-created runtime polling descriptors before measuring leaks.
+	if _, err := runPTYSession("sh", "exit 0\r", ""); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	before, err := openFDCount()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-
-	text := string(run.output)
-	shellCheck := strings.Contains(text, "QWE_PTY_READY") &&
-		strings.Contains(text, "QWE_PTY_END")
+	combined := []byte{}
+	statuses := map[string]bool{}
+	for _, shell := range []string{"bash", "zsh"} {
+		run, runErr := runPTYSession(
+			shell,
+			"printf 'QWE_PTY_READY\\n'; printf 'QWE_PTY_SIZE '; stty size; printf 'QWE_PTY_END\\n'; exit 0\r",
+			"",
+		)
+		if runErr != nil {
+			fmt.Fprintln(os.Stderr, runErr)
+			return 1
+		}
+		combined = append(combined, run.output...)
+		text := string(run.output)
+		statuses[shell] = run.exitCode == 0 &&
+			strings.Contains(text, "QWE_PTY_READY") &&
+			strings.Contains(text, "QWE_PTY_SIZE 24 80") &&
+			strings.Contains(text, "QWE_PTY_END")
+	}
+	if logPath != "" {
+		if err := os.WriteFile(logPath, combined, 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
+	time.Sleep(20 * time.Millisecond)
+	after, err := openFDCount()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	text := string(combined)
+	shellCheck := statuses["bash"] && statuses["zsh"]
 	sizeCheck := strings.Contains(text, "QWE_PTY_SIZE 24 80")
-	passed := run.exitCode == 0 && shellCheck && sizeCheck
+	fdNoLeak := after <= before
+	processReaped := statuses["bash"] && statuses["zsh"]
+	passed := shellCheck && sizeCheck && fdNoLeak && processReaped
 
 	fmt.Printf(
-		`{"contract":"qwe-poc/0.1","feature":"pty-smoke","implementation":"go","exit_code":%d,"bytes":%d,"checks":{"shell":%t,"window_size":%t}}`+"\n",
-		run.exitCode,
-		len(run.output),
+		`{"contract":"qwe-poc/0.1","feature":"pty-smoke","implementation":"go","exit_code":0,"bytes":%d,"checks":{"shell":%t,"bash":%t,"zsh":%t,"window_size":%t,"fd_no_leak":%t,"process_reaped":%t}}`+"\n",
+		len(combined),
 		shellCheck,
+		statuses["bash"],
+		statuses["zsh"],
 		sizeCheck,
+		fdNoLeak,
+		processReaped,
 	)
 	if !passed {
 		return 1
@@ -221,7 +258,7 @@ func runEditorSmoke(logPath string) int {
 	input := "printf 'QWE_EDITOR_SIZE '; stty size; " +
 		"nvim --clean -u NONE -c 'call setline(1, $NVIM_TEST_MARKER)' " +
 		"-c 'redraw' -c 'sleep 200m' -c 'qa!'; exit $?\r"
-	run, err := runPTYSession(input, logPath)
+	run, err := runPTYSession("sh", input, logPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -256,6 +293,7 @@ func runLongOutputSmoke(logPath, scriptPath string) int {
 	quoted := strings.ReplaceAll(absoluteScript, "'", "'\\''")
 	started := time.Now()
 	run, err := runPTYSession(
+		"sh",
 		fmt.Sprintf("exec '%s' %d\r", quoted, lineCount),
 		logPath,
 	)
@@ -294,12 +332,29 @@ func runVTSmoke(logPath, fixturePath string) int {
 	}
 	quoted := strings.ReplaceAll(absoluteFixture, "'", "'\\''")
 	run, err := runPTYSession(
+		"sh",
 		fmt.Sprintf("exec python3 '%s'\r", quoted),
-		logPath,
+		"",
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
+	}
+	altRun, err := runPTYSession(
+		"sh",
+		fmt.Sprintf("exec python3 '%s' alt\r", quoted),
+		"",
+	)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	combined := append(append([]byte{}, run.output...), altRun.output...)
+	if logPath != "" {
+		if err := os.WriteFile(logPath, combined, 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
 	}
 
 	terminal := vt10x.New(vt10x.WithSize(80, 24))
@@ -323,16 +378,28 @@ func runVTSmoke(logPath, fixturePath string) int {
 	wideOK := cjkCell.Char == '中' && len(rows) > 3 &&
 		strings.HasPrefix(rows[3], "中文 😀 e")
 	titleOK := terminal.Title() == "QWE_VT_TEST"
-	t05 := run.exitCode == 0 && baseText && colors && erase && cursorOK && titleOK
+	scrollOK := len(rows) > 8 &&
+		strings.TrimRight(rows[6], " ") == "OUTSIDE" &&
+		strings.TrimRight(rows[7], " ") == "SCROLL9" &&
+		strings.TrimRight(rows[8], " ") == "SCROLL10"
+	altTerminal := vt10x.New(vt10x.WithSize(80, 24))
+	_, _ = altTerminal.Write(altRun.output)
+	alternateOK := altRun.exitCode == 0 &&
+		altTerminal.Mode()&vt10x.ModeAltScreen != 0 &&
+		strings.Contains(altTerminal.String(), "ALT_SCREEN")
+	t05 := run.exitCode == 0 && baseText && colors && erase && cursorOK &&
+		titleOK && scrollOK && alternateOK
 	t06 := run.exitCode == 0 && unicodeOK && wideOK
 	fmt.Printf(
-		`{"contract":"qwe-poc/0.1","feature":"vt-state","implementation":"go","exit_code":%d,"checks":{"base_text":%t,"colors":%t,"erase":%t,"cursor":%t,"title":%t,"unicode":%t,"wide":%t}}`+"\n",
+		`{"contract":"qwe-poc/0.1","feature":"vt-state","implementation":"go","exit_code":%d,"checks":{"base_text":%t,"colors":%t,"erase":%t,"cursor":%t,"title":%t,"scroll_region":%t,"alternate_screen":%t,"unicode":%t,"wide":%t}}`+"\n",
 		run.exitCode,
 		baseText,
 		colors,
 		erase,
 		cursorOK,
 		titleOK,
+		scrollOK,
+		alternateOK,
 		unicodeOK,
 		wideOK,
 	)
@@ -359,6 +426,18 @@ func runVTSmoke(logPath, fixturePath string) int {
 		return 1
 	}
 	return 0
+}
+
+func openFDCount() (int, error) {
+	path := "/proc/self/fd"
+	if runtime.GOOS == "darwin" {
+		path = "/dev/fd"
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return 0, err
+	}
+	return len(entries), nil
 }
 
 func runResizeSmoke(logPath, watcherPath string) int {
@@ -414,6 +493,8 @@ func runResizeSmoke(logPath, watcherPath string) int {
 	}
 	sizeChecks := true
 	winchChecks := true
+	emulatorChecks := true
+	emulator := vt10x.New(vt10x.WithSize(80, 24))
 	sizeLabels := make([]string, 0, len(sizes))
 	for _, size := range sizes {
 		if err := pty.Setsize(terminal, &pty.Winsize{
@@ -423,6 +504,11 @@ func runResizeSmoke(logPath, watcherPath string) int {
 			fmt.Fprintf(os.Stderr, "PTY resize failed: %v\n", err)
 			return 1
 		}
+		emulator.Resize(int(size.cols), int(size.rows))
+		emulatorCols, emulatorRows := emulator.Size()
+		emulatorChecks = emulatorChecks &&
+			emulatorCols == int(size.cols) &&
+			emulatorRows == int(size.rows)
 		if _, err := terminal.WriteString("check\r"); err != nil {
 			fmt.Fprintf(os.Stderr, "PTY write failed: %v\n", err)
 			return 1
@@ -498,15 +584,16 @@ func runResizeSmoke(logPath, watcherPath string) int {
 		}
 	}
 
-	passed := ready && sizeChecks && winchChecks && exitCode == 0
+	passed := ready && sizeChecks && winchChecks && emulatorChecks && exitCode == 0
 	sizesJSON, _ := json.Marshal(sizeLabels)
 	fmt.Printf(
-		`{"contract":"qwe-poc/0.1","feature":"pty-resize","implementation":"go","exit_code":%d,"bytes":%d,"checks":{"ready":%t,"size":%t,"winch":%t},"sizes":%s}`+"\n",
+		`{"contract":"qwe-poc/0.1","feature":"pty-resize","implementation":"go","exit_code":%d,"bytes":%d,"checks":{"ready":%t,"size":%t,"winch":%t,"emulator":%t},"sizes":%s}`+"\n",
 		exitCode,
 		len(output),
 		ready,
 		sizeChecks,
 		winchChecks,
+		emulatorChecks,
 		sizesJSON,
 	)
 	if !passed {
@@ -518,7 +605,7 @@ func runResizeSmoke(logPath, watcherPath string) int {
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println(
-			"usage: qwe-poc <probe|pty-smoke|editor-smoke|resize-smoke> [log-path]",
+			"usage: qwe-poc <smoke|daemon|task-*|lease-*|session-start>",
 		)
 		return
 	}
@@ -579,13 +666,53 @@ func main() {
 		}
 	case "task-start":
 		os.Exit(runRuntimeClient("START"))
+	case "task-start-timeout":
+		os.Exit(runRuntimeClient("TIMEOUT_START"))
+	case "task-start-restart":
+		os.Exit(runRuntimeClient("RESTART_START"))
+	case "task-restart-status":
+		os.Exit(runRuntimeClient("RESTART_STATUS"))
 	case "task-status":
 		os.Exit(runRuntimeClient("STATUS"))
 	case "task-stop":
 		os.Exit(runRuntimeClient("STOP"))
+	case "task-history":
+		os.Exit(runRuntimeClient("TASK_HISTORY"))
+	case "task-signal":
+		os.Exit(runRuntimeClient("TASK_SIGNAL"))
+	case "task-resource":
+		os.Exit(runRuntimeClient("TASK_RESOURCE"))
+	case "task-resource-sample":
+		os.Exit(runRuntimeClient("TASK_RESOURCE_SAMPLE"))
+	case "lease-claim":
+		os.Exit(runRuntimeClient("LEASE_CLAIM"))
+	case "lease-touch":
+		os.Exit(runRuntimeClient("LEASE_TOUCH"))
+	case "lease-release":
+		os.Exit(runRuntimeClient("LEASE_RELEASE"))
+	case "lease-status":
+		os.Exit(runRuntimeClient("LEASE_STATUS"))
+	case "lease-takeover":
+		os.Exit(runRuntimeClient("LEASE_TAKEOVER"))
+	case "session-start":
+		os.Exit(runRuntimeClient("SESSION_START"))
+	case "session-attach":
+		os.Exit(runRuntimeClient("SESSION_ATTACH"))
+	case "session-detach":
+		os.Exit(runRuntimeClient("SESSION_DETACH"))
+	case "session-input":
+		os.Exit(runRuntimeClient("SESSION_INPUT"))
+	case "session-status":
+		os.Exit(runRuntimeClient("SESSION_STATUS"))
+	case "dashboard":
+		if len(os.Args) != 3 {
+			fmt.Fprintln(os.Stderr, "usage: qwe-poc dashboard <sqlite-path>")
+			os.Exit(2)
+		}
+		os.Exit(runDashboard(os.Args[2]))
 	case "help":
 		fmt.Println(
-			"usage: qwe-poc <probe|pty-smoke|editor-smoke|resize-smoke> [log-path]",
+			"usage: qwe-poc <smoke|daemon|task-*|lease-*|session-start>",
 		)
 	default:
 		fmt.Fprintf(os.Stderr, "unsupported command: %s\n", os.Args[1])

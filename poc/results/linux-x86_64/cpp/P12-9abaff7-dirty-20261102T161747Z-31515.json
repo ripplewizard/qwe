@@ -1,0 +1,50 @@
+{
+  "case_id": "P12",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rust=rustc 1.99.1 (58cf8f9c3 2026-10-13); go=go version go1.27.3 linux/amd64; cxx=c++ (GCC) 14.2.1 20240912 (Red Hat 14.2.1-3)",
+    "environment_record": "poc/results/linux-x86_64/environment/runtime-20261102T161747Z-31515.txt"
+  },
+  "command": "runtime contract: daemon -> task-start/status/stop -> SIGKILL -> restart",
+  "started_at": "2026-11-02T16:17:56Z",
+  "duration_ms": 4374,
+  "metrics": {
+    "pid": 33784,
+    "pgid": 33784,
+    "process_tree_lines": 3,
+    "task_records": 1,
+    "concurrent_requests": 40,
+    "daemon_rss_kib_before": 5384,
+    "daemon_rss_kib_after": 5384
+  },
+  "checks": {
+    "sqlite_history": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/start-initial.jsonl",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/start-duplicate.jsonl",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/status-before.jsonl",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/status-after.jsonl",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/stop.jsonl",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/task.log",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/daemon.log",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/tasks.sqlite",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/concurrency",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/client-disconnect.log",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/corrupt-daemon.log",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/corrupt.sqlite",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/sqlite-write-failure.jsonl",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/edge",
+    "poc/results/linux-x86_64/cpp/runtime-20261102T161747Z-31515/long-run"
+  ],
+  "known_limitations": [
+    "Linux x86_64 target; verify source cleanliness before final scoring",
+    "Linux process start token uses /proc start time",
+    "Async task exit codes are not yet persisted",
+    "SQLite lock contention, disk-full, and upgrade compatibility are not covered"
+  ]
+}

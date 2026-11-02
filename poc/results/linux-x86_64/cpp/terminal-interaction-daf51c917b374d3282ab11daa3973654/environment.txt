@@ -1,0 +1,6 @@
+os=Linux
+release=6.11.4-301.fc41.x86_64
+architecture=x86_64
+platform=linux-x86_64
+language=cpp
+toolchain=c++ (GCC) 14.2.1 20240912 (Red Hat 14.2.1-3)

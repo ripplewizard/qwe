@@ -1,0 +1,44 @@
+{
+  "case_id": "T08",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/linux-x86_64/rust/T08-attach-t08-bcf8b199d4a04e1eb2762b54ccd89eff/environment.txt"
+  },
+  "command": "attach-smoke rust",
+  "started_at": "2026-11-02T15:49:23Z",
+  "duration_ms": 1145,
+  "metrics": {
+    "output_bytes": 239
+  },
+  "checks": {
+    "duplicate_start_rejected": true,
+    "session_started": true,
+    "wrong_owner_rejected": true,
+    "initial_attach": true,
+    "malformed_input_rejected": true,
+    "initial_input": true,
+    "detach": true,
+    "pty_survives": true,
+    "lease_preserved": true,
+    "detached_input_rejected": true,
+    "reattach": true,
+    "screen_restored": true,
+    "detached_input_not_executed": true,
+    "input_after_reattach": true,
+    "process_exited_cleanly": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/T08-attach-t08-bcf8b199d4a04e1eb2762b54ccd89eff/session.pty.log",
+    "poc/results/linux-x86_64/rust/T08-attach-t08-bcf8b199d4a04e1eb2762b54ccd89eff/daemon.log",
+    "poc/results/linux-x86_64/rust/T08-attach-t08-bcf8b199d4a04e1eb2762b54ccd89eff/environment.txt"
+  ],
+  "known_limitations": [
+    "Snapshot is the complete raw PTY stream, not a compact VT state delta.",
+    "Interactive manual screen review remains required."
+  ]
+}

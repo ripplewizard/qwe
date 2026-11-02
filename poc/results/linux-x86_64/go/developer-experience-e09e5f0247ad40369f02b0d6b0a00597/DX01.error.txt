@@ -1,0 +1,4 @@
+exit=2
+stdout=
+stderr=unsupported command: definitely-not-a-command
+

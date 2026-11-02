@@ -1,0 +1,44 @@
+{
+  "case_id": "T08",
+  "language": "go",
+  "status": "blocked",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "go version go1.27.3 linux/amd64",
+    "environment_record": "poc/results/linux-x86_64/go/T08-attach-t08-f098b9308cf443f687f3ca98877828fd/environment.txt"
+  },
+  "command": "attach-smoke go",
+  "started_at": "2026-11-02T17:46:31Z",
+  "duration_ms": 1124,
+  "metrics": {
+    "output_bytes": 239
+  },
+  "checks": {
+    "duplicate_start_rejected": true,
+    "session_started": true,
+    "wrong_owner_rejected": true,
+    "initial_attach": true,
+    "malformed_input_rejected": true,
+    "initial_input": true,
+    "detach": true,
+    "pty_survives": true,
+    "lease_preserved": true,
+    "detached_input_rejected": true,
+    "reattach": true,
+    "screen_restored": true,
+    "detached_input_not_executed": true,
+    "input_after_reattach": true,
+    "process_exited_cleanly": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/go/T08-attach-t08-f098b9308cf443f687f3ca98877828fd/session.pty.log",
+    "poc/results/linux-x86_64/go/T08-attach-t08-f098b9308cf443f687f3ca98877828fd/daemon.log",
+    "poc/results/linux-x86_64/go/T08-attach-t08-f098b9308cf443f687f3ca98877828fd/environment.txt"
+  ],
+  "known_limitations": [
+    "Snapshot is the complete raw PTY stream, not a compact VT state delta.",
+    "Interactive manual screen review remains required."
+  ]
+}

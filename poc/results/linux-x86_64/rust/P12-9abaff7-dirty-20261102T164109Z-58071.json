@@ -1,0 +1,26 @@
+{
+  "case_id": "P12",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+  },
+  "command": "process-acceptance-smoke rust P12",
+  "started_at": "2026-11-02T16:41:09Z",
+  "duration_ms": 506,
+  "metrics": {},
+  "checks": {
+    "history_after_restart": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/process-acceptance-20261102T164109Z-58071/daemon.log",
+    "poc/results/linux-x86_64/rust/process-acceptance-20261102T164109Z-58071/tasks.sqlite"
+  ],
+  "known_limitations": [
+    "Shared-memory accounting is not part of this process test.",
+    "macOS process start tokens have one-second resolution."
+  ]
+}

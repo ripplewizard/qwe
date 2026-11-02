@@ -1,0 +1,9 @@
+$ cmake --build /home/project/uranus/bianca/poc/results/linux-x86_64/cpp/developer-experience-a7415cdfcd614c9ca92dd11abd18dc21/DX03-cpp-build
+exit=0
+--- stdout ---
+[1/3] Building CXX object CMakeFiles/qwe-poc.dir/src/main.cpp.o
+[2/3] Building CXX object CMakeFiles/qwe-poc.dir/src/runtime.cpp.o
+[3/3] Linking CXX executable qwe-poc
+
+--- stderr ---
+

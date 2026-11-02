@@ -1,0 +1,19 @@
+$ cmake -S /home/project/uranus/bianca/poc/cpp -B /home/project/uranus/bianca/poc/results/linux-x86_64/cpp/developer-experience-e65ad662491f4e2da5a992cd7039529d/DX03-cpp-build -G Ninja -DCMAKE_BUILD_TYPE=Release
+exit=0
+--- stdout ---
+-- The CXX compiler identification is GNU 14.2.1
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found SQLite3: /usr/include (found version "3.46.1")
+-- Found PkgConfig: /usr/bin/pkg-config (found version "2.3.0")
+-- Checking for module 'vterm'
+--   Found vterm, version 0.3.3
+-- Configuring done (1.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/project/uranus/bianca/poc/results/linux-x86_64/cpp/developer-experience-e65ad662491f4e2da5a992cd7039529d/DX03-cpp-build
+
+--- stderr ---
+

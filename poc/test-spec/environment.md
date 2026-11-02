@@ -2,16 +2,17 @@
 
 ## Official Baseline
 
-The primary comparison environment is Fedora Linux x86_64:
+The primary comparison environment is Linux x86_64:
 
-- Fedora Linux; record the exact release. Current reference: Fedora 35
+- Any maintained Linux distribution is acceptable; record the exact
+  distribution, release, kernel, and toolchain versions
 - At least 4 CPU cores, 8 GB RAM, and SSD storage
 - Bash, Zsh, Neovim, htop, SQLite, jq, Python 3, Ninja, and Git
 - Recorded Rust, Go, C++ compiler, CMake/Meson, kernel, CPU, and memory versions
 
 The current macOS ARM64 host is suitable for scaffold and preflight checks. It
 is a secondary environment and must not supply primary comparison scores based
-on the Fedora target.
+on the Linux target.
 
 ## Run Record
 

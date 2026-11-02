@@ -1,0 +1,50 @@
+{
+  "case_id": "P05",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rust=rustc 1.99.1 (58cf8f9c3 2026-10-13); go=go version go1.27.3 linux/amd64; cxx=c++ (GCC) 14.2.1 20240912 (Red Hat 14.2.1-3)",
+    "environment_record": "poc/results/linux-x86_64/environment/runtime-20261102T153038Z-13901.txt"
+  },
+  "command": "runtime contract: daemon -> task-start/status/stop -> SIGKILL -> restart",
+  "started_at": "2026-11-02T15:30:38Z",
+  "duration_ms": 4131,
+  "metrics": {
+    "pid": 14104,
+    "pgid": 14104,
+    "process_tree_lines": 3,
+    "task_records": 1,
+    "concurrent_requests": 40,
+    "daemon_rss_kib_before": 4668,
+    "daemon_rss_kib_after": 4668
+  },
+  "checks": {
+    "child_crash_detected": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/start-initial.jsonl",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/start-duplicate.jsonl",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/status-before.jsonl",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/status-after.jsonl",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/stop.jsonl",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/task.log",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/daemon.log",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/tasks.sqlite",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/concurrency",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/client-disconnect.log",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/corrupt-daemon.log",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/corrupt.sqlite",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/sqlite-write-failure.jsonl",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/edge",
+    "poc/results/linux-x86_64/rust/runtime-20261102T153038Z-13901/long-run"
+  ],
+  "known_limitations": [
+    "Fedora Linux x86_64 target; verify release and source cleanliness before final scoring",
+    "Linux process start token uses /proc start time",
+    "Async task exit codes are not yet persisted",
+    "SQLite lock contention, disk-full, and upgrade compatibility are not covered"
+  ]
+}

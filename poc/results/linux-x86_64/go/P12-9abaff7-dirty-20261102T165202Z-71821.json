@@ -1,0 +1,26 @@
+{
+  "case_id": "P12",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "go version go1.27.3 linux/amd64"
+  },
+  "command": "process-acceptance-smoke go P12",
+  "started_at": "2026-11-02T16:52:02Z",
+  "duration_ms": 419,
+  "metrics": {},
+  "checks": {
+    "history_after_restart": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/go/process-acceptance-20261102T165202Z-71821/daemon.log",
+    "poc/results/linux-x86_64/go/process-acceptance-20261102T165202Z-71821/tasks.sqlite"
+  ],
+  "known_limitations": [
+    "Shared-memory accounting is not part of this process test.",
+    "macOS process start tokens have one-second resolution."
+  ]
+}

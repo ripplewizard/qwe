@@ -1,0 +1,61 @@
+$ cargo build --release --manifest-path /home/project/uranus/bianca/poc/rust/Cargo.toml
+exit=0
+--- stdout ---
+
+--- stderr ---
+    Updating `tuna` index
+ Downloading crates ...
+  Downloaded fallible-iterator v0.3.0 (registry `tuna`)
+  Downloaded fallible-streaming-iterator v0.1.9 (registry `tuna`)
+  Downloaded arrayvec v0.7.8 (registry `tuna`)
+  Downloaded portable-pty v0.9.0 (registry `tuna`)
+  Downloaded pkg-config v0.3.34 (registry `tuna`)
+  Downloaded vt100 v0.18.1 (registry `tuna`)
+  Downloaded serial2 v0.2.39 (registry `tuna`)
+  Downloaded vte v0.15.0 (registry `tuna`)
+  Downloaded hashlink v0.12.2 (registry `tuna`)
+  Downloaded log v0.4.35 (registry `tuna`)
+  Downloaded rusqlite v0.41.1 (registry `tuna`)
+  Downloaded unicode-width v0.2.3 (registry `tuna`)
+  Downloaded vcpkg v0.2.15 (registry `tuna`)
+  Downloaded libsqlite3-sys v0.39.1 (registry `tuna`)
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling libc v0.2.191
+   Compiling find-msvc-tools v0.1.15
+   Compiling shlex v2.0.1
+   Compiling thiserror v1.0.69
+   Compiling vcpkg v0.2.15
+   Compiling cfg_aliases v0.1.1
+   Compiling pkg-config v0.3.34
+   Compiling cfg-if v1.0.5
+   Compiling foldhash v0.2.0
+   Compiling anyhow v1.0.104
+   Compiling bitflags v2.13.2
+   Compiling memchr v2.8.3
+   Compiling arrayvec v0.7.8
+   Compiling nix v0.28.0
+   Compiling log v0.4.35
+   Compiling shell-words v1.1.1
+   Compiling cc v1.10.0
+   Compiling hashbrown v0.17.1
+   Compiling fallible-iterator v0.3.0
+   Compiling smallvec v1.16.4
+   Compiling unicode-width v0.2.3
+   Compiling itoa v1.0.18
+   Compiling downcast-rs v1.2.1
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling vte v0.15.0
+   Compiling vt100 v0.18.1
+   Compiling syn v2.0.119
+   Compiling hashlink v0.12.2
+   Compiling libsqlite3-sys v0.39.1
+   Compiling serial2 v0.2.39
+   Compiling thiserror-impl v1.0.69
+   Compiling filedescriptor v0.8.3
+   Compiling portable-pty v0.9.0
+   Compiling rusqlite v0.41.1
+   Compiling qwe-poc v0.1.0 (/home/project/uranus/bianca/poc/rust)
+    Finished `release` profile [optimized] target(s) in 38.90s
+

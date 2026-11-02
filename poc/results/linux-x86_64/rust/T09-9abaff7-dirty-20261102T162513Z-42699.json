@@ -1,0 +1,42 @@
+{
+  "case_id": "T09",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/linux-x86_64/rust/T09-lease-20261102T162513Z-42699/environment.txt"
+  },
+  "command": "just lease-smoke rust (QWE_LEASE_MS=300)",
+  "started_at": "2026-11-02T16:25:13.894384+00:00",
+  "duration_ms": 2160,
+  "metrics": {
+    "lease_ms": 300,
+    "output_bytes": 160
+  },
+  "checks": {
+    "claim": true,
+    "touch": true,
+    "release": true,
+    "claim_conflict": true,
+    "takeover_not_expired": true,
+    "release_not_owner": true,
+    "takeover_idle": true,
+    "takeover_unknown": true,
+    "expiry_takeover": true,
+    "output_is_not_input": true,
+    "heartbeat_extends": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/T09-lease-20261102T162513Z-42699/scenarios.json",
+    "poc/results/linux-x86_64/rust/T09-lease-20261102T162513Z-42699/daemon.log",
+    "poc/results/linux-x86_64/rust/T09-lease-20261102T162513Z-42699/environment.txt",
+    "poc/results/linux-x86_64/rust/T09-lease-20261102T162513Z-42699/output-is-not-input.pty.log"
+  ],
+  "known_limitations": [
+    "Lease state is in-memory for this POC slice.",
+    "Attach/detach and interactive input remain T08 scope."
+  ]
+}

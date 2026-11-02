@@ -1,21 +1,21 @@
 # macOS ARM64 Results
 
-These are macOS preflight results. They verify behavior and expose platform
-differences but do not provide official Fedora x86_64 comparison scores.
+Secondary comparison and preflight result directory. These results exercise
+platform behavior but do not replace the Linux x86_64 primary target.
 
-The terminal and runtime recovery slices pass for Rust, Go, and C++. T03 remains
-blocked pending manual interaction.
+Current full-suite evidence revision is `9abaff7-dirty`; final scoring requires
+regeneration from a clean commit.
 
-T05/T06 pass through Rust `vt100`, Go `vt10x`, and C++ libvterm.
+Current coverage:
 
-Runtime coverage includes concurrent IPC, partial-client disconnect isolation,
-rejection of a corrupt SQLite database, and injected SQLite write errors.
-T10 preserves all 50,000 long-output sequence boundaries.
+- T01/T02 and T05–T07/T09/T10 pass for Rust, Go, and C++.
+- T03/T04/T08/T11 have automated preflights and platform manual notes, but
+  remain `blocked` pending independent human sign-off.
+- T12 records the same terminal-loss boundary as Linux.
+- P01–P12 and D01–D08 pass.
+- RM01–RM05 pass; GPU-capable metrics report `unsupported`.
+- DX01–DX03 pass.
+- XP01/EX01/MC01 are generated for every language.
 
-P01/P05/P11 cover short process history, child crash detection, and cwd/env
-inheritance. D08 records 100 requests and daemon RSS before/after.
-
-The PTY resize implementation sends an explicit SIGWINCH to the foreground
-process group after `TIOCSWINSZ`. This avoids driver-specific delivery
-differences between macOS and Linux.
-
+The PTY resize implementation sends an explicit SIGWINCH after `TIOCSWINSZ`.
+Manual observations are under `manual/`.

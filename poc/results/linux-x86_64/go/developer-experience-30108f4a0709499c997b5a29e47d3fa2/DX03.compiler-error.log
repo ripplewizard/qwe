@@ -1,0 +1,9 @@
+$ go run /home/project/uranus/bianca/poc/results/linux-x86_64/go/developer-experience-30108f4a0709499c997b5a29e47d3fa2/DX03-go-build/broken.go
+exit=1
+--- stdout ---
+
+--- stderr ---
+# command-line-arguments
+DX03-go-build/broken.go:2:19: declared and not used: value
+DX03-go-build/broken.go:2:31: cannot use "no" (untyped string constant) as int value in variable declaration
+

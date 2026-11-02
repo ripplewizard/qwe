@@ -1,0 +1,10 @@
+/home/project/uranus/bianca/poc/results/linux-x86_64/rust/developer-experience-42e13fd25c4f4891866605769bc8bf87/DX03-rust-build/target/release/deps/log-e1d5e1d416e61971.d: /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/lib.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/macros.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/serde.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/__private_api.rs
+
+/home/project/uranus/bianca/poc/results/linux-x86_64/rust/developer-experience-42e13fd25c4f4891866605769bc8bf87/DX03-rust-build/target/release/deps/liblog-e1d5e1d416e61971.rlib: /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/lib.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/macros.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/serde.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/__private_api.rs
+
+/home/project/uranus/bianca/poc/results/linux-x86_64/rust/developer-experience-42e13fd25c4f4891866605769bc8bf87/DX03-rust-build/target/release/deps/liblog-e1d5e1d416e61971.rmeta: /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/lib.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/macros.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/serde.rs /usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/__private_api.rs
+
+/usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/lib.rs:
+/usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/macros.rs:
+/usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/serde.rs:
+/usr/local/rust/registry/src/mirrors.tuna.tsinghua.edu.cn-4dc01642fd091eda/log-0.4.35/src/__private_api.rs:

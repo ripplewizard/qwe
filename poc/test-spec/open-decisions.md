@@ -6,8 +6,9 @@ behavior.
 
 ## P0 — Blocking
 
-1. **Automation contract:** PTY, task lifecycle, IPC, and evidence collection
-   are defined for the current slice. Detach/attach and lease commands remain.
+1. **Automation contract:** PTY, task lifecycle, IPC, evidence collection, POC
+   Session Lease commands, and session attach/input contracts are defined for
+   the current slice.
 2. **Terminal state baseline:** select a comparable VT state model and record
    which emulator/parser component provides it.
 3. **Session recovery boundary:** specify separately what happens to the child

@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
@@ -13,6 +14,7 @@
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 #include <vterm.h>
@@ -26,8 +28,11 @@ struct PtyRunResult {
     std::string output;
 };
 
+int open_fd_count();
+
 bool run_pty_session(std::string_view command, const std::string& log_path,
-                     PtyRunResult& result) {
+                     PtyRunResult& result,
+                     const std::string& shell = "sh") {
     const int master = posix_openpt(O_RDWR | O_NOCTTY);
     if (master < 0) {
         std::cerr << "posix_openpt failed: " << std::strerror(errno) << '\n';
@@ -87,7 +92,7 @@ bool run_pty_session(std::string_view command, const std::string& log_path,
         }
         setenv("TERM", "xterm-256color", 1);
         setenv("NVIM_TEST_MARKER", "QWE_NVIM_OK", 1);
-        execlp("sh", "sh", static_cast<char*>(nullptr));
+        execlp(shell.c_str(), shell.c_str(), static_cast<char*>(nullptr));
         _exit(127);
     }
 
@@ -220,24 +225,74 @@ int run_pty_smoke(const std::string& log_path) {
     constexpr std::string_view command =
         "printf 'QWE_PTY_READY\\n'; printf 'QWE_PTY_SIZE '; stty size; "
         "printf 'QWE_PTY_END\\n'; exit 0\r";
-    PtyRunResult result;
-    if (!run_pty_session(command, log_path, result)) {
+    const int before = open_fd_count();
+    if (before < 0) {
         return 1;
     }
-
-    const std::string& output = result.output;
-    const bool shell_check = output.find("QWE_PTY_READY") != std::string::npos &&
-                             output.find("QWE_PTY_END") != std::string::npos;
-    const bool size_check =
-        output.find("QWE_PTY_SIZE 24 80") != std::string::npos;
-    const bool passed = result.exit_code == 0 && shell_check && size_check;
+    std::string output;
+    bool bash_check = false;
+    bool zsh_check = false;
+    for (const std::string shell : {"bash", "zsh"}) {
+        PtyRunResult result;
+        if (!run_pty_session(command, "", result, shell)) {
+            return 1;
+        }
+        const bool valid =
+            result.exit_code == 0 &&
+            result.output.find("QWE_PTY_READY") != std::string::npos &&
+            result.output.find("QWE_PTY_SIZE 24 80") != std::string::npos &&
+            result.output.find("QWE_PTY_END") != std::string::npos;
+        if (shell == "bash") {
+            bash_check = valid;
+        } else {
+            zsh_check = valid;
+        }
+        output += result.output;
+    }
+    if (!log_path.empty()) {
+        std::ofstream log(log_path, std::ios::binary);
+        log.write(output.data(), static_cast<std::streamsize>(output.size()));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const int after = open_fd_count();
+    if (after < 0) {
+        return 1;
+    }
+    const bool shell_check = bash_check && zsh_check;
+    const bool size_check = output.find("QWE_PTY_SIZE 24 80") != std::string::npos;
+    const bool fd_no_leak = after <= before;
+    const bool process_reaped = bash_check && zsh_check;
+    const bool passed =
+        shell_check && size_check && fd_no_leak && process_reaped;
 
     std::cout << R"({"contract":"qwe-poc/0.1","feature":"pty-smoke","implementation":"cpp","exit_code":)"
-              << result.exit_code << R"(,"bytes":)" << output.size()
+              << 0 << R"(,"bytes":)" << output.size()
               << R"(,"checks":{"shell":)" << (shell_check ? "true" : "false")
+              << R"(,"bash":)" << (bash_check ? "true" : "false")
+              << R"(,"zsh":)" << (zsh_check ? "true" : "false")
               << R"(,"window_size":)" << (size_check ? "true" : "false")
+              << R"(,"fd_no_leak":)" << (fd_no_leak ? "true" : "false")
+              << R"(,"process_reaped":)" << (process_reaped ? "true" : "false")
               << "}}\n";
     return passed ? 0 : 1;
+}
+
+int open_fd_count() {
+#ifdef __APPLE__
+    const char* path = "/dev/fd";
+#else
+    const char* path = "/proc/self/fd";
+#endif
+    DIR* directory = opendir(path);
+    if (directory == nullptr) {
+        return -1;
+    }
+    int count = 0;
+    while (readdir(directory) != nullptr) {
+        ++count;
+    }
+    closedir(directory);
+    return count;
 }
 
 int run_editor_smoke(const std::string& log_path) {
@@ -313,6 +368,21 @@ int run_long_output_smoke(const std::string& log_path,
     return passed ? 0 : 1;
 }
 
+std::string screen_text_of(VTermScreen* screen) {
+    std::vector<char> text(24 * 80 * 8 + 1);
+    const VTermRect full_rect{0, 24, 0, 80};
+    const size_t size =
+        vterm_screen_get_text(screen, text.data(), text.size() - 1, full_rect);
+    return std::string(text.data(), size);
+}
+
+std::string trim_line(std::string value) {
+    while (!value.empty() && value.back() == ' ') {
+        value.pop_back();
+    }
+    return value;
+}
+
 int run_vt_smoke(const std::string& log_path,
                  const std::string& fixture_path) {
     char* resolved_fixture = realpath(fixture_path.c_str(), nullptr);
@@ -323,24 +393,54 @@ int run_vt_smoke(const std::string& log_path,
     }
     const std::string command =
         "exec python3 '" + std::string(resolved_fixture) + "'\r";
+    const std::string alt_command =
+        "exec python3 '" + std::string(resolved_fixture) + "' alt\r";
     free(resolved_fixture);
     PtyRunResult result;
-    if (!run_pty_session(command, log_path, result)) {
+    if (!run_pty_session(command, "", result)) {
         return 1;
+    }
+    PtyRunResult alt_result;
+    if (!run_pty_session(alt_command, "", alt_result)) {
+        return 1;
+    }
+    if (!log_path.empty()) {
+        std::ofstream log(log_path, std::ios::binary);
+        log.write(result.output.data(),
+                  static_cast<std::streamsize>(result.output.size()));
+        log.write(alt_result.output.data(),
+                  static_cast<std::streamsize>(alt_result.output.size()));
     }
 
     VTerm* terminal = vterm_new(24, 80);
     vterm_set_utf8(terminal, 1);
     VTermScreen* screen = vterm_obtain_screen(terminal);
+    struct TerminalProbe {
+        std::string title;
+        bool cursor_visible = true;
+    } probe;
+    VTermScreenCallbacks callbacks{};
+    callbacks.settermprop = +[](VTermProp prop, VTermValue* value, void* user) {
+        auto* state = static_cast<TerminalProbe*>(user);
+        if (prop == VTERM_PROP_CURSORVISIBLE) {
+            state->cursor_visible = value->boolean != 0;
+        } else if (prop == VTERM_PROP_TITLE) {
+            if (value->string.initial) {
+                state->title.clear();
+            }
+            state->title.append(value->string.str, value->string.len);
+        }
+        return 1;
+    };
+    callbacks.movecursor = +[](VTermPos, VTermPos, int visible, void* user) {
+        static_cast<TerminalProbe*>(user)->cursor_visible = visible != 0;
+        return 1;
+    };
+    vterm_screen_set_callbacks(screen, &callbacks, &probe);
     vterm_screen_reset(screen, 1);
     (void)vterm_input_write(terminal, result.output.data(), result.output.size());
 
-    std::vector<char> text(24 * 80 * 8 + 1);
-    const VTermRect full_rect{0, 24, 0, 80};
-    const size_t text_size =
-        vterm_screen_get_text(screen, text.data(), text.size() - 1, full_rect);
-    text[text_size] = '\0';
-    const std::string screen_text(text.data(), text_size);
+    const std::string screen_text = screen_text_of(screen);
 
     VTermScreenCell red_cell{};
     VTermScreenCell blue_cell{};
@@ -361,13 +461,38 @@ int run_vt_smoke(const std::string& log_path,
     const bool erase =
         erase_cell.chars[0] == 0 || erase_cell.chars[0] == ' ';
     const bool cursor_ok = cursor.row == 5 && cursor.col == 10;
+    std::vector<std::string> screen_lines;
+    {
+        std::istringstream lines(screen_text);
+        std::string line;
+        while (std::getline(lines, line)) {
+            screen_lines.push_back(trim_line(line));
+        }
+    }
+    const bool scroll_region =
+        screen_lines.size() > 8 && screen_lines[6] == "OUTSIDE" &&
+        screen_lines[7] == "SCROLL9" && screen_lines[8] == "SCROLL10";
+    const bool title = probe.title == "QWE_VT_TEST";
+    const bool cursor_hidden = !probe.cursor_visible;
     const bool unicode =
         screen_text.find("中文") != std::string::npos &&
         screen_text.find("😀") != std::string::npos &&
         screen_text.find("é") != std::string::npos;
     const bool wide = wide_cell.chars[0] == 0x4e2d && wide_cell.width == 2;
-    const bool t05 =
-        result.exit_code == 0 && base_text && colors && erase && cursor_ok;
+    VTerm* alt_terminal = vterm_new(24, 80);
+    vterm_set_utf8(alt_terminal, 1);
+    VTermScreen* alt_screen = vterm_obtain_screen(alt_terminal);
+    vterm_screen_reset(alt_screen, 1);
+    (void)vterm_input_write(
+        alt_terminal, alt_result.output.data(), alt_result.output.size());
+    const std::string alt_text = screen_text_of(alt_screen);
+    const bool alternate_screen =
+        alt_result.exit_code == 0 &&
+        alt_text.find("ALT_SCREEN") != std::string::npos;
+    vterm_free(alt_terminal);
+    const bool t05 = result.exit_code == 0 && base_text && colors && erase &&
+                     cursor_ok && cursor_hidden && title && scroll_region &&
+                     alternate_screen;
     const bool t06 = result.exit_code == 0 && unicode && wide;
     vterm_free(terminal);
 
@@ -377,7 +502,11 @@ int run_vt_smoke(const std::string& log_path,
         << (base_text ? "true" : "false") << R"(,"colors":)"
         << (colors ? "true" : "false") << R"(,"erase":)"
         << (erase ? "true" : "false") << R"(,"cursor":)"
-        << (cursor_ok ? "true" : "false") << R"(,"unicode":)"
+        << (cursor_ok ? "true" : "false") << R"(,"cursor_hidden":)"
+        << (cursor_hidden ? "true" : "false") << R"(,"title":)"
+        << (title ? "true" : "false") << R"(,"scroll_region":)"
+        << (scroll_region ? "true" : "false") << R"(,"alternate_screen":)"
+        << (alternate_screen ? "true" : "false") << R"(,"unicode":)"
         << (unicode ? "true" : "false") << R"(,"wide":)"
         << (wide ? "true" : "false") << "}}\n";
     return t05 && t06 ? 0 : 1;
@@ -460,7 +589,24 @@ int run_resize_smoke(const std::string& log_path,
     } sizes[] = {{120, 40}, {80, 24}, {160, 50}, {40, 15}};
     bool size_checks = true;
     bool winch_checks = true;
+    bool emulator_checks = true;
     std::string sizes_json;
+    struct ResizeProbe {
+        int rows = 0;
+        int cols = 0;
+    } resize_probe;
+    VTerm* emulator = vterm_new(24, 80);
+    VTermScreen* emulator_screen = vterm_obtain_screen(emulator);
+    VTermScreenCallbacks resize_callbacks{};
+    resize_callbacks.resize = +[](int rows, int cols, void* user) {
+        auto* probe = static_cast<ResizeProbe*>(user);
+        probe->rows = rows;
+        probe->cols = cols;
+        return 1;
+    };
+    vterm_screen_set_callbacks(
+        emulator_screen, &resize_callbacks, &resize_probe);
+    vterm_screen_reset(emulator_screen, 1);
 
     for (const auto& target : sizes) {
         winsize size{};
@@ -470,6 +616,11 @@ int run_resize_smoke(const std::string& log_path,
             close(master);
             return 1;
         }
+        resize_probe = {};
+        vterm_set_size(emulator, target.rows, target.cols);
+        emulator_checks = emulator_checks &&
+                          resize_probe.rows == target.rows &&
+                          resize_probe.cols == target.cols;
 
         constexpr std::string_view check = "check\r";
         if (write(master, check.data(), check.size()) < 0) {
@@ -521,6 +672,7 @@ int run_resize_smoke(const std::string& log_path,
         return 1;
     }
     const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    vterm_free(emulator);
 
     if (!log_path.empty()) {
         std::ofstream log(log_path, std::ios::binary);
@@ -530,14 +682,15 @@ int run_resize_smoke(const std::string& log_path,
         }
     }
 
-    const bool passed = ready && size_checks && winch_checks && completed &&
-                        exit_code == 0;
+    const bool passed = ready && size_checks && winch_checks &&
+                        emulator_checks && completed && exit_code == 0;
     std::cout
         << R"({"contract":"qwe-poc/0.1","feature":"pty-resize","implementation":"cpp","exit_code":)"
         << exit_code << R"(,"bytes":)" << output.size()
         << R"(,"checks":{"ready":)" << (ready ? "true" : "false")
         << R"(,"size":)" << (size_checks ? "true" : "false")
         << R"(,"winch":)" << (winch_checks ? "true" : "false")
+        << R"(,"emulator":)" << (emulator_checks ? "true" : "false")
         << R"(},"sizes":[)" << sizes_json << "]}\n";
     return passed ? 0 : 1;
 }
@@ -610,9 +763,105 @@ int main(int argc, char* argv[]) {
         return run_runtime_client(operation, arguments);
     }
 
+    if (command == "task-history" || command == "task-signal") {
+        std::vector<std::string> arguments;
+        for (int index = 2; index < argc; ++index) {
+            arguments.emplace_back(argv[index]);
+        }
+        return run_runtime_client(
+            command == "task-history" ? "TASK_HISTORY" : "TASK_SIGNAL",
+            arguments);
+    }
+
+    if (command == "task-resource" || command == "task-resource-sample") {
+        std::vector<std::string> arguments;
+        for (int index = 2; index < argc; ++index) {
+            arguments.emplace_back(argv[index]);
+        }
+        return run_runtime_client(
+            command == "task-resource" ? "TASK_RESOURCE"
+                                       : "TASK_RESOURCE_SAMPLE",
+            arguments);
+    }
+
+    if (command == "task-start-timeout") {
+        std::vector<std::string> arguments;
+        for (int index = 2; index < argc; ++index) {
+            arguments.emplace_back(argv[index]);
+        }
+        return run_runtime_client("TIMEOUT_START", arguments);
+    }
+
+    if (command == "task-start-restart") {
+        std::vector<std::string> arguments;
+        for (int index = 2; index < argc; ++index) {
+            arguments.emplace_back(argv[index]);
+        }
+        return run_runtime_client("RESTART_START", arguments);
+    }
+
+    if (command == "task-restart-status") {
+        std::vector<std::string> arguments;
+        for (int index = 2; index < argc; ++index) {
+            arguments.emplace_back(argv[index]);
+        }
+        return run_runtime_client("RESTART_STATUS", arguments);
+    }
+
+    if (command == "lease-claim" || command == "lease-touch" ||
+        command == "lease-release" || command == "lease-status" ||
+        command == "lease-takeover") {
+        std::vector<std::string> arguments;
+        for (int index = 2; index < argc; ++index) {
+            arguments.emplace_back(argv[index]);
+        }
+        const std::string operation =
+            command == "lease-claim"
+                ? "LEASE_CLAIM"
+                : (command == "lease-touch"
+                       ? "LEASE_TOUCH"
+                       : (command == "lease-release"
+                              ? "LEASE_RELEASE"
+                              : (command == "lease-status"
+                                     ? "LEASE_STATUS"
+                                     : "LEASE_TAKEOVER")));
+        return run_runtime_client(operation, arguments);
+    }
+
+    if (command == "session-start") {
+        std::vector<std::string> arguments;
+        for (int index = 2; index < argc; ++index) {
+            arguments.emplace_back(argv[index]);
+        }
+        return run_runtime_client("SESSION_START", arguments);
+    }
+
+    if (command == "session-attach" || command == "session-detach" ||
+        command == "session-input" || command == "session-status") {
+        std::vector<std::string> arguments;
+        for (int index = 2; index < argc; ++index) {
+            arguments.emplace_back(argv[index]);
+        }
+        const std::string operation =
+            command == "session-attach"
+                ? "SESSION_ATTACH"
+                : (command == "session-detach"
+                       ? "SESSION_DETACH"
+                       : (command == "session-input" ? "SESSION_INPUT"
+                                                     : "SESSION_STATUS"));
+        return run_runtime_client(operation, arguments);
+    }
+
+    if (command == "dashboard") {
+        if (argc != 3) {
+            std::cerr << "usage: qwe-poc dashboard <sqlite-path>\n";
+            return 2;
+        }
+        return run_dashboard(argv[2]);
+    }
+
     if (command == "help") {
-        std::cout
-            << "usage: qwe-poc <probe|pty-smoke|editor-smoke|resize-smoke> [log-path]\n";
+        std::cout << "usage: qwe-poc <smoke|daemon|task-*|lease-*|session-start>\n";
         return 0;
     }
 

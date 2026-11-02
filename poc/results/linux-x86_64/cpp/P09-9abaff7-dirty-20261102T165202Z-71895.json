@@ -1,0 +1,26 @@
+{
+  "case_id": "P09",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "9abaff7-dirty",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "c++ (GCC) 14.2.1 20240912 (Red Hat 14.2.1-3)"
+  },
+  "command": "process-acceptance-smoke cpp P09",
+  "started_at": "2026-11-02T16:52:02Z",
+  "duration_ms": 428,
+  "metrics": {},
+  "checks": {
+    "pid_reuse_rejected": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/cpp/process-acceptance-20261102T165202Z-71895/daemon.log",
+    "poc/results/linux-x86_64/cpp/process-acceptance-20261102T165202Z-71895/tasks.sqlite"
+  ],
+  "known_limitations": [
+    "Shared-memory accounting is not part of this process test.",
+    "macOS process start tokens have one-second resolution."
+  ]
+}

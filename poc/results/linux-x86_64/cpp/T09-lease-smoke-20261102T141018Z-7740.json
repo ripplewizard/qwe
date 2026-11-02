@@ -1,0 +1,120 @@
+{
+  "case_id": "T09",
+  "language": "cpp",
+  "platform": "linux-x86_64",
+  "status": "blocked",
+  "scenarios": [
+    {
+      "id": "claim",
+      "status": "pass",
+      "response": {
+        "ok": true,
+        "request_id": "lease-test-fc2ded7cbb2f4632a8fa3862a7a6407c",
+        "session_id": "claim-c9cc26699083476ca1e59a338cdfcb9f",
+        "state": "owned",
+        "owner": "client-a",
+        "remaining_ms": 299,
+        "output_bytes": 0
+      },
+      "last_error": null
+    },
+    {
+      "id": "touch",
+      "status": "pass",
+      "response": {
+        "ok": true,
+        "request_id": "lease-test-46195c556cb3472596a0b8c67b102d41",
+        "session_id": "touch-46981992fa4a4ca9bbbf3387030c8485",
+        "state": "owned",
+        "owner": "client-a",
+        "remaining_ms": 98,
+        "output_bytes": 0
+      },
+      "last_error": null
+    },
+    {
+      "id": "release",
+      "status": "pass",
+      "response": {
+        "ok": true,
+        "request_id": "lease-test-b8cee54b3f8e47e8b5bc53045777d636",
+        "session_id": "release-bf2de4105e2e49d5a6c5f0988b5d2729",
+        "state": "owned",
+        "owner": "client-b",
+        "remaining_ms": 300,
+        "output_bytes": 0
+      },
+      "last_error": null
+    },
+    {
+      "id": "claim-conflict",
+      "status": "pass",
+      "response": {
+        "ok": true,
+        "request_id": "lease-test-072f7735cd13443e8796f98547c37b2a",
+        "session_id": "claim-conflict-f291cac1c7f44a79b0f68bf0a2cb9db2",
+        "state": "owned",
+        "owner": "client-a",
+        "remaining_ms": 298,
+        "output_bytes": 0
+      },
+      "last_error": "already_owned"
+    },
+    {
+      "id": "takeover-not-expired",
+      "status": "pass",
+      "response": {
+        "ok": true,
+        "request_id": "lease-test-cda8c8e9132848dc80832472d937aace",
+        "session_id": "takeover-not-expired-22c7975d90274fb68f3851841c554cc4",
+        "state": "owned",
+        "owner": "client-a",
+        "remaining_ms": 298,
+        "output_bytes": 0
+      },
+      "last_error": "not_expired"
+    },
+    {
+      "id": "expiry-takeover",
+      "status": "pass",
+      "response": {
+        "ok": true,
+        "request_id": "lease-test-145941fa3ad14e7bb71cf9fe0ee7f843",
+        "session_id": "expiry-takeover-dbe515544a094ad481a5ea158f5a16df",
+        "state": "owned",
+        "owner": "client-b",
+        "remaining_ms": 300,
+        "output_bytes": 0
+      },
+      "last_error": "not_owner"
+    },
+    {
+      "id": "output-is-not-input",
+      "status": "pass",
+      "response": {
+        "ok": true,
+        "request_id": "lease-test-d5999673adaa493081be60cd6fcac723",
+        "session_id": "output-is-not-input-daae8e32659349ecb24527070767fadb",
+        "state": "expired",
+        "owner": null,
+        "remaining_ms": 0,
+        "output_bytes": 16
+      },
+      "last_error": null
+    },
+    {
+      "id": "heartbeat-extends",
+      "status": "pass",
+      "response": {
+        "ok": true,
+        "request_id": "lease-test-3d760fc26bd84e05845bc84970ccf5a0",
+        "session_id": "heartbeat-extends-1d915ed7a7ab4894a3059b7e4879bb60",
+        "state": "owned",
+        "owner": "client-a",
+        "remaining_ms": 48,
+        "output_bytes": 0
+      },
+      "last_error": null
+    }
+  ]
+}

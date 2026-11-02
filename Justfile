@@ -86,6 +86,7 @@ build language="all":
 
     build_rust() {
       mkdir -p "$build_root/rust"
+      CARGO_HOME="$build_root/rust/cargo-home" \
       CARGO_TARGET_DIR="$build_root/rust/cargo" \
         cargo build --release --manifest-path "$root/rust/Cargo.toml"
       cp "$build_root/rust/cargo/release/qwe-poc" "$build_root/rust/qwe-poc"
@@ -305,6 +306,252 @@ runtime-smoke-linux:
     }
     exec just --justfile "{{ justfile() }}" _runtime-smoke "linux-$(uname -m)"
 
+lease-smoke language="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) platform="macos-$(uname -m)" ;;
+      Linux) platform="linux-$(uname -m)" ;;
+      *) printf 'unsupported platform: %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    case "{{ language }}" in
+      rust|go|cpp)
+        just --justfile "{{ justfile() }}" _lease-smoke "$platform" "{{ language }}"
+        ;;
+      all)
+        for implementation in rust go cpp; do
+          just --justfile "{{ justfile() }}" _lease-smoke "$platform" "$implementation"
+        done
+        ;;
+      *)
+        printf 'usage: just lease-smoke [all|rust|go|cpp]\n' >&2
+        exit 2
+        ;;
+    esac
+
+attach-smoke language="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) platform="macos-$(uname -m)" ;;
+      Linux) platform="linux-$(uname -m)" ;;
+      *) printf 'unsupported platform: %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    case "{{ language }}" in
+      rust|go|cpp)
+        just --justfile "{{ justfile() }}" _attach-smoke "$platform" "{{ language }}"
+        ;;
+      all)
+        for implementation in rust go cpp; do
+          just --justfile "{{ justfile() }}" _attach-smoke "$platform" "$implementation"
+        done
+        ;;
+      *)
+        printf 'usage: just attach-smoke [all|rust|go|cpp]\n' >&2
+        exit 2
+        ;;
+    esac
+
+terminal-interaction-smoke language="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) platform="macos-$(uname -m)" ;;
+      Linux) platform="linux-$(uname -m)" ;;
+      *) printf 'unsupported platform: %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    case "{{ language }}" in
+      rust|go|cpp)
+        just --justfile "{{ justfile() }}" _terminal-interaction-smoke "$platform" "{{ language }}"
+        ;;
+      all)
+        for implementation in rust go cpp; do
+          just --justfile "{{ justfile() }}" _terminal-interaction-smoke "$platform" "$implementation"
+        done
+        ;;
+      *)
+        printf 'usage: just terminal-interaction-smoke [all|rust|go|cpp]\n' >&2
+        exit 2
+        ;;
+    esac
+
+developer-experience-smoke language="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) platform="macos-$(uname -m)" ;;
+      Linux) platform="linux-$(uname -m)" ;;
+      *) printf 'unsupported platform: %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    case "{{ language }}" in
+      rust|go|cpp)
+        just --justfile "{{ justfile() }}" _developer-experience-smoke "$platform" "{{ language }}"
+        ;;
+      all)
+        for implementation in rust go cpp; do
+          just --justfile "{{ justfile() }}" _developer-experience-smoke "$platform" "$implementation"
+        done
+        ;;
+      *)
+        printf 'usage: just developer-experience-smoke [all|rust|go|cpp]\n' >&2
+        exit 2
+        ;;
+    esac
+
+platform-comparison:
+    python3 "{{ poc }}/test-runner/platform_comparison.py" \
+      --results-root "{{ poc }}/results" \
+      --matrix "{{ poc }}/test-spec/matrix.md" \
+      --report "{{ poc }}/reports/platform-comparison.md"
+
+review-results:
+    python3 "{{ poc }}/test-runner/review_results.py"
+    just --justfile "{{ justfile() }}" platform-comparison
+
+verify-results:
+    python3 "{{ poc }}/test-runner/verify_results.py" \
+      --results-root "{{ poc }}/results" \
+      --schema "{{ poc }}/test-spec/result.schema.json" \
+      --matrix "{{ poc }}/test-spec/matrix.md"
+
+timeout-smoke language="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) platform="macos-$(uname -m)" ;;
+      Linux) platform="linux-$(uname -m)" ;;
+      *) printf 'unsupported platform: %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    case "{{ language }}" in
+      rust|go|cpp)
+        just --justfile "{{ justfile() }}" _timeout-smoke "$platform" "{{ language }}"
+        ;;
+      all)
+        for implementation in rust go cpp; do
+          just --justfile "{{ justfile() }}" _timeout-smoke "$platform" "$implementation"
+        done
+        ;;
+      *)
+        printf 'usage: just timeout-smoke [all|rust|go|cpp]\n' >&2
+        exit 2
+        ;;
+    esac
+
+restart-smoke language="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) platform="macos-$(uname -m)" ;;
+      Linux) platform="linux-$(uname -m)" ;;
+      *) printf 'unsupported platform: %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    case "{{ language }}" in
+      rust|go|cpp)
+        just --justfile "{{ justfile() }}" _restart-smoke "$platform" "{{ language }}"
+        ;;
+      all)
+        for implementation in rust go cpp; do
+          just --justfile "{{ justfile() }}" _restart-smoke "$platform" "$implementation"
+        done
+        ;;
+      *)
+        printf 'usage: just restart-smoke [all|rust|go|cpp]\n' >&2
+        exit 2
+        ;;
+    esac
+
+upgrade-smoke language="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) platform="macos-$(uname -m)" ;;
+      Linux) platform="linux-$(uname -m)" ;;
+      *) printf 'unsupported platform: %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    case "{{ language }}" in
+      rust|go|cpp)
+        just --justfile "{{ justfile() }}" _upgrade-smoke "$platform" "{{ language }}"
+        ;;
+      all)
+        for implementation in rust go cpp; do
+          just --justfile "{{ justfile() }}" _upgrade-smoke "$platform" "$implementation"
+        done
+        ;;
+      *)
+        printf 'usage: just upgrade-smoke [all|rust|go|cpp]\n' >&2
+        exit 2
+        ;;
+    esac
+
+process-acceptance-smoke language="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) platform="macos-$(uname -m)" ;;
+      Linux) platform="linux-$(uname -m)" ;;
+      *) printf 'unsupported platform: %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    case "{{ language }}" in
+      rust|go|cpp)
+        just --justfile "{{ justfile() }}" _process-acceptance-smoke "$platform" "{{ language }}"
+        ;;
+      all)
+        for implementation in rust go cpp; do
+          just --justfile "{{ justfile() }}" _process-acceptance-smoke "$platform" "$implementation"
+        done
+        ;;
+      *)
+        printf 'usage: just process-acceptance-smoke [all|rust|go|cpp]\n' >&2
+        exit 2
+        ;;
+    esac
+
+resource-smoke language="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) platform="macos-$(uname -m)" ;;
+      Linux) platform="linux-$(uname -m)" ;;
+      *) printf 'unsupported platform: %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    case "{{ language }}" in
+      rust|go|cpp)
+        just --justfile "{{ justfile() }}" _resource-smoke "$platform" "{{ language }}"
+        ;;
+      all)
+        for implementation in rust go cpp; do
+          just --justfile "{{ justfile() }}" _resource-smoke "$platform" "$implementation"
+        done
+        ;;
+      *)
+        printf 'usage: just resource-smoke [all|rust|go|cpp]\n' >&2
+        exit 2
+        ;;
+    esac
+
+daemon-depth-smoke language="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -s)" in
+      Darwin) platform="macos-$(uname -m)" ;;
+      Linux) platform="linux-$(uname -m)" ;;
+      *) printf 'unsupported platform: %s\n' "$(uname -s)" >&2; exit 2 ;;
+    esac
+    case "{{ language }}" in
+      rust|go|cpp)
+        just --justfile "{{ justfile() }}" _daemon-depth-smoke "$platform" "{{ language }}"
+        ;;
+      all)
+        for implementation in rust go cpp; do
+          just --justfile "{{ justfile() }}" _daemon-depth-smoke "$platform" "$implementation"
+        done
+        ;;
+      *)
+        printf 'usage: just daemon-depth-smoke [all|rust|go|cpp]\n' >&2
+        exit 2
+        ;;
+    esac
+
 sync-linux-results:
     rsync -az "{{ linux_host }}:{{ linux_repo }}/poc/results/linux-x86_64/" "{{ poc }}/results/linux-x86_64/"
 
@@ -340,11 +587,11 @@ _terminal-smoke platform:
 
     case "$platform" in
       macos-*)
-        platform_limitation="macOS preflight run; not an official Fedora x86_64 comparison score"
+        platform_limitation="macOS preflight run; not an official Linux x86_64 comparison score"
         resize_limitation="PTY resize sends an explicit SIGWINCH to the foreground process group"
         ;;
       linux-*)
-        platform_limitation="Fedora Linux x86_64 target; verify Fedora release and source cleanliness before final scoring"
+        platform_limitation="Linux x86_64 target; verify source cleanliness before final scoring"
         resize_limitation="PTY resize sends an explicit SIGWINCH to the foreground process group"
         ;;
       *)
@@ -387,7 +634,11 @@ _terminal-smoke platform:
          .implementation == $language and
          .exit_code == 0 and
          .checks.shell == true and
-         .checks.window_size == true' >/dev/null; then
+         .checks.bash == true and
+         .checks.zsh == true and
+         .checks.window_size == true and
+         .checks.fd_no_leak == true and
+         .checks.process_reaped == true' >/dev/null; then
         summary_valid=true
       fi
 
@@ -416,6 +667,13 @@ _terminal-smoke platform:
       fi
 
       for case_id in T01 T02; do
+        if [ "$case_id" = "T01" ]; then
+          case_checks="$(printf '%s' "$summary" | jq -c \
+            '.checks | {shell, fd_no_leak, process_reaped}')"
+        else
+          case_checks="$(printf '%s' "$summary" | jq -c \
+            '.checks | {bash, zsh, window_size, process_reaped}')"
+        fi
         result_file="$result_dir/$case_id-$source_commit-$run_id.json"
         jq -n \
           --arg case_id "$case_id" \
@@ -432,7 +690,7 @@ _terminal-smoke platform:
           --arg started_at "$started_at" \
           --argjson duration_ms "$duration_ms" \
           --argjson metrics "$metrics" \
-          --argjson checks "$checks" \
+          --argjson checks "$case_checks" \
           --arg raw "poc/results/$platform/$language/$raw_name" \
           --arg stdout "poc/results/$platform/$language/$stdout_name" \
           --arg stderr "poc/results/$platform/$language/$stderr_name" \
@@ -589,6 +847,7 @@ _terminal-smoke platform:
          .checks.ready == true and
          .checks.size == true and
          .checks.winch == true and
+         .checks.emulator == true and
          (.sizes | length == 4)' >/dev/null; then
         resize_summary_valid=true
       fi
@@ -792,7 +1051,10 @@ _terminal-smoke platform:
             .checks.base_text == true and
             .checks.colors == true and
             .checks.erase == true and
-            .checks.cursor == true' >/dev/null; then
+            .checks.cursor == true and
+            .checks.title == true and
+            .checks.scroll_region == true and
+            .checks.alternate_screen == true' >/dev/null; then
         t05_status=pass
       else
         failed=1
@@ -823,9 +1085,9 @@ _terminal-smoke platform:
         if [ "$vt_case" = T05 ]; then
           vt_status="$t05_status"
           vt_checks="$(printf '%s' "$vt_summary" | jq -c \
-            '.checks | {base_text, colors, erase, cursor}' 2>/dev/null ||
+            '.checks | {base_text, colors, erase, cursor, title, scroll_region, alternate_screen}' 2>/dev/null ||
             printf '{}')"
-          vt_limitation="SGR color, line erase, and cursor state covered; title and alternate-screen behavior remain"
+          vt_limitation="SGR color, erase, cursor, title, scroll region, and alternate screen covered; manual visual comparison remains"
         else
           vt_status="$t06_status"
           vt_checks="$(printf '%s' "$vt_summary" | jq -c \
@@ -909,8 +1171,8 @@ _terminal-smoke platform:
       ' "$result_file" >/dev/null
       result_count=$((result_count + 1))
     done < <(
-      find "$results_root" -type f -name '*.json' ! -name '*.stdout.json' |
-        grep -E '/[A-Z]+[0-9]{2}-[^/]*\.json$' |
+      find "$results_root" -type f -name "*-$run_id.json" \
+        ! -name '*.stdout.json' |
         sort
     )
 
@@ -920,6 +1182,137 @@ _terminal-smoke platform:
     fi
     printf 'result structure verification PASS (%s results)\n' "$result_count"
     printf 'terminal smoke verification PASS\n'
+
+_lease-smoke platform language:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ poc }}"
+    platform="{{ platform }}"
+    language="{{ language }}"
+    just --justfile "{{ justfile() }}" build "$language"
+    python3 "$root/test-runner/lease_smoke.py" \
+      --binary "$root/build/$language/qwe-poc" \
+      --scenarios "$root/test-spec/lease-scenarios.json" \
+      --language "$language" \
+      --platform "$platform" \
+      --results-dir "$root/results/$platform/$language"
+
+_attach-smoke platform language:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ poc }}"
+    platform="{{ platform }}"
+    language="{{ language }}"
+    just --justfile "{{ justfile() }}" build "$language"
+    python3 "$root/test-runner/attach_smoke.py" \
+      --binary "$root/build/$language/qwe-poc" \
+      --language "$language" \
+      --platform "$platform" \
+      --results-dir "$root/results/$platform/$language"
+
+_terminal-interaction-smoke platform language:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ poc }}"
+    platform="{{ platform }}"
+    language="{{ language }}"
+    just --justfile "{{ justfile() }}" build "$language"
+    python3 "$root/test-runner/terminal_interaction_smoke.py" \
+      --binary "$root/build/$language/qwe-poc" \
+      --language "$language" \
+      --platform "$platform" \
+      --results-dir "$root/results/$platform/$language"
+
+_developer-experience-smoke platform language:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ poc }}"
+    platform="{{ platform }}"
+    language="{{ language }}"
+    just --justfile "{{ justfile() }}" build "$language"
+    python3 "$root/test-runner/developer_experience_smoke.py" \
+      --binary "$root/build/$language/qwe-poc" \
+      --language "$language" \
+      --platform "$platform" \
+      --results-dir "$root/results/$platform/$language"
+
+_timeout-smoke platform language:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ poc }}"
+    platform="{{ platform }}"
+    language="{{ language }}"
+    just --justfile "{{ justfile() }}" build "$language"
+    python3 "$root/test-runner/timeout_smoke.py" \
+      --binary "$root/build/$language/qwe-poc" \
+      --language "$language" \
+      --platform "$platform" \
+      --results-dir "$root/results/$platform/$language"
+
+_restart-smoke platform language:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ poc }}"
+    platform="{{ platform }}"
+    language="{{ language }}"
+    just --justfile "{{ justfile() }}" build "$language"
+    python3 "$root/test-runner/restart_smoke.py" \
+      --binary "$root/build/$language/qwe-poc" \
+      --language "$language" \
+      --platform "$platform" \
+      --results-dir "$root/results/$platform/$language"
+
+_upgrade-smoke platform language:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ poc }}"
+    platform="{{ platform }}"
+    language="{{ language }}"
+    just --justfile "{{ justfile() }}" build "$language"
+    python3 "$root/test-runner/upgrade_smoke.py" \
+      --binary "$root/build/$language/qwe-poc" \
+      --language "$language" \
+      --platform "$platform" \
+      --results-dir "$root/results/$platform/$language"
+
+_process-acceptance-smoke platform language:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ poc }}"
+    platform="{{ platform }}"
+    language="{{ language }}"
+    just --justfile "{{ justfile() }}" build "$language"
+    python3 "$root/test-runner/process_acceptance_smoke.py" \
+      --binary "$root/build/$language/qwe-poc" \
+      --language "$language" \
+      --platform "$platform" \
+      --results-dir "$root/results/$platform/$language"
+
+_resource-smoke platform language:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ poc }}"
+    platform="{{ platform }}"
+    language="{{ language }}"
+    just --justfile "{{ justfile() }}" build "$language"
+    python3 "$root/test-runner/resource_smoke.py" \
+      --binary "$root/build/$language/qwe-poc" \
+      --language "$language" \
+      --platform "$platform" \
+      --results-dir "$root/results/$platform/$language"
+
+_daemon-depth-smoke platform language:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ poc }}"
+    platform="{{ platform }}"
+    language="{{ language }}"
+    just --justfile "{{ justfile() }}" build "$language"
+    python3 "$root/test-runner/daemon_depth_smoke.py" \
+      --binary "$root/build/$language/qwe-poc" \
+      --language "$language" \
+      --platform "$platform" \
+      --results-dir "$root/results/$platform/$language"
 
 _runtime-smoke platform:
     #!/usr/bin/env bash
@@ -948,11 +1341,11 @@ _runtime-smoke platform:
 
     case "$platform" in
       macos-*)
-        platform_limitation="macOS preflight run; not an official Fedora x86_64 comparison score"
+        platform_limitation="macOS preflight run; not an official Linux x86_64 comparison score"
         identity_limitation="macOS process start token currently has one-second resolution"
         ;;
       linux-*)
-        platform_limitation="Fedora Linux x86_64 target; verify release and source cleanliness before final scoring"
+        platform_limitation="Linux x86_64 target; verify source cleanliness before final scoring"
         identity_limitation="Linux process start token uses /proc start time"
         ;;
       *)
@@ -1265,11 +1658,11 @@ _runtime-smoke platform:
         "$binary" task-status "$socket" "$p05_id" \
           >"$edge_dir/p05-status.jsonl" 2>&1 || true
         p05_state="$(jq -r '.state // empty' "$edge_dir/p05-status.jsonl")"
-        [ "$p05_state" = "exited" ] && break
+        [ "$p05_state" = "failed" ] && break
         sleep 0.02
       done
       p05_ok=false
-      if [ "$p05_state" = "exited" ] &&
+      if [ "$p05_state" = "failed" ] &&
          grep -Fq 'QWE-CHILD-Crash' "$edge_dir/p05.log"; then
         p05_ok=true
       fi
@@ -1576,13 +1969,16 @@ _runtime-smoke platform:
     printf 'runtime verification PASS\n'
 
 fmt:
-    cargo fmt --manifest-path "{{ poc }}/rust/Cargo.toml" -- --check
+    CARGO_HOME="{{ poc }}/build/rust/cargo-home" \
+      cargo fmt --manifest-path "{{ poc }}/rust/Cargo.toml" -- --check
     @test -z "$(gofmt -d {{ poc }}/go/cmd/qwe-poc)"
 
 lint:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo clippy --manifest-path "{{ poc }}/rust/Cargo.toml" --release -- -D warnings
+    CARGO_HOME="{{ poc }}/build/rust/cargo-home" \
+      cargo clippy --manifest-path "{{ poc }}/rust/Cargo.toml" \
+      --release -- -D warnings
     (
       cd "{{ poc }}/go"
       GOPATH="{{ poc }}/build/go/gopath" \
@@ -1606,6 +2002,16 @@ test-macos:
     just --justfile "{{ justfile() }}" verify-fixtures
     just --justfile "{{ justfile() }}" terminal-smoke-macos
     just --justfile "{{ justfile() }}" runtime-smoke-macos
+    just --justfile "{{ justfile() }}" lease-smoke all
+    just --justfile "{{ justfile() }}" attach-smoke all
+    just --justfile "{{ justfile() }}" terminal-interaction-smoke all
+    just --justfile "{{ justfile() }}" timeout-smoke all
+    just --justfile "{{ justfile() }}" restart-smoke all
+    just --justfile "{{ justfile() }}" upgrade-smoke all
+    just --justfile "{{ justfile() }}" process-acceptance-smoke all
+    just --justfile "{{ justfile() }}" resource-smoke all
+    just --justfile "{{ justfile() }}" daemon-depth-smoke all
+    just --justfile "{{ justfile() }}" developer-experience-smoke all
     printf 'macOS POC tests completed\n'
 
 test-linux:
@@ -1620,4 +2026,14 @@ test-linux:
     just --justfile "{{ justfile() }}" verify-fixtures
     just --justfile "{{ justfile() }}" terminal-smoke-linux
     just --justfile "{{ justfile() }}" runtime-smoke-linux
+    just --justfile "{{ justfile() }}" lease-smoke all
+    just --justfile "{{ justfile() }}" attach-smoke all
+    just --justfile "{{ justfile() }}" terminal-interaction-smoke all
+    just --justfile "{{ justfile() }}" timeout-smoke all
+    just --justfile "{{ justfile() }}" restart-smoke all
+    just --justfile "{{ justfile() }}" upgrade-smoke all
+    just --justfile "{{ justfile() }}" process-acceptance-smoke all
+    just --justfile "{{ justfile() }}" resource-smoke all
+    just --justfile "{{ justfile() }}" daemon-depth-smoke all
+    just --justfile "{{ justfile() }}" developer-experience-smoke all
     printf 'Linux POC tests completed\n'

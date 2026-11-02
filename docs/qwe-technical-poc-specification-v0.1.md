@@ -127,7 +127,7 @@ Terminal Runtime 权重最高。
 
 推荐：
 
-* Fedora Linux（当前参考验证环境为 Fedora 35）。
+* Linux。
 * x86_64。
 * 至少 4 CPU Cores。
 * 8 GB RAM。

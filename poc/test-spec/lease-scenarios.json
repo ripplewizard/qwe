@@ -39,6 +39,71 @@
       }
     },
     {
+      "id": "claim-conflict",
+      "steps": [
+        ["CLAIM", "client-a"],
+        ["CLAIM", "client-b", "already_owned"],
+        ["STATUS"]
+      ],
+      "expect": {
+        "state": "owned",
+        "owner": "client-a",
+        "last_error": "already_owned"
+      }
+    },
+    {
+      "id": "takeover-not-expired",
+      "steps": [
+        ["CLAIM", "client-a"],
+        ["TAKEOVER", "client-b", "not_expired"],
+        ["STATUS"]
+      ],
+      "expect": {
+        "state": "owned",
+        "owner": "client-a",
+        "last_error": "not_expired"
+      }
+    },
+    {
+      "id": "release-not-owner",
+      "steps": [
+        ["CLAIM", "client-a"],
+        ["RELEASE", "client-b", "not_owner"],
+        ["STATUS"]
+      ],
+      "expect": {
+        "state": "owned",
+        "owner": "client-a",
+        "last_error": "not_owner"
+      }
+    },
+    {
+      "id": "takeover-idle",
+      "steps": [
+        ["CLAIM", "client-a"],
+        ["RELEASE", "client-a"],
+        ["TAKEOVER", "client-b", "not_expired"],
+        ["STATUS"]
+      ],
+      "expect": {
+        "state": "idle",
+        "owner": null,
+        "last_error": "not_expired"
+      }
+    },
+    {
+      "id": "takeover-unknown",
+      "steps": [
+        ["TAKEOVER", "client-a", "not_expired"],
+        ["STATUS"]
+      ],
+      "expect": {
+        "state": "idle",
+        "owner": null,
+        "last_error": "not_expired"
+      }
+    },
+    {
       "id": "expiry-takeover",
       "steps": [
         ["CLAIM", "client-a"],
@@ -61,7 +126,8 @@
       ],
       "expect": {
         "state": "expired",
-        "owner": null
+        "owner": null,
+        "min_output_bytes": 1
       }
     },
     {
