@@ -1,0 +1,33 @@
+{
+  "case_id": "T01",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "uncommitted",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "rust=rustc 1.98.0 (88d9e12ae 2026-08-18); go=go version go1.27.3 darwin/arm64; cxx=Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/legacy/environment/20261102T075354Z-25039.txt"
+  },
+  "command": "./poc/build/go/qwe-poc pty-smoke /Users/huangjian/project/uranus/bianca/poc/results/macos-arm64/legacy/go/T01-T02-20261102T075354Z-25039.pty.log",
+  "started_at": "2026-11-02T07:53:54Z",
+  "duration_ms": 366,
+  "metrics": {
+    "bytes": 258,
+    "exit_code": 0
+  },
+  "checks": {
+    "shell": true,
+    "window_size": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/legacy/go/T01-T02-20261102T075354Z-25039.pty.log",
+    "poc/results/macos-arm64/legacy/go/T01-T02-20261102T075354Z-25039.stdout.json",
+    "poc/results/macos-arm64/legacy/go/T01-T02-20261102T075354Z-25039.stderr.log"
+  ],
+  "known_limitations": [
+    "macOS preflight run; not an official Linux comparison score",
+    "Covers PTY creation, Shell launch, initial window size, and output capture",
+    "Does not cover dynamic resize, Neovim screen behavior, or recovery"
+  ]
+}

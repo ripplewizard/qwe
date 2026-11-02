@@ -1,0 +1,10 @@
+.DS_Store
+poc/build/
+poc/rust/target/
+poc/results/**/tmp/
+poc/results/environment/
+poc/results/**/environment/
+poc/results/**/*.pty.log
+poc/results/**/*.stdout.json
+poc/results/**/*.stderr.log
+
