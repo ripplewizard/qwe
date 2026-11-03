@@ -1,0 +1,34 @@
+{
+  "case_id": "D08",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)"
+  },
+  "command": "daemon-depth-smoke cpp D08",
+  "started_at": "2026-11-03T08:52:46Z",
+  "duration_ms": 12017,
+  "metrics": {
+    "duration_seconds": 8,
+    "requests": 106,
+    "errors": 0,
+    "rss_before_kib": 2704,
+    "rss_after_kib": 2832
+  },
+  "checks": {
+    "sustained_requests": true,
+    "rss_recorded": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/daemon-depth-20261103T085246Z-5924/daemon.log",
+    "poc/results/macos-arm64/cpp/daemon-depth-20261103T085246Z-5924/disk-full.json",
+    "poc/results/macos-arm64/cpp/daemon-depth-20261103T085246Z-5924/disk-full.daemon.log"
+  ],
+  "known_limitations": [
+    "POC request protocol is not a production wire contract.",
+    "POC request protocol is not a production wire contract."
+  ]
+}

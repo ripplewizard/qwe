@@ -1,0 +1,40 @@
+{
+  "case_id": "P07",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/macos-arm64/rust/P07-timeout-20261103T084813Z-87148/environment.txt"
+  },
+  "command": "just timeout-smoke rust",
+  "started_at": "2026-11-03T08:48:13Z",
+  "duration_ms": 1235,
+  "metrics": {
+    "timeout_ms": 400,
+    "deadline_elapsed_ms": 460,
+    "sigkill_elapsed_ms": 620
+  },
+  "checks": {
+    "start_accepted": true,
+    "deadline_observed": true,
+    "state_timed_out": true,
+    "process_group_stopped": true,
+    "sqlite_timed_out": true,
+    "output_preserved": true,
+    "sigkill_escalation": true,
+    "predeadline_exit_preserved": true,
+    "invalid_timeout_rejected": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/rust/P07-timeout-20261103T084813Z-87148/task.log",
+    "poc/results/macos-arm64/rust/P07-timeout-20261103T084813Z-87148/daemon.log",
+    "poc/results/macos-arm64/rust/P07-timeout-20261103T084813Z-87148/environment.txt"
+  ],
+  "known_limitations": [
+    "The POC deadline watcher is in memory and is not recovered after daemon restart.",
+    "Graceful termination uses a fixed short grace period."
+  ]
+}

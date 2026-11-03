@@ -1,0 +1,37 @@
+{
+  "case_id": "T04",
+  "language": "go",
+  "status": "blocked",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "go version go1.27.3 darwin/arm64",
+    "environment_record": "poc/results/macos-arm64/go/terminal-interaction-5144f74d244c4be6b906a031d444e365/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* htop preflight",
+  "started_at": "2026-11-03T08:51:40Z",
+  "duration_ms": 3373,
+  "metrics": {
+    "first_output_bytes": 3686,
+    "second_output_bytes": 4569,
+    "delta_bytes": 883
+  },
+  "checks": {
+    "full_screen_started": true,
+    "first_frame_rendered": true,
+    "dynamic_refresh_observed": true,
+    "frame_changed": true,
+    "clean_exit": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/go/terminal-interaction-5144f74d244c4be6b906a031d444e365/environment.txt",
+    "poc/results/macos-arm64/go/terminal-interaction-5144f74d244c4be6b906a031d444e365/T04.pty.log",
+    "poc/results/macos-arm64/go/terminal-interaction-5144f74d244c4be6b906a031d444e365/T11.pty.log",
+    "poc/results/macos-arm64/go/terminal-interaction-5144f74d244c4be6b906a031d444e365/T04-T11.daemon.log"
+  ],
+  "known_limitations": [
+    "Automated launch, refresh, and exit checks only.",
+    "Interactive htop visual behavior and resize remain manual."
+  ]
+}

@@ -1,23 +1,22 @@
 # POC Comparison and Weighted Scores
 
-Status: provisional. Linux has been regenerated from clean revision `b42e2f9`;
-the macOS comparison data still comes from the earlier dirty worktree. Manual
-terminal observations are recorded, but they still need independent human
-sign-off before this becomes final selection evidence.
+Status: automated evidence complete on Linux and macOS. Manual terminal
+observations are recorded, but they still need independent human sign-off
+before the POC audit becomes final.
 
 ## Run Metadata
 
 | Field | Value |
 |---|---|
-| Source commit | `9abaff7-dirty` |
-| Linux environment | Fedora Linux 41, kernel 6.11.4, x86_64, 16 cores, 32 GB RAM |
-| macOS environment | macOS 27.0.1, arm64, 20 cores, 64 GB RAM |
+| Source commits | Linux `b42e2f9`; macOS `46b5092` |
+| Linux environment | Fedora Linux 35, kernel 5.14.10, x86_64, 12 cores, 16 GB RAM |
+| macOS environment | macOS 26.5.1, arm64, 12 cores, 18 GB RAM |
 | Toolchains | Rust 1.99.1, Go 1.27.3, GCC 14.2.1, Apple Clang 21.0.0 |
 | Terminal tools | Neovim 0.10.4/Linux and 0.12.6/macOS; htop 3.3.0/3.5.3 |
 | Raw comparison | [`platform-comparison.md`](platform-comparison.md) |
 
-The dirty source label is intentional: this checkout contains the accepted POC
-implementation but has not yet been committed and rerun from a clean revision.
+Both platform runs come from clean implementation revisions. Raw local evidence
+is required for strict platform-specific verification and is not committed.
 
 ## Scoring Method
 

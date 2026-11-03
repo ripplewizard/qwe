@@ -70,50 +70,50 @@ GPU metrics are capability-gated: unsupported hardware must be reported as
 
 <!-- LATEST_EVIDENCE_START -->
 
-Generated: 2026-11-03T05:29:51Z
+Generated: 2026-11-03T09:10:11Z
 
 | ID | Linux R/G/C | macOS R/G/C | Evidence |
 |---|---:|---:|---|
-| D01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D01-b42e2f9-20261103T045651Z-117901.json` |
-| D02 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D02-b42e2f9-20261103T045651Z-117901.json` |
-| D03 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D03-b42e2f9-20261103T045522Z-112603.json` |
-| D04 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D04-b42e2f9-20261103T045651Z-117901.json` |
-| D05 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D05-b42e2f9-20261103T045651Z-117901.json` |
-| D06 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D06-b42e2f9-20261103T045618Z-117148.json` |
-| D07 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D07-b42e2f9-20261103T045522Z-112603.json` |
-| D08 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D08-b42e2f9-20261103T045651Z-117901.json` |
-| DX01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/DX01-b42e2f9-20261103T045807Z-118728.json` |
-| DX02 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/DX02-b42e2f9-20261103T045807Z-118728.json` |
-| DX03 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/DX03-b42e2f9-20261103T045807Z-118728.json` |
-| EX01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/EX01-4fdc75d-review-123764.json` |
-| MC01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/MC01-4fdc75d-review-123764.json` |
-| P01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P01-b42e2f9-20261103T045619Z-117320.json` |
-| P02 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P02-b42e2f9-20261103T045522Z-112603.json` |
-| P03 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P03-b42e2f9-20261103T045619Z-117320.json` |
-| P04 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P04-b42e2f9-20261103T045619Z-117320.json` |
-| P05 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P05-b42e2f9-20261103T045619Z-117320.json` |
-| P06 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P06-b42e2f9-20261103T045522Z-112603.json` |
-| P07 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P07-b42e2f9-20261103T045612Z-116630.json` |
-| P08 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P08-b42e2f9-20261103T045522Z-112603.json` |
-| P09 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P09-b42e2f9-20261103T045619Z-117320.json` |
-| P10 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P10-b42e2f9-20261103T045616Z-116907.json` |
-| P11 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P11-b42e2f9-20261103T045522Z-112603.json` |
-| P12 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P12-b42e2f9-20261103T045619Z-117320.json` |
-| RM01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/RM01-b42e2f9-20261103T045621Z-117618.json` |
-| RM02 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/RM02-b42e2f9-20261103T045621Z-117618.json` |
-| RM03 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/RM03-b42e2f9-20261103T045621Z-117618.json` |
-| RM04 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/RM04-b42e2f9-20261103T045621Z-117618.json` |
-| RM05 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/RM05-b42e2f9-20261103T045621Z-117618.json` |
+| D01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D01-b42e2f9-20261103T045651Z-117901.json` |
+| D02 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D02-b42e2f9-20261103T045651Z-117901.json` |
+| D03 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D03-b42e2f9-20261103T045522Z-112603.json` |
+| D04 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D04-b42e2f9-20261103T045651Z-117901.json` |
+| D05 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D05-b42e2f9-20261103T045651Z-117901.json` |
+| D06 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D06-b42e2f9-20261103T045618Z-117148.json` |
+| D07 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D07-b42e2f9-20261103T045522Z-112603.json` |
+| D08 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D08-b42e2f9-20261103T045651Z-117901.json` |
+| DX01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/DX01-b42e2f9-20261103T045807Z-118728.json` |
+| DX02 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/DX02-b42e2f9-20261103T045807Z-118728.json` |
+| DX03 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/DX03-b42e2f9-20261103T045807Z-118728.json` |
+| EX01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/EX01-49083b6-review-9713.json` |
+| MC01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/MC01-49083b6-review-9713.json` |
+| P01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P01-b42e2f9-20261103T045619Z-117320.json` |
+| P02 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P02-b42e2f9-20261103T045522Z-112603.json` |
+| P03 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P03-b42e2f9-20261103T045619Z-117320.json` |
+| P04 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P04-b42e2f9-20261103T045619Z-117320.json` |
+| P05 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P05-b42e2f9-20261103T045619Z-117320.json` |
+| P06 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P06-b42e2f9-20261103T045522Z-112603.json` |
+| P07 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P07-b42e2f9-20261103T045612Z-116630.json` |
+| P08 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P08-b42e2f9-20261103T045522Z-112603.json` |
+| P09 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P09-b42e2f9-20261103T045619Z-117320.json` |
+| P10 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P10-b42e2f9-20261103T045616Z-116907.json` |
+| P11 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P11-b42e2f9-20261103T045522Z-112603.json` |
+| P12 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P12-b42e2f9-20261103T045619Z-117320.json` |
+| RM01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/RM01-b42e2f9-20261103T045621Z-117618.json` |
+| RM02 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/RM02-b42e2f9-20261103T045621Z-117618.json` |
+| RM03 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/RM03-b42e2f9-20261103T045621Z-117618.json` |
+| RM04 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/RM04-b42e2f9-20261103T045621Z-117618.json` |
+| RM05 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/RM05-b42e2f9-20261103T045621Z-117618.json` |
 | T01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T01-b42e2f9-20261103T045515Z-111267.json` |
 | T02 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T02-b42e2f9-20261103T045515Z-111267.json` |
 | T03 | blocked/blocked/blocked | blocked/blocked/blocked | `poc/results/linux-x86_64/rust/T03-b42e2f9-20261103T045515Z-111267.json` |
-| T04 | blocked/blocked/blocked | missing/missing/missing | `poc/results/linux-x86_64/rust/T04-b42e2f9-20261103T045604Z-116195.json` |
-| T05 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/T05-b42e2f9-20261103T045515Z-111267.json` |
-| T06 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/T06-b42e2f9-20261103T045515Z-111267.json` |
+| T04 | blocked/blocked/blocked | blocked/blocked/blocked | `poc/results/linux-x86_64/rust/T04-b42e2f9-20261103T045604Z-116195.json` |
+| T05 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T05-b42e2f9-20261103T045515Z-111267.json` |
+| T06 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T06-b42e2f9-20261103T045515Z-111267.json` |
 | T07 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T07-b42e2f9-20261103T045515Z-111267.json` |
-| T08 | blocked/blocked/blocked | missing/missing/missing | `poc/results/linux-x86_64/rust/T08-b42e2f9-20261103T045557Z-116000.json` |
-| T09 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/T09-b42e2f9-20261103T045550Z-115748.json` |
-| T10 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/T10-b42e2f9-20261103T045515Z-111267.json` |
-| T11 | blocked/blocked/blocked | missing/missing/missing | `poc/results/linux-x86_64/rust/T11-b42e2f9-20261103T045604Z-116195.json` |
-| T12 | blocked/blocked/blocked | missing/missing/missing | `poc/results/linux-x86_64/rust/T12-b42e2f9-20261103T045604Z-116195.json` |
-| XP01 | fail/fail/fail | fail/fail/fail | `poc/results/linux-x86_64/rust/XP01-b42e2f9-122408.json` |
+| T08 | blocked/blocked/blocked | blocked/blocked/blocked | `poc/results/linux-x86_64/rust/T08-b42e2f9-20261103T045557Z-116000.json` |
+| T09 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T09-b42e2f9-20261103T045550Z-115748.json` |
+| T10 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T10-b42e2f9-20261103T045515Z-111267.json` |
+| T11 | blocked/blocked/blocked | blocked/blocked/blocked | `poc/results/linux-x86_64/rust/T11-b42e2f9-20261103T045604Z-116195.json` |
+| T12 | blocked/blocked/blocked | blocked/blocked/blocked | `poc/results/linux-x86_64/rust/T12-b42e2f9-20261103T045604Z-116195.json` |
+| XP01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/XP01-46b5092-9757.json` |

@@ -1,0 +1,28 @@
+{
+  "case_id": "D01",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+  },
+  "command": "daemon-depth-smoke rust D01",
+  "started_at": "2026-11-03T08:52:18Z",
+  "duration_ms": 11896,
+  "metrics": {},
+  "checks": {
+    "request_ids": true,
+    "error_codes": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/rust/daemon-depth-20261103T085218Z-2453/daemon.log",
+    "poc/results/macos-arm64/rust/daemon-depth-20261103T085218Z-2453/disk-full.json",
+    "poc/results/macos-arm64/rust/daemon-depth-20261103T085218Z-2453/disk-full.daemon.log"
+  ],
+  "known_limitations": [
+    "POC request protocol is not a production wire contract.",
+    "POC request protocol is not a production wire contract."
+  ]
+}

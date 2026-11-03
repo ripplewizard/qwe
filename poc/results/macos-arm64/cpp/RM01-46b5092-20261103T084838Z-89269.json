@@ -1,0 +1,36 @@
+{
+  "case_id": "RM01",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)"
+  },
+  "command": "resource-smoke cpp RM01",
+  "started_at": "2026-11-03T08:48:38Z",
+  "duration_ms": 7135,
+  "metrics": {
+    "process_count": 1,
+    "cpu_percent": 45.7,
+    "memory_bytes": 2080768,
+    "gpu_supported": false,
+    "sample_latency_100_ms": 136.92,
+    "sample_latency_500_ms": 537.92,
+    "sample_latency_1000_ms": 1034.72,
+    "sample_latency_5000_ms": 5042.89
+  },
+  "checks": {
+    "cpu_values": true,
+    "convention": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/resource-20261103T084838Z-89269/daemon.log",
+    "poc/results/macos-arm64/cpp/resource-20261103T084838Z-89269/tasks.sqlite"
+  ],
+  "known_limitations": [
+    "RSS sums may double-count shared pages.",
+    "CPU is lifetime average percentage reported by ps, not an instantaneous scheduler event."
+  ]
+}

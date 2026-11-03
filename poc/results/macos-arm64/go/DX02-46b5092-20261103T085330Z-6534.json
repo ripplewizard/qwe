@@ -1,0 +1,37 @@
+{
+  "case_id": "DX02",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "go version go1.27.3 darwin/arm64",
+    "environment_record": "poc/results/macos-arm64/go/developer-experience-9f915d4fc55047b8afdced09f1173091/environment.txt"
+  },
+  "command": "developer-experience-smoke go DX02",
+  "started_at": "2026-11-03T08:53:13Z",
+  "duration_ms": 16528,
+  "metrics": {
+    "database_bytes": 36864,
+    "live_screen_bytes": 293,
+    "persisted_screen_bytes": 293
+  },
+  "checks": {
+    "alternate_screen": true,
+    "dashboard_title": true,
+    "live_task_visible": true,
+    "sqlite_after_daemon_exit": true,
+    "task_state_visible": true,
+    "task_id_visible": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/go/developer-experience-9f915d4fc55047b8afdced09f1173091/DX02.dashboard.log",
+    "poc/results/macos-arm64/go/developer-experience-9f915d4fc55047b8afdced09f1173091/DX02.dashboard.log",
+    "poc/results/macos-arm64/go/developer-experience-9f915d4fc55047b8afdced09f1173091/DX02.daemon.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

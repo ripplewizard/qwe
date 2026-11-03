@@ -1,0 +1,50 @@
+{
+  "case_id": "P09",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "rust=rustc 1.99.1 (58cf8f9c3 2026-10-13); go=go version go1.27.3 darwin/arm64; cxx=Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/environment/runtime-20261103T084650Z-75331.txt"
+  },
+  "command": "runtime contract: daemon -> task-start/status/stop -> SIGKILL -> restart",
+  "started_at": "2026-11-03T08:46:51Z",
+  "duration_ms": 4373,
+  "metrics": {
+    "pid": 75501,
+    "pgid": 75501,
+    "process_tree_lines": 3,
+    "task_records": 1,
+    "concurrent_requests": 40,
+    "daemon_rss_kib_before": 4080,
+    "daemon_rss_kib_after": 4112
+  },
+  "checks": {
+    "pid_and_start_token_preserved": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/start-initial.jsonl",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/start-duplicate.jsonl",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/status-before.jsonl",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/status-after.jsonl",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/stop.jsonl",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/task.log",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/daemon.log",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/tasks.sqlite",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/concurrency",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/client-disconnect.log",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/corrupt-daemon.log",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/corrupt.sqlite",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/sqlite-write-failure.jsonl",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/edge",
+    "poc/results/macos-arm64/rust/runtime-20261103T084650Z-75331/long-run"
+  ],
+  "known_limitations": [
+    "macOS preflight run; not an official Linux x86_64 comparison score",
+    "macOS process start token currently has one-second resolution",
+    "Async task exit codes are not yet persisted",
+    "SQLite lock contention, disk-full, and upgrade compatibility are not covered"
+  ]
+}

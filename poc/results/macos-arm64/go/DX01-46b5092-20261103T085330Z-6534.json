@@ -1,0 +1,43 @@
+{
+  "case_id": "DX01",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "go version go1.27.3 darwin/arm64",
+    "environment_record": "poc/results/macos-arm64/go/developer-experience-9f915d4fc55047b8afdced09f1173091/environment.txt"
+  },
+  "command": "developer-experience-smoke go DX01",
+  "started_at": "2026-11-03T08:53:13Z",
+  "duration_ms": 16522,
+  "metrics": {
+    "cli_startup_samples": 12,
+    "cli_startup_median_ms": 4.571,
+    "cli_startup_p95_ms": 149.137,
+    "cli_startup_max_ms": 149.137,
+    "ipc_missing_status_samples": 30,
+    "ipc_missing_status_median_ms": 0.05,
+    "ipc_missing_status_p95_ms": 0.08,
+    "ipc_missing_status_max_ms": 0.116,
+    "declared_dependencies": 3,
+    "time_to_demo_seconds_value": null,
+    "time_to_demo_seconds_reason": "The POC was built incrementally; retrospective wall-clock development time is not reconstructable."
+  },
+  "checks": {
+    "probe_contract": true,
+    "invalid_command_clear": true,
+    "ipc_error_clear": true,
+    "startup_latency_recorded": true,
+    "dependency_count_recorded": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/go/developer-experience-9f915d4fc55047b8afdced09f1173091/DX01.error.txt",
+    "poc/results/macos-arm64/go/developer-experience-9f915d4fc55047b8afdced09f1173091/DX01.daemon.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

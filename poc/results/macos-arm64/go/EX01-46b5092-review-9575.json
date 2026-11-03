@@ -1,0 +1,31 @@
+{
+  "case_id": "EX01",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "go locked manifest"
+  },
+  "command": "review poc/reports/extension-review.md",
+  "started_at": "2026-11-03T09:09:56Z",
+  "duration_ms": 0,
+  "metrics": {
+    "report_bytes": 1704
+  },
+  "checks": {
+    "design_registry_reviewed": true,
+    "core_reservations_assessed": true,
+    "implemented_boundaries_reviewed": true,
+    "material_conflicts_recorded": true,
+    "terminal_recovery_claim_qualified": true
+  },
+  "evidence": [
+    "poc/reports/extension-review.md"
+  ],
+  "known_limitations": [
+    "Review evidence is source inspection, not a production threat model.",
+    "Pane and Window lifecycle remain unimplemented and therefore unproven."
+  ]
+}

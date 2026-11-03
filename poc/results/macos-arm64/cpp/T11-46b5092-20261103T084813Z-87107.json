@@ -1,0 +1,35 @@
+{
+  "case_id": "T11",
+  "language": "cpp",
+  "status": "blocked",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/cpp/terminal-interaction-d73007443c3a47f3a149172f0b1ce777/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* Bash job-control preflight",
+  "started_at": "2026-11-03T08:48:10Z",
+  "duration_ms": 3012,
+  "metrics": {
+    "int_output_bytes": 420,
+    "final_output_bytes": 746
+  },
+  "checks": {
+    "ctrl_c_status_130": true,
+    "ctrl_z_stopped": true,
+    "bg_running": true,
+    "fg_foreground_interrupt": true,
+    "shell_exited": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/terminal-interaction-d73007443c3a47f3a149172f0b1ce777/environment.txt",
+    "poc/results/macos-arm64/cpp/terminal-interaction-d73007443c3a47f3a149172f0b1ce777/T11.pty.log",
+    "poc/results/macos-arm64/cpp/terminal-interaction-d73007443c3a47f3a149172f0b1ce777/T04-T11.daemon.log"
+  ],
+  "known_limitations": [
+    "Automated key-sequence and exit-status checks only.",
+    "Manual foreground/background terminal semantics review remains."
+  ]
+}

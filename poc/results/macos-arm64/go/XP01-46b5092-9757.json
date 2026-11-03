@@ -1,0 +1,33 @@
+{
+  "case_id": "XP01",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "cross-platform",
+    "architecture": "linux-x86_64+macos-arm64",
+    "toolchain": "per-language result metadata"
+  },
+  "command": "python3 poc/test-runner/platform_comparison.py",
+  "started_at": "2026-11-03T09:10:11Z",
+  "duration_ms": 0,
+  "metrics": {
+    "linux_cases": 43,
+    "macos_cases": 43,
+    "missing_case_count": 0
+  },
+  "checks": {
+    "linux_primary_present": true,
+    "macos_secondary_present": true,
+    "matrix_coverage_complete": true,
+    "manual_review_records_present": true,
+    "t12_recovery_not_overclaimed": true
+  },
+  "evidence": [
+    "poc/reports/platform-comparison.md"
+  ],
+  "known_limitations": [
+    "Comparison reflects latest per-case files rather than a clean simultaneous rerun.",
+    "Dirty source evidence remains provisional."
+  ]
+}

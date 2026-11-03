@@ -1,0 +1,37 @@
+{
+  "case_id": "T04",
+  "language": "cpp",
+  "status": "blocked",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/cpp/terminal-interaction-6fbc4264f62d4fc3816cbcf8923cd883/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* htop preflight",
+  "started_at": "2026-11-03T08:51:43Z",
+  "duration_ms": 2997,
+  "metrics": {
+    "first_output_bytes": 3103,
+    "second_output_bytes": 4956,
+    "delta_bytes": 1853
+  },
+  "checks": {
+    "full_screen_started": true,
+    "first_frame_rendered": true,
+    "dynamic_refresh_observed": true,
+    "frame_changed": true,
+    "clean_exit": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/terminal-interaction-6fbc4264f62d4fc3816cbcf8923cd883/environment.txt",
+    "poc/results/macos-arm64/cpp/terminal-interaction-6fbc4264f62d4fc3816cbcf8923cd883/T04.pty.log",
+    "poc/results/macos-arm64/cpp/terminal-interaction-6fbc4264f62d4fc3816cbcf8923cd883/T11.pty.log",
+    "poc/results/macos-arm64/cpp/terminal-interaction-6fbc4264f62d4fc3816cbcf8923cd883/T04-T11.daemon.log"
+  ],
+  "known_limitations": [
+    "Automated launch, refresh, and exit checks only.",
+    "Interactive htop visual behavior and resize remain manual."
+  ]
+}

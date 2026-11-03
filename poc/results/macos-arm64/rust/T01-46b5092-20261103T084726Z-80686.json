@@ -1,0 +1,34 @@
+{
+  "case_id": "T01",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "rust=rustc 1.99.1 (58cf8f9c3 2026-10-13); go=go version go1.27.3 darwin/arm64; cxx=Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/environment/20261103T084726Z-80686.txt"
+  },
+  "command": "poc/build/rust/qwe-poc pty-smoke /Users/huangjian/project/uranus/bianca/poc/results/macos-arm64/rust/T01-T02-20261103T084726Z-80686.pty.log",
+  "started_at": "2026-11-03T08:47:26Z",
+  "duration_ms": 407,
+  "metrics": {
+    "bytes": 1152,
+    "exit_code": 0
+  },
+  "checks": {
+    "shell": true,
+    "fd_no_leak": true,
+    "process_reaped": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/rust/T01-T02-20261103T084726Z-80686.pty.log",
+    "poc/results/macos-arm64/rust/T01-T02-20261103T084726Z-80686.stdout.json",
+    "poc/results/macos-arm64/rust/T01-T02-20261103T084726Z-80686.stderr.log"
+  ],
+  "known_limitations": [
+    "macOS preflight run; not an official Linux x86_64 comparison score",
+    "Covers PTY creation, Shell launch, initial window size, and output capture",
+    "Does not cover dynamic resize, Neovim screen behavior, or recovery"
+  ]
+}

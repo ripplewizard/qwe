@@ -1,0 +1,37 @@
+{
+  "case_id": "DX02",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/cpp/developer-experience-28ada4868ff941debda2dc06db4c0ae0/environment.txt"
+  },
+  "command": "developer-experience-smoke cpp DX02",
+  "started_at": "2026-11-03T08:53:30Z",
+  "duration_ms": 2908,
+  "metrics": {
+    "database_bytes": 4096,
+    "live_screen_bytes": 291,
+    "persisted_screen_bytes": 291
+  },
+  "checks": {
+    "alternate_screen": true,
+    "dashboard_title": true,
+    "live_task_visible": true,
+    "sqlite_after_daemon_exit": true,
+    "task_state_visible": true,
+    "task_id_visible": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/developer-experience-28ada4868ff941debda2dc06db4c0ae0/DX02.dashboard.log",
+    "poc/results/macos-arm64/cpp/developer-experience-28ada4868ff941debda2dc06db4c0ae0/DX02.dashboard.log",
+    "poc/results/macos-arm64/cpp/developer-experience-28ada4868ff941debda2dc06db4c0ae0/DX02.daemon.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

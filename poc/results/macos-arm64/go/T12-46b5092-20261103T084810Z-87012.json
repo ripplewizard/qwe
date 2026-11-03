@@ -1,0 +1,41 @@
+{
+  "case_id": "T12",
+  "language": "go",
+  "status": "blocked",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "go version go1.27.3 darwin/arm64",
+    "environment_record": "poc/results/macos-arm64/go/terminal-interaction-8535936b39c94c1fb7e705d8e41949a7/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* daemon SIGKILL recovery preflight",
+  "started_at": "2026-11-03T08:48:07Z",
+  "duration_ms": 3181,
+  "metrics": {
+    "terminal_pid": 87031,
+    "terminal_process_alive_after_daemon_restart": false,
+    "pre_restart_output_bytes": 200
+  },
+  "checks": {
+    "screen_initialized": true,
+    "daemon_was_running": true,
+    "daemon_restart_required": true,
+    "terminal_process_exit_observed": true,
+    "session_metadata_not_recovered": true,
+    "pty_not_recovered": true,
+    "screen_state_not_recovered": true,
+    "input_not_available": true,
+    "terminal_recovery_incomplete": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/go/terminal-interaction-8535936b39c94c1fb7e705d8e41949a7/environment.txt",
+    "poc/results/macos-arm64/go/terminal-interaction-8535936b39c94c1fb7e705d8e41949a7/T12.pty.log",
+    "poc/results/macos-arm64/go/terminal-interaction-8535936b39c94c1fb7e705d8e41949a7/T12.daemon.log"
+  ],
+  "known_limitations": [
+    "This preflight records the current recovery boundary; it does not claim terminal recovery.",
+    "PTY, terminal screen, session metadata, and interactive input are currently not recovered.",
+    "Manual layer-by-layer review remains required."
+  ]
+}

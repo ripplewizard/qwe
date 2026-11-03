@@ -1,0 +1,27 @@
+{
+  "case_id": "P05",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "go version go1.27.3 darwin/arm64"
+  },
+  "command": "process-acceptance-smoke go P05",
+  "started_at": "2026-11-03T08:48:22Z",
+  "duration_ms": 637,
+  "metrics": {},
+  "checks": {
+    "failure_exit": true,
+    "failed_state": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/go/process-acceptance-20261103T084822Z-88628/daemon.log",
+    "poc/results/macos-arm64/go/process-acceptance-20261103T084822Z-88628/tasks.sqlite"
+  ],
+  "known_limitations": [
+    "Shared-memory accounting is not part of this process test.",
+    "macOS process start tokens have one-second resolution."
+  ]
+}

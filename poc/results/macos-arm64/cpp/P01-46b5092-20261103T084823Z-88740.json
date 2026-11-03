@@ -1,0 +1,30 @@
+{
+  "case_id": "P01",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)"
+  },
+  "command": "process-acceptance-smoke cpp P01",
+  "started_at": "2026-11-03T08:48:23Z",
+  "duration_ms": 509,
+  "metrics": {
+    "exit_code": 7,
+    "duration_ms": 93
+  },
+  "checks": {
+    "exit_code": true,
+    "duration": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/process-acceptance-20261103T084823Z-88740/daemon.log",
+    "poc/results/macos-arm64/cpp/process-acceptance-20261103T084823Z-88740/tasks.sqlite"
+  ],
+  "known_limitations": [
+    "Shared-memory accounting is not part of this process test.",
+    "macOS process start tokens have one-second resolution."
+  ]
+}

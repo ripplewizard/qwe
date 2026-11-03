@@ -1,7 +1,7 @@
 # Remaining Validation Before Final Selection
 
-Status: implementation approved; Linux evidence regenerated from clean
-`b42e2f9`; macOS evidence and manual sign-off remain pending.
+Status: implementation approved; automated Linux/macOS evidence complete;
+independent manual sign-off remains pending.
 
 ## Completed in This Pass
 
@@ -17,10 +17,9 @@ Status: implementation approved; Linux evidence regenerated from clean
 - EX01 extension-registry/object-boundary review.
 - MC01 dependency license, activity, release, platform, and risk review.
 
-Linux now has a generated latest-evidence entry for every matrix row.
-`just verify-linux-results` passes for 129 expected Linux cells and checks
-referenced local evidence. Cross-platform XP01 remains `fail` until macOS is
-regenerated.
+Both platforms now have a generated latest-evidence entry for every matrix row.
+`just verify-linux-results` and macOS-only verification each pass for 129
+expected cells. Cross-platform XP01 has no missing language/platform/case cell.
 
 ## Manual Records
 
@@ -44,12 +43,12 @@ adopt terminal-loss semantics.
 
 ## Clean Evidence Prerequisite
 
-Linux evidence is source revision `b42e2f9`. Remaining steps:
+Linux evidence is revision `b42e2f9`; macOS evidence is revision `46b5092`.
+Remaining steps:
 
-1. Rerun macOS from a clean implementation revision.
-2. Regenerate cross-platform XP01 after both platforms exist.
-3. Record independent manual sign-off.
-4. Refresh the matrix and comparison report from the final dual-platform run.
+1. Record independent manual sign-off for T03/T04/T08/T11.
+2. Keep T12 as the original POC's negative recovery boundary.
+3. Periodically regenerate both platforms from the then-current clean revision.
 
-These steps close the POC audit trail. They no longer block Rust implementation,
-which proceeds under Baseline v0.3 and ADR 0001-0005.
+Manual sign-off closes the POC audit trail. Rust implementation proceeds under
+Baseline v0.4 and ADR 0001-0008.

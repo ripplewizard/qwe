@@ -1,0 +1,32 @@
+{
+  "case_id": "MC01",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "cpp locked manifest"
+  },
+  "command": "review poc/reports/dependency-review.md",
+  "started_at": "2026-11-03T08:54:40Z",
+  "duration_ms": 0,
+  "metrics": {
+    "report_bytes": 1422
+  },
+  "checks": {
+    "direct_dependencies_enumerated": true,
+    "licenses_recorded": true,
+    "upstream_activity_recorded": true,
+    "release_state_recorded": true,
+    "platform_availability_recorded": true,
+    "maintenance_risks_recorded": true
+  },
+  "evidence": [
+    "poc/reports/dependency-review.md"
+  ],
+  "known_limitations": [
+    "Dependency review records observed upstream metadata and is not a legal audit.",
+    "Transitive dependency vulnerabilities were not exhaustively audited."
+  ]
+}

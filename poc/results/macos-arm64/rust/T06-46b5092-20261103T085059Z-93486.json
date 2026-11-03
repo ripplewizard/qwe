@@ -1,0 +1,31 @@
+{
+  "case_id": "T06",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "rust=rustc 1.99.1 (58cf8f9c3 2026-10-13); go=go version go1.27.3 darwin/arm64; cxx=Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/environment/20261103T085059Z-93486.txt"
+  },
+  "command": "poc/build/rust/qwe-poc vt-smoke /Users/huangjian/project/uranus/bianca/poc/results/macos-arm64/rust/T05-T06-20261103T085059Z-93486.pty.log",
+  "started_at": "2026-11-03T08:51:02Z",
+  "duration_ms": 107,
+  "metrics": {
+    "bytes": 640
+  },
+  "checks": {
+    "unicode": true,
+    "wide": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/rust/T05-T06-20261103T085059Z-93486.pty.log",
+    "poc/results/macos-arm64/rust/T05-T06-20261103T085059Z-93486.stdout.json",
+    "poc/results/macos-arm64/rust/T05-T06-20261103T085059Z-93486.stderr.log"
+  ],
+  "known_limitations": [
+    "macOS preflight run; not an official Linux x86_64 comparison score",
+    "CJK, emoji, and one combining sequence covered; broader grapheme shaping remains manual"
+  ]
+}

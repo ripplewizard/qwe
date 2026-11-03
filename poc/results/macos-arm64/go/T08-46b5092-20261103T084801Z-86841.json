@@ -1,0 +1,44 @@
+{
+  "case_id": "T08",
+  "language": "go",
+  "status": "blocked",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "go version go1.27.3 darwin/arm64",
+    "environment_record": "poc/results/macos-arm64/go/T08-attach-t08-473f62162a504f7bb89de4470fe073ca/environment.txt"
+  },
+  "command": "attach-smoke go",
+  "started_at": "2026-11-03T08:48:01Z",
+  "duration_ms": 1306,
+  "metrics": {
+    "output_bytes": 239
+  },
+  "checks": {
+    "duplicate_start_rejected": true,
+    "session_started": true,
+    "wrong_owner_rejected": true,
+    "initial_attach": true,
+    "malformed_input_rejected": true,
+    "initial_input": true,
+    "detach": true,
+    "pty_survives": true,
+    "lease_preserved": true,
+    "detached_input_rejected": true,
+    "reattach": true,
+    "screen_restored": true,
+    "detached_input_not_executed": true,
+    "input_after_reattach": true,
+    "process_exited_cleanly": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/go/T08-attach-t08-473f62162a504f7bb89de4470fe073ca/session.pty.log",
+    "poc/results/macos-arm64/go/T08-attach-t08-473f62162a504f7bb89de4470fe073ca/daemon.log",
+    "poc/results/macos-arm64/go/T08-attach-t08-473f62162a504f7bb89de4470fe073ca/environment.txt"
+  ],
+  "known_limitations": [
+    "Snapshot is the complete raw PTY stream, not a compact VT state delta.",
+    "Interactive manual screen review remains required."
+  ]
+}

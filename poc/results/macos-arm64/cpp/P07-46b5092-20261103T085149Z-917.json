@@ -1,0 +1,40 @@
+{
+  "case_id": "P07",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/cpp/P07-timeout-20261103T085149Z-917/environment.txt"
+  },
+  "command": "just timeout-smoke cpp",
+  "started_at": "2026-11-03T08:51:49Z",
+  "duration_ms": 1204,
+  "metrics": {
+    "timeout_ms": 400,
+    "deadline_elapsed_ms": 436,
+    "sigkill_elapsed_ms": 633
+  },
+  "checks": {
+    "start_accepted": true,
+    "deadline_observed": true,
+    "state_timed_out": true,
+    "process_group_stopped": true,
+    "sqlite_timed_out": true,
+    "output_preserved": true,
+    "sigkill_escalation": true,
+    "predeadline_exit_preserved": true,
+    "invalid_timeout_rejected": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/P07-timeout-20261103T085149Z-917/task.log",
+    "poc/results/macos-arm64/cpp/P07-timeout-20261103T085149Z-917/daemon.log",
+    "poc/results/macos-arm64/cpp/P07-timeout-20261103T085149Z-917/environment.txt"
+  ],
+  "known_limitations": [
+    "The POC deadline watcher is in memory and is not recovered after daemon restart.",
+    "Graceful termination uses a fixed short grace period."
+  ]
+}

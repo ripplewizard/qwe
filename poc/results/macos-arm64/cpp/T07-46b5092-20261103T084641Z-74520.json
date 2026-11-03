@@ -1,0 +1,35 @@
+{
+  "case_id": "T07",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "rust=rustc 1.99.1 (58cf8f9c3 2026-10-13); go=go version go1.27.3 darwin/arm64; cxx=Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/environment/20261103T084641Z-74520.txt"
+  },
+  "command": "poc/build/cpp/qwe-poc resize-smoke /Users/huangjian/project/uranus/bianca/poc/results/macos-arm64/cpp/T07-20261103T084641Z-74520.pty.log",
+  "started_at": "2026-11-03T08:46:49Z",
+  "duration_ms": 154,
+  "metrics": {
+    "bytes": 417,
+    "exit_code": 0
+  },
+  "checks": {
+    "ready": true,
+    "size": true,
+    "winch": true,
+    "emulator": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/T07-20261103T084641Z-74520.pty.log",
+    "poc/results/macos-arm64/cpp/T07-20261103T084641Z-74520.stdout.json",
+    "poc/results/macos-arm64/cpp/T07-20261103T084641Z-74520.stderr.log"
+  ],
+  "known_limitations": [
+    "macOS preflight run; not an official Linux x86_64 comparison score",
+    "PTY resize sends an explicit SIGWINCH to the foreground process group",
+    "Covers four dynamic PTY sizes; emulator and pane state are not yet covered"
+  ]
+}

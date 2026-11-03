@@ -1,0 +1,36 @@
+{
+  "case_id": "DX03",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "go version go1.27.3 darwin/arm64",
+    "environment_record": "poc/results/macos-arm64/go/developer-experience-9f915d4fc55047b8afdced09f1173091/environment.txt"
+  },
+  "command": "developer-experience-smoke go DX03",
+  "started_at": "2026-11-03T08:53:13Z",
+  "duration_ms": 16534,
+  "metrics": {
+    "clean_build_ms": 15147.347,
+    "compiler_failure_ms": 1073.088,
+    "build_output_bytes": 175,
+    "compiler_error_bytes": 193
+  },
+  "checks": {
+    "clean_build_succeeded": true,
+    "build_duration_recorded": true,
+    "compiler_failure_rejected": true,
+    "compiler_failure_has_location": true,
+    "compiler_failure_explains_type": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/go/developer-experience-9f915d4fc55047b8afdced09f1173091/DX03.build.log",
+    "poc/results/macos-arm64/go/developer-experience-9f915d4fc55047b8afdced09f1173091/DX03.compiler-error.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

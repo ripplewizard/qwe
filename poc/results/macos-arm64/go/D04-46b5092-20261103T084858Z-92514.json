@@ -1,0 +1,41 @@
+{
+  "case_id": "D04",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "go version go1.27.3 darwin/arm64"
+  },
+  "command": "daemon-depth-smoke go D04",
+  "started_at": "2026-11-03T08:48:58Z",
+  "duration_ms": 15162,
+  "metrics": {
+    "lock_latency_ms": 5240.044,
+    "image_bytes": 33554432,
+    "free_before_bytes": 32731136,
+    "free_at_enospc_bytes": 24576,
+    "free_after_cleanup_bytes": 32636928,
+    "filler_bytes": 32636928,
+    "write_error": "ENOSPC",
+    "write_attempts_before_failure": 1,
+    "failed_start_error": "internal",
+    "read_during_full": true,
+    "start_after_cleanup": true
+  },
+  "checks": {
+    "corrupt_rejected": true,
+    "lock_contention_explicit": true,
+    "disk_full_isolated": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/go/daemon-depth-20261103T084858Z-92514/daemon.log",
+    "poc/results/macos-arm64/go/daemon-depth-20261103T084858Z-92514/disk-full.json",
+    "poc/results/macos-arm64/go/daemon-depth-20261103T084858Z-92514/disk-full.daemon.log"
+  ],
+  "known_limitations": [
+    "Full-disk injection uses a temporary isolated filesystem and a real SQLite database.",
+    "POC request protocol is not a production wire contract."
+  ]
+}

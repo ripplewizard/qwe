@@ -1,0 +1,36 @@
+{
+  "case_id": "DX03",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/macos-arm64/rust/developer-experience-1a0e5e6a13814a0883f857765db1585c/environment.txt"
+  },
+  "command": "developer-experience-smoke rust DX03",
+  "started_at": "2026-11-03T08:52:58Z",
+  "duration_ms": 14720,
+  "metrics": {
+    "clean_build_ms": 14486.14,
+    "compiler_failure_ms": 44.581,
+    "build_output_bytes": 1272,
+    "compiler_error_bytes": 488
+  },
+  "checks": {
+    "clean_build_succeeded": true,
+    "build_duration_recorded": true,
+    "compiler_failure_rejected": true,
+    "compiler_failure_has_location": true,
+    "compiler_failure_explains_type": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/rust/developer-experience-1a0e5e6a13814a0883f857765db1585c/DX03.build.log",
+    "poc/results/macos-arm64/rust/developer-experience-1a0e5e6a13814a0883f857765db1585c/DX03.compiler-error.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

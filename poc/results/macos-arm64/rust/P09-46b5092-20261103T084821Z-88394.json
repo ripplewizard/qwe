@@ -1,0 +1,26 @@
+{
+  "case_id": "P09",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+  },
+  "command": "process-acceptance-smoke rust P09",
+  "started_at": "2026-11-03T08:48:21Z",
+  "duration_ms": 615,
+  "metrics": {},
+  "checks": {
+    "pid_reuse_rejected": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/rust/process-acceptance-20261103T084821Z-88394/daemon.log",
+    "poc/results/macos-arm64/rust/process-acceptance-20261103T084821Z-88394/tasks.sqlite"
+  ],
+  "known_limitations": [
+    "Shared-memory accounting is not part of this process test.",
+    "macOS process start tokens have one-second resolution."
+  ]
+}

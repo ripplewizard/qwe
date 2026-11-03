@@ -1,0 +1,43 @@
+{
+  "case_id": "DX01",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/cpp/developer-experience-28ada4868ff941debda2dc06db4c0ae0/environment.txt"
+  },
+  "command": "developer-experience-smoke cpp DX01",
+  "started_at": "2026-11-03T08:53:30Z",
+  "duration_ms": 2897,
+  "metrics": {
+    "cli_startup_samples": 12,
+    "cli_startup_median_ms": 2.532,
+    "cli_startup_p95_ms": 4.428,
+    "cli_startup_max_ms": 4.428,
+    "ipc_missing_status_samples": 30,
+    "ipc_missing_status_median_ms": 0.069,
+    "ipc_missing_status_p95_ms": 0.092,
+    "ipc_missing_status_max_ms": 0.097,
+    "declared_dependencies": 3,
+    "time_to_demo_seconds_value": null,
+    "time_to_demo_seconds_reason": "The POC was built incrementally; retrospective wall-clock development time is not reconstructable."
+  },
+  "checks": {
+    "probe_contract": true,
+    "invalid_command_clear": true,
+    "ipc_error_clear": true,
+    "startup_latency_recorded": true,
+    "dependency_count_recorded": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/developer-experience-28ada4868ff941debda2dc06db4c0ae0/DX01.error.txt",
+    "poc/results/macos-arm64/cpp/developer-experience-28ada4868ff941debda2dc06db4c0ae0/DX01.daemon.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

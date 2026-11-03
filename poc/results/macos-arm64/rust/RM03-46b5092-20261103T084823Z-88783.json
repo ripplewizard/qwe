@@ -1,0 +1,35 @@
+{
+  "case_id": "RM03",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+  },
+  "command": "resource-smoke rust RM03",
+  "started_at": "2026-11-03T08:48:23Z",
+  "duration_ms": 7159,
+  "metrics": {
+    "process_count": 1,
+    "cpu_percent": 46.5,
+    "memory_bytes": 2080768,
+    "gpu_supported": false,
+    "sample_latency_100_ms": 134.33,
+    "sample_latency_500_ms": 533.28,
+    "sample_latency_1000_ms": 1033.54,
+    "sample_latency_5000_ms": 5033.37
+  },
+  "checks": {
+    "intervals": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/rust/resource-20261103T084823Z-88783/daemon.log",
+    "poc/results/macos-arm64/rust/resource-20261103T084823Z-88783/tasks.sqlite"
+  ],
+  "known_limitations": [
+    "RSS sums may double-count shared pages.",
+    "CPU is lifetime average percentage reported by ps, not an instantaneous scheduler event."
+  ]
+}

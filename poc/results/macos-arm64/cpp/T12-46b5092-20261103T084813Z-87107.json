@@ -1,0 +1,41 @@
+{
+  "case_id": "T12",
+  "language": "cpp",
+  "status": "blocked",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/cpp/terminal-interaction-d73007443c3a47f3a149172f0b1ce777/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* daemon SIGKILL recovery preflight",
+  "started_at": "2026-11-03T08:48:10Z",
+  "duration_ms": 3023,
+  "metrics": {
+    "terminal_pid": 87124,
+    "terminal_process_alive_after_daemon_restart": false,
+    "pre_restart_output_bytes": 67
+  },
+  "checks": {
+    "screen_initialized": true,
+    "daemon_was_running": true,
+    "daemon_restart_required": true,
+    "terminal_process_exit_observed": true,
+    "session_metadata_not_recovered": true,
+    "pty_not_recovered": true,
+    "screen_state_not_recovered": true,
+    "input_not_available": true,
+    "terminal_recovery_incomplete": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/terminal-interaction-d73007443c3a47f3a149172f0b1ce777/environment.txt",
+    "poc/results/macos-arm64/cpp/terminal-interaction-d73007443c3a47f3a149172f0b1ce777/T12.pty.log",
+    "poc/results/macos-arm64/cpp/terminal-interaction-d73007443c3a47f3a149172f0b1ce777/T12.daemon.log"
+  ],
+  "known_limitations": [
+    "This preflight records the current recovery boundary; it does not claim terminal recovery.",
+    "PTY, terminal screen, session metadata, and interactive input are currently not recovered.",
+    "Manual layer-by-layer review remains required."
+  ]
+}

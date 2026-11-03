@@ -1,0 +1,35 @@
+{
+  "case_id": "RM05",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "go version go1.27.3 darwin/arm64"
+  },
+  "command": "resource-smoke go RM05",
+  "started_at": "2026-11-03T08:48:31Z",
+  "duration_ms": 7248,
+  "metrics": {
+    "process_count": 1,
+    "cpu_percent": 33.4,
+    "memory_bytes": 2080768,
+    "gpu_supported": false,
+    "sample_latency_100_ms": 126.44,
+    "sample_latency_500_ms": 527.71,
+    "sample_latency_1000_ms": 1029.58,
+    "sample_latency_5000_ms": 5034.4
+  },
+  "checks": {
+    "attribution_safe": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/go/resource-20261103T084831Z-89154/daemon.log",
+    "poc/results/macos-arm64/go/resource-20261103T084831Z-89154/tasks.sqlite"
+  ],
+  "known_limitations": [
+    "RSS sums may double-count shared pages.",
+    "CPU is lifetime average percentage reported by ps, not an instantaneous scheduler event."
+  ]
+}

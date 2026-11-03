@@ -1,0 +1,28 @@
+{
+  "case_id": "D05",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "go version go1.27.3 darwin/arm64"
+  },
+  "command": "daemon-depth-smoke go D05",
+  "started_at": "2026-11-03T08:48:58Z",
+  "duration_ms": 15169,
+  "metrics": {},
+  "checks": {
+    "partial_disconnect": true,
+    "no_stuck_request": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/go/daemon-depth-20261103T084858Z-92514/daemon.log",
+    "poc/results/macos-arm64/go/daemon-depth-20261103T084858Z-92514/disk-full.json",
+    "poc/results/macos-arm64/go/daemon-depth-20261103T084858Z-92514/disk-full.daemon.log"
+  ],
+  "known_limitations": [
+    "POC request protocol is not a production wire contract.",
+    "POC request protocol is not a production wire contract."
+  ]
+}

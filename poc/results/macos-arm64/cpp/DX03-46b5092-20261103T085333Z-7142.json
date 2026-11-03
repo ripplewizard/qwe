@@ -1,0 +1,36 @@
+{
+  "case_id": "DX03",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "environment_record": "poc/results/macos-arm64/cpp/developer-experience-28ada4868ff941debda2dc06db4c0ae0/environment.txt"
+  },
+  "command": "developer-experience-smoke cpp DX03",
+  "started_at": "2026-11-03T08:53:30Z",
+  "duration_ms": 2919,
+  "metrics": {
+    "clean_build_ms": 1811.362,
+    "compiler_failure_ms": 287.179,
+    "build_output_bytes": 168,
+    "compiler_error_bytes": 340
+  },
+  "checks": {
+    "clean_build_succeeded": true,
+    "build_duration_recorded": true,
+    "compiler_failure_rejected": true,
+    "compiler_failure_has_location": true,
+    "compiler_failure_explains_type": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/developer-experience-28ada4868ff941debda2dc06db4c0ae0/DX03.build.log",
+    "poc/results/macos-arm64/cpp/developer-experience-28ada4868ff941debda2dc06db4c0ae0/DX03.compiler-error.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

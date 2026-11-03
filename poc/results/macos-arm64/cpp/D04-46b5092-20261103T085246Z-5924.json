@@ -1,0 +1,41 @@
+{
+  "case_id": "D04",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "Apple clang version 17.0.0 (clang-1700.0.13.5)"
+  },
+  "command": "daemon-depth-smoke cpp D04",
+  "started_at": "2026-11-03T08:52:46Z",
+  "duration_ms": 11991,
+  "metrics": {
+    "lock_latency_ms": 2027.779,
+    "image_bytes": 33554432,
+    "free_before_bytes": 32731136,
+    "free_at_enospc_bytes": 24576,
+    "free_after_cleanup_bytes": 32636928,
+    "filler_bytes": 32636928,
+    "write_error": "ENOSPC",
+    "write_attempts_before_failure": 1,
+    "failed_start_error": "internal",
+    "read_during_full": true,
+    "start_after_cleanup": true
+  },
+  "checks": {
+    "corrupt_rejected": true,
+    "lock_contention_explicit": true,
+    "disk_full_isolated": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/cpp/daemon-depth-20261103T085246Z-5924/daemon.log",
+    "poc/results/macos-arm64/cpp/daemon-depth-20261103T085246Z-5924/disk-full.json",
+    "poc/results/macos-arm64/cpp/daemon-depth-20261103T085246Z-5924/disk-full.daemon.log"
+  ],
+  "known_limitations": [
+    "Full-disk injection uses a temporary isolated filesystem and a real SQLite database.",
+    "POC request protocol is not a production wire contract."
+  ]
+}

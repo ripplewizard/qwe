@@ -1,0 +1,37 @@
+{
+  "case_id": "T04",
+  "language": "rust",
+  "status": "blocked",
+  "source_commit": "46b5092",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/macos-arm64/rust/terminal-interaction-aaf7729556fb46549aacf6f326b97b56/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* htop preflight",
+  "started_at": "2026-11-03T08:51:36Z",
+  "duration_ms": 3049,
+  "metrics": {
+    "first_output_bytes": 3668,
+    "second_output_bytes": 4764,
+    "delta_bytes": 1096
+  },
+  "checks": {
+    "full_screen_started": true,
+    "first_frame_rendered": true,
+    "dynamic_refresh_observed": true,
+    "frame_changed": true,
+    "clean_exit": true
+  },
+  "evidence": [
+    "poc/results/macos-arm64/rust/terminal-interaction-aaf7729556fb46549aacf6f326b97b56/environment.txt",
+    "poc/results/macos-arm64/rust/terminal-interaction-aaf7729556fb46549aacf6f326b97b56/T04.pty.log",
+    "poc/results/macos-arm64/rust/terminal-interaction-aaf7729556fb46549aacf6f326b97b56/T11.pty.log",
+    "poc/results/macos-arm64/rust/terminal-interaction-aaf7729556fb46549aacf6f326b97b56/T04-T11.daemon.log"
+  ],
+  "known_limitations": [
+    "Automated launch, refresh, and exit checks only.",
+    "Interactive htop visual behavior and resize remain manual."
+  ]
+}

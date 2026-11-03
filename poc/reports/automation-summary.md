@@ -1,7 +1,7 @@
 # Automated Test Summary
 
-Status: Linux matrix regenerated from clean revision `b42e2f9`; macOS
-regeneration and independent manual sign-off remain.
+Status: automated POC matrix complete on Linux and macOS; independent manual
+sign-off remains.
 
 ## Platforms
 
@@ -33,11 +33,11 @@ regeneration and independent manual sign-off remain.
 
 ## Coverage
 
-All 43 matrix cases are represented for Rust, Go, and C++ on Linux x86_64 from
-the clean `b42e2f9` revision. The Linux-only verifier passes against 129
-expected platform/language/case cells and validates referenced local evidence.
-macOS must still be regenerated before the 258-cell cross-platform claim is
-restored.
+All 43 matrix cases are represented for Rust, Go, and C++ on Linux x86_64 and
+macOS ARM64. Linux evidence comes from clean revision `b42e2f9`; macOS evidence
+comes from clean revision `46b5092`. Platform-specific verification passes for
+129 expected cells on each platform. The cross-platform XP01 regenerated with
+no missing platform/language/case cell.
 
 Automated domains passing for every implementation on both platforms:
 
@@ -65,8 +65,9 @@ this separately in Experiment 0002.
 ## Current Recommendation
 
 Rust was selected for implementation, with Go as fallback and C++ not preferred
-for a new core runtime. The Linux evidence is now cleanly regenerated; macOS
-evidence and manual sign-off remain audit tasks.
+for a new core runtime. Automated evidence is complete on both platforms;
+independent manual sign-off remains an audit task and does not block
+implementation.
 
 ## Known Gaps
 
@@ -77,4 +78,4 @@ evidence and manual sign-off remain audit tasks.
 - IPC has request IDs and stable errors but no protocol version negotiation.
 - Linux GPU discovery depends on `nvidia-smi`; unsupported capability is
   reported honestly.
-- Linux evidence is clean at `b42e2f9`; macOS evidence is not yet regenerated.
+- Manual T03/T04/T08/T11/T12 sign-off is still pending.
