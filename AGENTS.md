@@ -1,6 +1,7 @@
 # Repository Guidelines
 
-QWE (Quick Window Environment) is in the Rust implementation phase. Documents
+QWE (Quick Window Environment) is in the Rust implementation phase on `dev`.
+Documents
 in [`docs/`](docs/) are authoritative for the product baseline, production
 architecture, POC evidence, and extension boundaries.
 
@@ -8,6 +9,11 @@ architecture, POC evidence, and extension boundaries.
 
 - `docs/qwe-design-baseline-v0.4.md` defines the implementation baseline.
 - `docs/qwe-technical-architecture.md` defines process and crate boundaries.
+- `docs/development-readiness.md` defines the implementation start gate and
+  current gaps.
+- `docs/development-roadmap.md` defines implementation milestones.
+- `docs/testing-strategy.md` defines test layers and acceptance criteria.
+- `docs/development-workflow.md` defines branch and change flow.
 - `docs/qwe-technical-poc-specification-v0.1.md` defines the POC plan.
 - `docs/qwe-extension-architecture-notes-v0.1.md` records extension boundaries.
 - `Justfile` orchestrates both POC regression and the Rust workspace.
@@ -28,7 +34,18 @@ just test-linux-remote   # Run on istoria and pull Linux evidence
 just check-qwe           # Format, lint, and test the Rust workspace
 just build-qwe           # Build production Rust binaries
 just resilience-smoke    # Verify recovery, persistence, and concurrent attach
+just review-results      # Regenerate dependency/extension/platform reviews
+just verify-linux-results # Validate the latest Linux matrix and evidence
+just verify-macos-results # Validate the latest macOS matrix and evidence
 ```
+
+## Branch Workflow
+
+- `poc` is the unified, read-only POC evidence branch.
+- `dev` is the production integration branch.
+- Create feature work from `dev` using `codex/<topic>` branches.
+- Historical `master`, `codex/poc-session-lease`, and
+  `codex/rust-core-spikes` are POC lineage, not active development branches.
 
 ## Coding Style & Naming Conventions
 
@@ -48,6 +65,7 @@ Follow the unified test domains and acceptance criteria in
 
 There is no coverage threshold yet. Tests must be deterministic, preserve
 relevant output, and record environment, commit, and pass/fail results.
+Manual POC sign-off is pending but does not block `dev` implementation.
 
 ## Commit & Pull Request Guidelines
 

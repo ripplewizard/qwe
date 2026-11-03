@@ -424,6 +424,13 @@ verify-linux-results:
       --matrix "{{ poc }}/test-spec/matrix.md" \
       --platform linux-x86_64
 
+verify-macos-results:
+    python3 "{{ poc }}/test-runner/verify_results.py" \
+      --results-root "{{ poc }}/results" \
+      --schema "{{ poc }}/test-spec/result.schema.json" \
+      --matrix "{{ poc }}/test-spec/matrix.md" \
+      --platform macos-arm64
+
 update-matrix:
     python3 "{{ poc }}/test-runner/update_matrix.py" \
       --results-root "{{ poc }}/results" \

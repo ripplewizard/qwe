@@ -6,6 +6,12 @@
   scope, decisions, recovery matrix, and acceptance gates.
 - [Technical Architecture](qwe-technical-architecture.md): process model, crate
   graph, IPC, state ownership, persistence, and security.
+- [Development Readiness](development-readiness.md): start gate and known
+  implementation gaps.
+- [Development Roadmap](development-roadmap.md): implementation milestones.
+- [Testing Strategy](testing-strategy.md): test layers, commands, and gates.
+- [Development Workflow](development-workflow.md): branch and change workflow.
+- [POC Branch Index](poc-branch-index.md): historical branch lookup.
 - [ADR Index](adr/README.md): accepted architecture decisions and consequences.
 - [Experiment 0001](experiments/0001-t12-host-ownership.md): daemon restart and
   bounded-output validation.
@@ -26,6 +32,8 @@
 ## Reading Order
 
 1. Read Baseline v0.4 for current scope and non-negotiable decisions.
-2. Read Technical Architecture before adding crates, processes, or protocols.
-3. Read the relevant ADR before revisiting an accepted decision.
-4. Treat POC reports and v0.2 as evidence, not current implementation rules.
+2. Read Development Readiness, Roadmap, Testing Strategy, and Workflow before
+   starting implementation.
+3. Read Technical Architecture before adding crates, processes, or protocols.
+4. Read the relevant ADR before revisiting an accepted decision.
+5. Treat `poc` reports and v0.2 as evidence, not current implementation rules.

@@ -1,6 +1,6 @@
 # QWE Design Baseline v0.4
 
-Status: Implementation Baseline; resilience and concurrency gates passed on macOS and Fedora
+Status: Development approved; automated POC and resilience gates passed on macOS and Fedora
 Version: 0.4
 Date: 2026-11-03
 
@@ -88,7 +88,18 @@ Attach requests with eight concurrent clients during continuous output.
 - Final VT engine after broader compatibility benchmarks.
 - Exact idle-timeout behavior for non-terminal Sessions.
 
-## 9. Deferred Scope
+## 9. Current Implementation Gaps
+
+- `SESSION_RESIZE` is not yet exposed by the production host protocol.
+- Attach does not yet expose complete cursor and terminal-mode state.
+- Idempotency keys are transported but not durably deduplicated.
+- systemd and launchd lifecycle integration is pending.
+- Release-mode soak and adversarial security suites are pending.
+
+These gaps are active development work. Manual POC sign-off remains pending but
+does not block implementation.
+
+## 10. Deferred Scope
 
 Multi-node execution, mesh, sandboxing, credential brokering, agent runtime,
 and GPU isolation remain deferred.

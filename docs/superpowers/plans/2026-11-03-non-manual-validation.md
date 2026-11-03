@@ -1,5 +1,7 @@
 # Complete Non-Manual POC Validation Implementation Plan
 
+Status: automated plan complete; manual sign-off remains.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans
 > to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for
 > tracking. Manual verification remains explicitly blocked.
@@ -63,7 +65,7 @@ Just, macOS `ps`/`proc` facilities, Linux `/proc`.
   and title assertions.
 - [x] T06: expand CJK, emoji, combining marks, and wide-character assertions.
 - [x] T07: verify parser/emulator dimensions after each resize.
-- [ ] Add automated T03/T04/T11/T12 preflights, leaving their manual review
+- [x] Add automated T03/T04/T11/T12 preflights, leaving their manual review
   status blocked.
 
 ### Task 3: Resource Monitoring
@@ -76,31 +78,31 @@ Just, macOS `ps`/`proc` facilities, Linux `/proc`.
 
 ### Task 4: Daemon Failure Depth and Long Running
 
-- [ ] D01: cover invalid requests, not-found, request-ID, and stable error codes.
-- [ ] D02: record concurrency latency and invariant checks.
-- [ ] D04: cover lock contention, injected disk-full behavior, and corruption.
-- [ ] D05: verify no stuck request or leaked client after disconnect.
-- [ ] D08: run a sustained interval and record request errors plus RSS trend.
+- [x] D01: cover invalid requests, not-found, request-ID, and stable error codes.
+- [x] D02: record concurrency latency and invariant checks.
+- [x] D04: cover lock contention, injected disk-full behavior, and corruption.
+- [x] D05: verify no stuck request or leaked client after disconnect.
+- [x] D08: run a sustained interval and record request errors plus RSS trend.
 
 ### Task 5: Developer Experience and Platform Metrics
 
-- [ ] DX01: record CLI time-to-demo, dependency count, and error clarity.
-- [ ] DX02: add a minimal CLI/TUI screen and persistence check.
-- [ ] DX03: measure clean build/test time and capture failure output.
-- [ ] XP01: generate comparative Linux/macOS capability and performance data.
+- [x] DX01: record CLI time-to-demo, dependency count, and error clarity.
+- [x] DX02: add a minimal CLI/TUI screen and persistence check.
+- [x] DX03: measure clean build/test time and capture failure output.
+- [x] XP01: generate comparative Linux/macOS capability and performance data.
 
 ### Task 6: Extension and Dependency Reviews
 
-- [ ] EX01: review extension registry against implemented object boundaries.
-- [ ] MC01: record licenses, release activity, maintenance risk, and platform
+- [x] EX01: review extension registry against implemented object boundaries.
+- [x] MC01: record licenses, release activity, maintenance risk, and platform
   availability for every selected dependency.
-- [ ] Regenerate the automated summary and update every matrix row with evidence.
+- [x] Regenerate the automated summary and update every matrix row with evidence.
 
 ## Verification
 
-- [ ] `just fmt`
-- [ ] `just lint`
-- [ ] `just verify-skeleton`
-- [ ] `just verify-fixtures`
-- [ ] All automated smoke recipes on Linux and macOS
-- [ ] Full result-schema and evidence-path validation
+- [x] `just fmt`
+- [x] `just lint`
+- [x] `just verify-skeleton`
+- [x] `just verify-fixtures`
+- [x] All automated smoke recipes on Linux and macOS
+- [x] Platform-specific result-schema and evidence-path validation

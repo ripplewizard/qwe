@@ -1,6 +1,6 @@
 # QWE Technical Architecture
 
-Status: Implementation Draft
+Status: Implementation Active
 Version: 0.1
 Date: 2026-11-03
 
@@ -31,6 +31,11 @@ owners of live terminal and process resources. A client never owns a PTY or
 process group.
 
 This ownership boundary is exercised by `just t12-host-smoke`.
+
+Current production implementation includes durable session workers, Host epoch
+recovery, SQLite Task/Lease state, startup reconciliation, and concurrent
+Attach. Production resize and complete VT-mode snapshots remain in progress;
+see [Development Readiness](development-readiness.md).
 
 ## 2. Process Responsibilities
 
