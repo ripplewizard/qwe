@@ -1,6 +1,10 @@
 use std::collections::VecDeque;
 use thiserror::Error;
 
+mod process;
+
+pub use process::{process_identity, process_matches};
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum JournalError {
     #[error("journal limit must be greater than zero")]

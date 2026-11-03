@@ -7,5 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 clap.workspace = true
+qwe-core = { path = "../../crates/qwe-core" }
 qwe-protocol = { path = "../../crates/qwe-protocol" }
+qwe-storage = { path = "../../crates/qwe-storage" }
 serde_json.workspace = true

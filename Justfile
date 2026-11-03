@@ -576,6 +576,7 @@ t12-host-smoke:
     cargo build -p qwe -p qwed -p qwe-host
     host_socket="/tmp/qwe-t12-host-$$.sock"
     client_socket="/tmp/qwe-t12-client-$$.sock"
+    runtime_dir="${host_socket}.runtime"
     host_pid=""
     qwed_pid=""
     session_id="t12-session"
@@ -588,7 +589,10 @@ t12-host-smoke:
         kill -TERM "$host_pid" 2>/dev/null || true
         wait "$host_pid" 2>/dev/null || true
       fi
-      rm -f "$host_socket" "$client_socket"
+      pkill -TERM -f -- "--worker-socket ${runtime_dir}/" 2>/dev/null || true
+      rm -rf -- "$runtime_dir"
+      rm -f "$host_socket" "$client_socket" "${client_socket}.sqlite" \
+        "${client_socket}.sqlite-shm" "${client_socket}.sqlite-wal"
     }
     trap cleanup_t12 EXIT
     target/debug/qwe-host --socket "$host_socket" &
@@ -680,9 +684,209 @@ t12-host-smoke:
     jq -r '.journal_hex' "$bounded_attach" | xxd -r -p |
       grep -Fq 'QWE_BOUNDED_END'
     host_rss="$(ps -o rss= -p "$host_pid" | tr -d ' ')"
-    [ "$host_rss" -lt 204800 ]
+    worker_pid="$(jq -r '.worker_pid' "$bounded_attach")"
+    worker_rss="$(ps -o rss= -p "$worker_pid" | tr -d ' ')"
+    total_rss="$((host_rss + worker_rss))"
+    [ "$total_rss" -lt 204800 ]
     target/debug/qwe --socket "$client_socket" session close "$session_id" >/dev/null
-    printf 'T12 host ownership PASS (bounded attach, host_rss=%s KiB)\n' "$host_rss"
+    printf 'T12 host ownership PASS (bounded attach, total_rss=%s KiB)\n' "$total_rss"
+
+resilience-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-host
+    host_socket="/tmp/qwe-resilience-host-$$.sock"
+    client_socket="/tmp/qwe-resilience-client-$$.sock"
+    store_path="/tmp/qwe-resilience-store-$$.sqlite"
+    runtime_dir="${host_socket}.runtime"
+    host_pid=""
+    qwed_pid=""
+    worker_pid=""
+    lost_worker_pid=""
+    session_id="resilience-session"
+    lost_session_id="lost-session"
+    second_qwed_log="/tmp/qwe-resilience-second-qwed-$$.log"
+
+    cleanup_resilience() {
+      if [ -n "$qwed_pid" ]; then
+        kill -TERM -- "-${qwed_pid}" 2>/dev/null || true
+        wait "$qwed_pid" 2>/dev/null || true
+      fi
+      if [ -n "$host_pid" ]; then
+        kill -TERM -- "-${host_pid}" 2>/dev/null || true
+        wait "$host_pid" 2>/dev/null || true
+      fi
+      for worker in "$worker_pid" "$lost_worker_pid"; do
+        if [ -n "$worker" ]; then
+          kill -TERM "$worker" 2>/dev/null || true
+        fi
+      done
+      pkill -TERM -f -- "--worker-socket ${runtime_dir}/" 2>/dev/null || true
+      rm -rf -- "$runtime_dir"
+      rm -f "$host_socket" "$client_socket" "$second_qwed_log" \
+        "$store_path" "${store_path}-shm" "${store_path}-wal"
+    }
+    trap cleanup_resilience EXIT
+
+    start_host() {
+      target/debug/qwe-host --socket "$host_socket" &
+      host_pid=$!
+      for _ in $(seq 1 200); do
+        [ -S "$host_socket" ] && return
+        sleep 0.02
+      done
+      printf 'host socket did not become ready\n' >&2
+      return 1
+    }
+
+    start_qwed() {
+      python3 -c 'import os,sys; os.setsid(); os.execv(sys.argv[1],sys.argv[1:])' \
+        target/debug/qwed --socket "$client_socket" --host-socket "$host_socket" \
+        --store "$store_path" &
+      qwed_pid=$!
+      for _ in $(seq 1 200); do
+        target/debug/qwe --socket "$client_socket" ping >/dev/null 2>&1 && return
+        sleep 0.02
+      done
+      printf 'qwed did not become ready\n' >&2
+      return 1
+    }
+
+    start_host
+    start_qwed
+    created="$(target/debug/qwe --socket "$client_socket" task start "$session_id" sh)"
+    task_id="$(printf '%s' "$created" | jq -r '.task_id')"
+    worker_pid="$(printf '%s' "$created" | jq -r '.worker_pid')"
+    session_pid="$(printf '%s' "$created" | jq -r '.pid')"
+    start_token="$(printf '%s' "$created" | jq -r '.start_token')"
+    [ -n "$task_id" ] && [ -n "$worker_pid" ] && [ -n "$start_token" ]
+    worker_pgid="$(ps -o pgid= -p "$worker_pid" | tr -d ' ')"
+    original_host_pgid="$(ps -o pgid= -p "$host_pid" | tr -d ' ')"
+    [ "$worker_pgid" = "$worker_pid" ]
+    [ "$worker_pgid" != "$original_host_pgid" ]
+    target/debug/qwe --socket "$client_socket" session input "$session_id" \
+      $'printf "QWE_RESILIENCE_BEFORE\\n"\r' >/dev/null
+    for _ in $(seq 1 100); do
+      recovered="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+      printf '%s' "$recovered" | jq -e \
+        '.screen | contains("QWE_RESILIENCE_BEFORE")' >/dev/null && break
+      sleep 0.02
+    done
+    printf '%s' "$recovered" | jq -e \
+      --argjson pid "$session_pid" \
+      '.running == true and .pid == $pid' >/dev/null
+    lease="$(target/debug/qwe --socket "$client_socket" lease claim \
+      "$session_id" owner-a --ttl-ms 60000)"
+    generation="$(printf '%s' "$lease" | jq -r '.generation')"
+    [ "$generation" = 1 ]
+
+    host_pgid="$(ps -o pgid= -p "$host_pid" | tr -d ' ')"
+    kill -KILL -- "-$host_pgid"
+    wait "$host_pid" 2>/dev/null || true
+    host_pid=""
+    kill -0 "$worker_pid"
+
+    start_host
+    recovered="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+    printf '%s' "$recovered" | jq -e \
+      --argjson pid "$session_pid" \
+      --arg start "$start_token" \
+      '.pid == $pid and .start_token == $start and .running == true and
+       (.screen | contains("QWE_RESILIENCE_BEFORE"))' >/dev/null
+    qwed_pgid="$(ps -o pgid= -p "$qwed_pid" | tr -d ' ')"
+    kill -KILL -- "-$qwed_pgid"
+    wait "$qwed_pid" 2>/dev/null || true
+    qwed_pid=""
+    start_qwed
+    control="$(target/debug/qwe --socket "$client_socket" status)"
+    printf '%s' "$control" | jq -e \
+      --arg id "$session_id" \
+      '.daemon == "ok" and
+       .reconciliation.live_sessions >= 1 and
+       ([.sessions[] | select(.id == $id and .state == "running")] | length == 1) and
+       ([.tasks[] | select(.session_id == $id and .state == "running")] | length == 1)' \
+      >/dev/null
+    target/debug/qwe --socket "$client_socket" session input "$session_id" \
+      $'printf "QWE_RESILIENCE_AFTER\\n"\r' >/dev/null
+    attached_after=""
+    for _ in $(seq 1 100); do
+      attached_after="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+      printf '%s' "$attached_after" | jq -e \
+        '.screen | contains("QWE_RESILIENCE_AFTER")' >/dev/null && break
+      sleep 0.02
+    done
+    printf '%s' "$attached_after" | jq -e \
+      '.screen | contains("QWE_RESILIENCE_AFTER")' >/dev/null
+    target/debug/qwe --socket "$client_socket" lease touch \
+      "$session_id" owner-a 1 --ttl-ms 60000 |
+      jq -e '.generation == 1 and .owner == "owner-a"' >/dev/null
+
+    printf -v continuous_command 'exec python3 %q\r' \
+      "$PWD/poc/test-data/scripts/continuous_output.py"
+    target/debug/qwe --socket "$client_socket" session input "$session_id" \
+      "$continuous_command" >/dev/null
+    for _ in $(seq 1 100); do
+      output_status="$(target/debug/qwe --socket "$client_socket" session status "$session_id")"
+      printf '%s' "$output_status" | jq -e '.total_written > 0' >/dev/null && break
+      sleep 0.02
+    done
+    benchmark="$(python3 poc/test-data/scripts/attach_benchmark.py \
+      --cli "$PWD/target/debug/qwe" \
+      --socket "$client_socket" \
+      --session-id "$session_id" \
+      --clients 8 \
+      --iterations 8)"
+    printf '%s\n' "$benchmark" | jq -e \
+      '.successes == .requests and .p95_ms <= .max_p95_ms and .p99_ms <= .max_p99_ms' \
+      >/dev/null
+    target/debug/qwe --socket "$client_socket" session input "$session_id" $'\003' >/dev/null
+    for _ in $(seq 1 100); do
+      output_status="$(target/debug/qwe --socket "$client_socket" session status "$session_id")"
+      printf '%s' "$output_status" | jq -e '.running == false' >/dev/null && break
+      sleep 0.02
+    done
+    printf '%s' "$output_status" | jq -e '.running == false and .exit_code == 0' >/dev/null
+
+    stopped="$(target/debug/qwe --socket "$client_socket" task stop "$task_id")"
+    printf '%s' "$stopped" | jq -e '.state == "stopped"' >/dev/null
+    target/debug/qwe --socket "$client_socket" task history |
+      jq -e --arg id "$task_id" \
+        '([.tasks[] | select(.task_id == $id and .state == "stopped")] | length == 1)' \
+        >/dev/null
+
+    lost_created="$(target/debug/qwe --socket "$client_socket" task start "$lost_session_id" sh)"
+    lost_task_id="$(printf '%s' "$lost_created" | jq -r '.task_id')"
+    lost_worker_pid="$(printf '%s' "$lost_created" | jq -r '.worker_pid')"
+    qwed_pgid="$(ps -o pgid= -p "$qwed_pid" | tr -d ' ')"
+    kill -KILL -- "-$qwed_pgid"
+    wait "$qwed_pid" 2>/dev/null || true
+    qwed_pid=""
+    kill -KILL "$lost_worker_pid"
+    lost_worker_pid=""
+    start_qwed
+    control="$(target/debug/qwe --socket "$client_socket" status)"
+    printf '%s' "$control" | jq -e \
+      --arg id "$lost_session_id" \
+      '.reconciliation.lost_sessions >= 1 and
+       ([.sessions[] | select(.id == $id and .state == "lost")] | length == 1)' \
+      >/dev/null
+    target/debug/qwe --socket "$client_socket" task history |
+      jq -e --arg id "$lost_task_id" \
+        '([.tasks[] | select(.task_id == $id and .state == "lost")] | length == 1)' \
+        >/dev/null
+
+    set +e
+    python3 -c 'import os,sys; os.setsid(); os.execv(sys.argv[1],sys.argv[1:])' \
+      target/debug/qwed --socket "$client_socket" --host-socket "$host_socket" \
+      --store "$store_path" >"$second_qwed_log" 2>&1 &
+    second_qwed_pid=$!
+    wait "$second_qwed_pid"
+    second_qwed_status=$?
+    set -e
+    [ "$second_qwed_status" -ne 0 ]
+    grep -Fq 'qwed is already running' "$second_qwed_log"
+    printf '%s\n' "$benchmark"
+    printf 'Resilience PASS (host recovery, SQLite lease/task, reconciliation, concurrent attach)\n'
 
 _terminal-smoke platform:
     #!/usr/bin/env bash

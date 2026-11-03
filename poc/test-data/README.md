@@ -25,3 +25,8 @@ terminal emulators parse its PTY output for T05/T06.
 
 `bounded_output.py` emits 100 MiB to validate bounded attach and backpressure.
 
+`continuous_output.py` provides sustained PTY output during concurrency tests.
+
+`attach_benchmark.py` measures concurrent Attach P50/P95/P99 with zero-failure
+and latency gates.
+

@@ -6,6 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+libc.workspace = true
 portable-pty.workspace = true
+qwe-core = { path = "../qwe-core" }
 thiserror.workspace = true
 vt100.workspace = true

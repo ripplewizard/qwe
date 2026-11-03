@@ -2,13 +2,15 @@
 
 ## Implementation
 
-- [Design Baseline v0.3](qwe-design-baseline-v0.3.md): confirmed production
+- [Design Baseline v0.4](qwe-design-baseline-v0.4.md): current production
   scope, decisions, recovery matrix, and acceptance gates.
 - [Technical Architecture](qwe-technical-architecture.md): process model, crate
   graph, IPC, state ownership, persistence, and security.
 - [ADR Index](adr/README.md): accepted architecture decisions and consequences.
-- [Experiment 0001](experiments/0001-t12-host-ownership.md): durable host
-  ownership and daemon restart validation.
+- [Experiment 0001](experiments/0001-t12-host-ownership.md): daemon restart and
+  bounded-output validation.
+- [Experiment 0002](experiments/0002-resilience-and-concurrency.md): Host crash
+  recovery, control-state reconciliation, and concurrent Attach latency.
 
 ## POC Evidence
 
@@ -23,7 +25,7 @@
 
 ## Reading Order
 
-1. Read Baseline v0.3 for current scope and non-negotiable decisions.
+1. Read Baseline v0.4 for current scope and non-negotiable decisions.
 2. Read Technical Architecture before adding crates, processes, or protocols.
 3. Read the relevant ADR before revisiting an accepted decision.
 4. Treat POC reports and v0.2 as evidence, not current implementation rules.

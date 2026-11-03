@@ -424,7 +424,9 @@ dependencies = [
 name = "qwe-runtime"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "portable-pty",
+ "qwe-core",
  "thiserror 2.0.21",
  "vt100",
 ]
@@ -433,8 +435,10 @@ dependencies = [
 name = "qwe-storage"
 version = "0.1.0"
 dependencies = [
+ "qwe-core",
  "rusqlite",
  "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]
@@ -442,7 +446,9 @@ name = "qwed"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "qwe-core",
  "qwe-protocol",
+ "qwe-storage",
  "serde_json",
 ]
 

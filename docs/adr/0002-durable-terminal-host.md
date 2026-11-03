@@ -1,6 +1,6 @@
 # ADR 0002: Durable Terminal Host
 
-Status: Accepted
+Status: Superseded in part by ADR 0006
 Date: 2026-11-03
 
 ## Context
@@ -18,5 +18,5 @@ reconnects to the host.
 
 - Daemon crash no longer terminates terminal sessions.
 - Host protocol must be versioned independently from client IPC.
-- Host crash still loses live sessions in V0 and must return a distinct error.
+- Host crash loss was superseded by isolated workers in ADR 0006.
 - Host upgrade cannot happen while sessions that require the old ABI are live.

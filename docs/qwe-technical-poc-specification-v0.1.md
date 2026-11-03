@@ -976,7 +976,7 @@ POC 的价值在于尽早暴露错误的技术选择，而不是尽早确定一�
 3	优先执行 Terminal POC	Terminal 测试报告	解决最大技术风险
 4	执行 Process/Daemon POC	进程与恢复测试报告	验证核心可靠性
 5	综合评分	Language Decision Report	决定主要技术路线
-6	更新 Baseline	v0.3	将 POC 结论纳入正式架构
+6	更新 Baseline	v0.4	将 POC 与恢复/并发结论纳入正式架构
 
 有一个需要特别强调的判断：不要先做 CLI、TUI 或者漂亮的分屏界面。
 

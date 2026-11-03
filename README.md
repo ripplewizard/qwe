@@ -8,7 +8,7 @@ extension boundaries.
 
 The Rust implementation foundation is active. It follows the accepted
 architecture in
-[`docs/qwe-design-baseline-v0.3.md`](docs/qwe-design-baseline-v0.3.md).
+[`docs/qwe-design-baseline-v0.4.md`](docs/qwe-design-baseline-v0.4.md).
 
 The process and crate boundaries are described in
 [`docs/qwe-technical-architecture.md`](docs/qwe-technical-architecture.md).
@@ -27,6 +27,7 @@ just check-qwe
 just build-qwe
 just test-qwe
 just t12-host-smoke
+just resilience-smoke
 ```
 
 The Rust workspace requires the stable toolchain pinned in

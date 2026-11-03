@@ -6,7 +6,10 @@ that links to the replaced decision.
 | ADR | Decision | Status |
 |---|---|---|
 | [0001](0001-rust-runtime.md) | Rust for the runtime | Accepted |
-| [0002](0002-durable-terminal-host.md) | Durable terminal host | Accepted |
+| [0002](0002-durable-terminal-host.md) | Durable terminal host | Amended by 0006 |
 | [0003](0003-versioned-local-ipc.md) | Versioned local IPC | Accepted |
 | [0004](0004-process-identity.md) | Process identity | Accepted |
 | [0005](0005-terminal-state.md) | Terminal state and bounded attach | Accepted |
+| [0006](0006-session-worker-recovery.md) | Isolated recoverable session workers | Accepted |
+| [0007](0007-control-state-reconciliation.md) | SQLite control-state reconciliation | Accepted |
+| [0008](0008-concurrent-attach-latency.md) | Concurrent Attach latency budget | Accepted |

@@ -28,8 +28,8 @@ Can terminal sessions survive a control-daemon crash?
 - A 100 MiB continuous-output run is polled through lightweight status requests.
 - The final attach is limited to a 1 MiB journal tail with explicit truncation.
 - `QWE_BOUNDED_END`, written after all 100 MiB, is present in the retained tail.
-- Host RSS stayed below 200 MiB: 34,752-34,784 KiB on macOS and 23,228 KiB
-  on Fedora.
+- Host plus PTY-worker RSS stayed below 200 MiB: 44,896-45,024 KiB on macOS and
+  28,840-31,860 KiB on Fedora.
 
 Validated on macOS ARM64 and Fedora Linux x86_64.
 
@@ -38,12 +38,12 @@ Validated on macOS ARM64 and Fedora Linux x86_64.
 A dedicated host removes PTY and terminal state from the daemon lifetime.
 The host also keeps output retention bounded while continuing to drain the PTY.
 
+## Covered by Experiment 0002
+
+- Host crash recovery, Lease/Task persistence, startup reconciliation, and
+  concurrent Attach.
+
 ## Not Yet Proven
 
-- `qwe-host` crash recovery.
 - Rejection of adversarial unauthorized local clients.
 - Compact binary VT snapshot transport.
-- Lease recovery across control-plane restart.
-- Automatic `qwed` reconciliation against host session inventory.
-- 100 MiB and long-duration output under concurrent attach clients.
-- Attach latency P95/P99 under sustained output.

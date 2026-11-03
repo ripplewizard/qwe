@@ -6,7 +6,7 @@ architecture, POC evidence, and extension boundaries.
 
 ## Project Structure & Module Organization
 
-- `docs/qwe-design-baseline-v0.3.md` defines the implementation baseline.
+- `docs/qwe-design-baseline-v0.4.md` defines the implementation baseline.
 - `docs/qwe-technical-architecture.md` defines process and crate boundaries.
 - `docs/qwe-technical-poc-specification-v0.1.md` defines the POC plan.
 - `docs/qwe-extension-architecture-notes-v0.1.md` records extension boundaries.
@@ -27,6 +27,7 @@ just test-linux          # Run the full Linux suite
 just test-linux-remote   # Run on istoria and pull Linux evidence
 just check-qwe           # Format, lint, and test the Rust workspace
 just build-qwe           # Build production Rust binaries
+just resilience-smoke    # Verify recovery, persistence, and concurrent attach
 ```
 
 ## Coding Style & Naming Conventions

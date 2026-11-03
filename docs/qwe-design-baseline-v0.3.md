@@ -1,6 +1,6 @@
 # QWE Design Baseline v0.3
 
-Status: Implementation Baseline; T12 host ownership validated
+Status: Superseded by Baseline v0.4
 Version: 0.3
 Date: 2026-11-03
 

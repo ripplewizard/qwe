@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 clap.workspace = true
-libc = "0.2"
+libc.workspace = true
 portable-pty.workspace = true
 qwe-core = { path = "../../crates/qwe-core" }
 qwe-protocol = { path = "../../crates/qwe-protocol" }

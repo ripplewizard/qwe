@@ -15,15 +15,20 @@ qwed control daemon -------- SQLite WAL
   |
   | versioned host IPC
   v
-qwe-host
-  +-- terminal sessions
-  +-- PTYs and VT state
-  +-- task process groups
-  +-- bounded output journals
+qwe-host (recoverable manager)
+  |
+  +-- session worker
+  |     +-- PTY and VT state
+  |     +-- task process group
+  |     +-- bounded output journal
+  |
+  +-- session worker
+        +-- ...
 ```
 
-The daemon is replaceable. The host is the only owner of live terminal and
-process resources. A client never owns a PTY or process group.
+The daemon and Host manager are replaceable. Session workers are the only
+owners of live terminal and process resources. A client never owns a PTY or
+process group.
 
 This ownership boundary is exercised by `just t12-host-smoke`.
 
@@ -41,15 +46,22 @@ This ownership boundary is exercised by `just t12-host-smoke`.
 - Provides the stable public local API.
 - Authorizes clients and manages leases.
 - Stores metadata, topology, and task history in SQLite.
+- Reconciles persisted state against Host inventory before accepting clients.
 - Starts or reconnects to `qwe-host`.
 - Does not own PTYs or process groups.
 
 ### qwe-host
 
-- Owns PTYs, terminal emulator state, input streams, and process groups.
+- Manages isolated session workers and reconnects to them after Host restart.
 - Enforces bounded output retention and backpressure.
 - Exposes session and task operations over the host protocol.
 - Remains alive when `qwed` is killed or restarted.
+
+### Session worker
+
+- Calls `setsid` and owns one PTY, process group, VT state, and bounded journal.
+- Serves status, Attach, input, and close over an owner-only Unix socket.
+- Survives `qwed` and Host crashes; worker failure loses only that Session.
 
 ## 3. Crate Graph
 
@@ -126,18 +138,14 @@ persistence_failure
 The host protocol is internal and versioned separately from client IPC:
 
 ```text
-HOST_HELLO
+HOST_REGISTER
+HOST_LIST
+PING
 SESSION_CREATE
 SESSION_ATTACH
 SESSION_DETACH
 SESSION_INPUT
-SESSION_RESIZE
-SESSION_SNAPSHOT
 SESSION_CLOSE
-TASK_START
-TASK_STATUS
-TASK_STOP
-HOST_SHUTDOWN
 ```
 
 `SESSION_SNAPSHOT` returns:
@@ -159,11 +167,11 @@ polling from serializing large responses ahead of PTY input.
 
 | State | Owner | Durable Storage |
 |---|---|---|
-| Live PTY and writer | `qwe-host` | No |
-| VT screen and cursor | `qwe-host` | Periodic/offline snapshot |
-| Recent terminal bytes | `qwe-host` | Optional checkpoint |
-| Task process group | `qwe-host` | Identity mirrored to SQLite |
-| Session metadata | `qwe-host`, mirrored by `qwed` | SQLite |
+| Live PTY and writer | Session worker | No |
+| VT screen and cursor | Session worker | No |
+| Recent terminal bytes | Session worker | No |
+| Task process group | Session worker | Identity mirrored to SQLite |
+| Session metadata | `qwed` | SQLite |
 | Lease owner/deadline | `qwed` | SQLite |
 | Task history | `qwed` | SQLite |
 | Configuration | Workspace files | Files |
@@ -173,14 +181,15 @@ polling from serializing large responses ahead of PTY input.
 | Failure | Expected Behavior |
 |---|---|
 | CLI disconnect | Session and task continue; attach later |
-| `qwed` SIGKILL | `qwe-host` and all live resources continue |
-| `qwed` restart | Rediscover host and reconstruct control state |
+| `qwed` SIGKILL | Host and all session workers continue |
+| `qwed` restart | Rediscover Host and reconcile SQLite inventory |
 | Corrupt SQLite | Fail explicitly; do not start with silent data loss |
-| `qwe-host` SIGKILL | Sessions are lost; return `terminal_lost` |
+| `qwe-host` SIGKILL | Restart scans runtime directory and reconnects workers |
+| Session worker SIGKILL | That Session is lost; return `terminal_lost` |
 | OS reboot | No V0 recovery |
 
-If host restart recovery is later required, it must use compact VT snapshots
-and process identity, not full terminal replay.
+Host recovery uses socket discovery and worker-owned PTY state. It never
+reconstructs a terminal by replaying an unbounded byte stream.
 
 ## 8. Task Identity
 
@@ -201,6 +210,8 @@ The process start token is mandatory. PID alone is never sufficient.
 - A newer schema is rejected by older binaries.
 - High-frequency terminal bytes are not written to SQLite per frame.
 - Mutating requests retain idempotency keys to prevent duplicate tasks.
+- Startup reconciliation marks missing Sessions and Tasks as `lost`.
+- Lease owner and generation changes are transactional.
 
 ## 10. Resource Model
 
@@ -224,11 +235,19 @@ exists; otherwise the field is `unsupported`.
 - Frame and input size limits.
 - Secrets are never included in configuration or test evidence.
 
-## 12. Remaining Architecture Decisions
+## 12. Concurrency and Latency
 
-1. Whether host crash recovery is required before V1.
-2. Whether read-only observers are supported.
-3. Final VT engine after bounded snapshot benchmarks.
-4. Exact idle-timeout defaults for non-terminal Sessions.
+- `qwed`, Host, and workers accept each client connection independently.
+- Snapshot locks cover state capture, not socket writes to slow clients.
+- The automated gate runs 64 Attach requests with eight clients during
+  continuous PTY output.
+- V0 requires zero request failures, P95 at or below 3,000 ms, and P99 at or
+  below 5,000 ms.
+
+## 13. Remaining Architecture Decisions
+
+1. Whether read-only observers are supported.
+2. Final VT engine after broader compatibility benchmarks.
+3. Exact idle-timeout defaults for non-terminal Sessions.
 
 These decisions must be recorded as ADRs before their implementation.
