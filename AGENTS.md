@@ -1,21 +1,19 @@
 # Repository Guidelines
 
-QWE (Quick Window Environment) is in its design and technology-selection
-phase. The documents in [`docs/`](docs/) are authoritative for the product
-baseline, Rust/Go/C++ POC, and extension boundaries.
+QWE (Quick Window Environment) is in the Rust implementation phase. Documents
+in [`docs/`](docs/) are authoritative for the product baseline, production
+architecture, POC evidence, and extension boundaries.
 
 ## Project Structure & Module Organization
 
-- `docs/qwe-design-baseline-v0.2.md` defines the product baseline.
+- `docs/qwe-design-baseline-v0.3.md` defines the implementation baseline.
+- `docs/qwe-technical-architecture.md` defines process and crate boundaries.
 - `docs/qwe-technical-poc-specification-v0.1.md` defines the POC plan.
 - `docs/qwe-extension-architecture-notes-v0.1.md` records extension boundaries.
-- `Justfile` is the only POC orchestration entry point.
+- `Justfile` orchestrates both POC regression and the Rust workspace.
+- `crates/` and `apps/` contain the production Rust workspace.
 - `poc/{rust,go,cpp}/` contains equivalent POC implementations; shared inputs,
   specifications, evidence, and reports stay outside language directories.
-- Production source must wait for the recorded language decision.
-
-Keep POC behavior comparable and identify reused components and
-responsibilities in each implementation.
 
 ## Build, Test, and Development Commands
 
@@ -27,6 +25,8 @@ just verify-fixtures     # Verify shared test workloads
 just test-macos          # Run the full macOS suite
 just test-linux          # Run the full Linux suite
 just test-linux-remote   # Run on istoria and pull Linux evidence
+just check-qwe           # Format, lint, and test the Rust workspace
+just build-qwe           # Build production Rust binaries
 ```
 
 ## Coding Style & Naming Conventions
@@ -35,10 +35,8 @@ Use UTF-8 Markdown with clear headings and language-tagged code fences.
 Preserve established design identifiers such as `D###` and `PD###`. Name new
 documents by topic, for example `docs/ipc-protocol.md`.
 
-For future POC code, use each language's canonical formatter and naming style:
-`snake_case` for Rust modules/functions and C++ functions, `PascalCase` for
-types, and Go `MixedCaps`. Do not mix implementations or copy source between
-language directories.
+Use canonical Rust style. POC implementations remain reference evidence; do
+not copy POC code directly into production crates.
 
 ## Testing Guidelines
 
@@ -52,8 +50,7 @@ relevant output, and record environment, commit, and pass/fail results.
 
 ## Commit & Pull Request Guidelines
 
-The repository has no commit history, so no convention is established. Use
-Conventional Commits from the first commit, for example:
+Use Conventional Commits, for example:
 
 ```text
 docs(baseline): clarify daemon recovery

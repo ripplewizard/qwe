@@ -1,0 +1,12 @@
+[package]
+name = "qwe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clap.workspace = true
+qwe-core = { path = "../../crates/qwe-core" }
+qwe-protocol = { path = "../../crates/qwe-protocol" }
+serde_json.workspace = true

@@ -559,6 +559,131 @@ test-linux-remote:
     ssh "{{ linux_host }}" "TERM=dumb zsh -lic 'cd {{ linux_repo }} && just test-linux'"
     just --justfile "{{ justfile() }}" sync-linux-results
 
+check-qwe:
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo test --workspace
+
+build-qwe:
+    cargo build --workspace
+
+test-qwe:
+    cargo test --workspace
+
+t12-host-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-host
+    host_socket="/tmp/qwe-t12-host-$$.sock"
+    client_socket="/tmp/qwe-t12-client-$$.sock"
+    host_pid=""
+    qwed_pid=""
+    session_id="t12-session"
+    cleanup_t12() {
+      if [ -n "$qwed_pid" ]; then
+        kill -TERM "$qwed_pid" 2>/dev/null || true
+        wait "$qwed_pid" 2>/dev/null || true
+      fi
+      if [ -n "$host_pid" ]; then
+        kill -TERM "$host_pid" 2>/dev/null || true
+        wait "$host_pid" 2>/dev/null || true
+      fi
+      rm -f "$host_socket" "$client_socket"
+    }
+    trap cleanup_t12 EXIT
+    target/debug/qwe-host --socket "$host_socket" &
+    host_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$host_socket" ] && break
+      sleep 0.02
+    done
+    python3 -c 'import os,sys; os.setsid(); os.execv(sys.argv[1],sys.argv[1:])' \
+      target/debug/qwed --socket "$client_socket" --host-socket "$host_socket" &
+    qwed_pid=$!
+    for _ in $(seq 1 100); do
+      target/debug/qwe --socket "$client_socket" ping >/dev/null 2>&1 && break
+      sleep 0.02
+    done
+    target/debug/qwe --socket "$client_socket" ping >/dev/null
+    second_qwed_log="/tmp/qwe-t12-second-qwed-$$.log"
+    set +e
+    python3 -c 'import os,sys; os.setsid(); os.execv(sys.argv[1],sys.argv[1:])' \
+      target/debug/qwed --socket "$client_socket" --host-socket "$host_socket" \
+      >"$second_qwed_log" 2>&1 &
+    second_qwed_pid=$!
+    wait "$second_qwed_pid"
+    second_qwed_status=$?
+    set -e
+    [ "$second_qwed_status" -ne 0 ]
+    grep -Fq 'qwed is already running' "$second_qwed_log"
+    target/debug/qwe --socket "$client_socket" session create "$session_id" sh >/dev/null
+    target/debug/qwe --socket "$client_socket" session input "$session_id" \
+      $'printf "QWE_T12_BEFORE\\n"\r' >/dev/null
+    before=""
+    for _ in $(seq 1 100); do
+      before="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+      printf '%s' "$before" | jq -e '.screen | contains("QWE_T12_BEFORE")' >/dev/null &&
+        break
+      sleep 0.02
+    done
+    printf '%s' "$before" | jq -e '.screen | contains("QWE_T12_BEFORE")' >/dev/null
+    session_pid="$(printf '%s' "$before" | jq -r '.pid')"
+    host_pgid="$(ps -o pgid= -p "$host_pid" | tr -d ' ')"
+    qwed_pgid="$(ps -o pgid= -p "$qwed_pid" | tr -d ' ')"
+    [ "$host_pgid" != "$qwed_pgid" ]
+    kill -KILL -- "-$qwed_pgid"
+    wait "$qwed_pid" 2>/dev/null || true
+    qwed_pid=""
+    kill -0 "$host_pid"
+    python3 -c 'import os,sys; os.setsid(); os.execv(sys.argv[1],sys.argv[1:])' \
+      target/debug/qwed --socket "$client_socket" --host-socket "$host_socket" &
+    qwed_pid=$!
+    for _ in $(seq 1 100); do
+      target/debug/qwe --socket "$client_socket" ping >/dev/null 2>&1 && break
+      sleep 0.02
+    done
+    target/debug/qwe --socket "$client_socket" ping >/dev/null
+    recovered="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+    printf '%s' "$recovered" | jq -e \
+      --argjson pid "$session_pid" \
+      '.running == true and .pid == $pid and (.screen | contains("QWE_T12_BEFORE"))' \
+      >/dev/null
+    target/debug/qwe --socket "$client_socket" session input "$session_id" \
+      $'printf "QWE_T12_AFTER\\n"\r' >/dev/null
+    after=""
+    for _ in $(seq 1 100); do
+      after="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+      printf '%s' "$after" | jq -e '.screen | contains("QWE_T12_AFTER")' >/dev/null &&
+        break
+      sleep 0.02
+    done
+    printf '%s' "$after" | jq -e '.screen | contains("QWE_T12_AFTER")' >/dev/null
+    printf -v bounded_command 'exec python3 %q\r' \
+      "$PWD/poc/test-data/scripts/bounded_output.py"
+    target/debug/qwe --socket "$client_socket" session input "$session_id" \
+      "$bounded_command" >/dev/null
+    bounded_attach="/tmp/qwe-t12-bounded-$$.json"
+    for _ in $(seq 1 1500); do
+      target/debug/qwe --socket "$client_socket" session status "$session_id" \
+        >"$bounded_attach"
+      jq -e '.total_written >= 104857600' "$bounded_attach" >/dev/null && break
+      sleep 0.02
+    done
+    jq -e '.total_written >= 104857600' "$bounded_attach" >/dev/null
+    target/debug/qwe --socket "$client_socket" session attach "$session_id" \
+      >"$bounded_attach"
+    jq -e \
+      '.snapshot_bytes == 1048576 and
+       .total_written >= 104857600 and
+       .truncated_from > 0' \
+      "$bounded_attach" >/dev/null
+    jq -r '.journal_hex' "$bounded_attach" | xxd -r -p |
+      grep -Fq 'QWE_BOUNDED_END'
+    host_rss="$(ps -o rss= -p "$host_pid" | tr -d ' ')"
+    [ "$host_rss" -lt 204800 ]
+    target/debug/qwe --socket "$client_socket" session close "$session_id" >/dev/null
+    printf 'T12 host ownership PASS (bounded attach, host_rss=%s KiB)\n' "$host_rss"
+
 _terminal-smoke platform:
     #!/usr/bin/env bash
     set -euo pipefail

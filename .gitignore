@@ -1,4 +1,5 @@
 .DS_Store
+/target/
 poc/build/
 poc/rust/target/
 poc/results/**/tmp/

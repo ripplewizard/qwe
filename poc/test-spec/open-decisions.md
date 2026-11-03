@@ -9,11 +9,11 @@ behavior.
 1. **Automation contract:** PTY, task lifecycle, IPC, evidence collection, POC
    Session Lease commands, and session attach/input contracts are defined for
    the current slice.
-2. **Terminal state baseline:** select a comparable VT state model and record
-   which emulator/parser component provides it.
-3. **Session recovery boundary:** specify separately what happens to the child
-   process, PTY, shell state, terminal screen, and input stream after daemon
-   restart.
+2. **Terminal state baseline:** V0 uses `vt100` behind a QWE-owned interface;
+   `alacritty_terminal` remains a benchmark candidate.
+3. **Session recovery boundary:** ADR 0002 moves PTY/process ownership to
+   `qwe-host`; daemon restart must preserve sessions. Host restart loss is
+   accepted for V0.
 4. **Task identity:** the POC uses PID plus Linux `/proc` start time or macOS
    `ps` start time. Produce a more precise macOS token before production.
 5. **IPC errors:** the POC contract defines request IDs, idempotency keys, and

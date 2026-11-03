@@ -1,0 +1,16 @@
+[package]
+name = "qwe-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clap.workspace = true
+libc = "0.2"
+portable-pty.workspace = true
+qwe-core = { path = "../../crates/qwe-core" }
+qwe-protocol = { path = "../../crates/qwe-protocol" }
+qwe-runtime = { path = "../../crates/qwe-runtime" }
+serde_json.workspace = true
+vt100.workspace = true

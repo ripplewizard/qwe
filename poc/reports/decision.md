@@ -1,8 +1,8 @@
 # Language and Framework Decision
 
-Status: provisional recommendation. The POC is complete enough to select a
-direction, subject to independent manual sign-off and a clean-source evidence
-regeneration.
+Status: accepted for implementation. Rust is selected for the QWE runtime.
+Independent manual sign-off and clean-source evidence regeneration remain POC
+record-quality tasks, not implementation blockers.
 
 ## Recommendation
 

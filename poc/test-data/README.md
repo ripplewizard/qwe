@@ -23,3 +23,5 @@ kernel PTY size and handles SIGWINCH without relying on shell trap behavior.
 `vt_fixture.py` emits deterministic ANSI/VT and Unicode sequences. Native
 terminal emulators parse its PTY output for T05/T06.
 
+`bounded_output.py` emits 100 MiB to validate bounded attach and backpressure.
+

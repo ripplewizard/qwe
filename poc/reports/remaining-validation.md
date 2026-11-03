@@ -1,6 +1,6 @@
 # Remaining Validation Before Final Selection
 
-Status: machine-checkable validation complete; final sign-off pending.
+Status: implementation approved; POC evidence sign-off remains pending.
 
 ## Completed in This Pass
 
@@ -51,5 +51,5 @@ reports are committed:
    evidence.
 4. Record independent manual sign-off.
 
-Until those steps are done, the Rust recommendation remains provisional rather
-than final.
+These steps close the POC audit trail. They no longer block Rust implementation,
+which proceeds under Baseline v0.3 and ADR 0001-0005.
