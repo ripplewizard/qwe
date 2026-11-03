@@ -80,6 +80,7 @@ def main() -> int:
     parser.add_argument("--report", required=True, type=Path)
     args = parser.parse_args()
     repo_root = args.results_root.parent.parent
+    results_root = args.results_root
     results = latest_results(args.results_root)
     cases = expected_cases(args.matrix)
     generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

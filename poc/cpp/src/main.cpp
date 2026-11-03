@@ -425,10 +425,16 @@ int run_vt_smoke(const std::string& log_path,
         if (prop == VTERM_PROP_CURSORVISIBLE) {
             state->cursor_visible = value->boolean != 0;
         } else if (prop == VTERM_PROP_TITLE) {
+#if VTERM_VERSION_MAJOR == 0 && VTERM_VERSION_MINOR < 2
+            if (value->string != nullptr) {
+                state->title = value->string;
+            }
+#else
             if (value->string.initial) {
                 state->title.clear();
             }
             state->title.append(value->string.str, value->string.len);
+#endif
         }
         return 1;
     };

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import platform
@@ -12,6 +13,15 @@ from pathlib import Path
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--platform",
+        action="append",
+        choices=("linux-x86_64", "macos-arm64"),
+        help="generate review results only for this platform; repeatable",
+    )
+    args = parser.parse_args()
+    platforms = args.platform or ["linux-x86_64", "macos-arm64"]
     repo_root = Path(__file__).resolve().parents[2]
     results_root = repo_root / "poc/results"
     commit = subprocess.run(
@@ -20,12 +30,32 @@ def main() -> int:
         capture_output=True,
         text=True,
     ).stdout.strip()
+    source_paths = [
+        "Cargo.toml",
+        "Justfile",
+        "apps",
+        "crates",
+        "poc/cpp",
+        "poc/go",
+        "poc/rust",
+        "poc/test-data",
+        "poc/test-runner",
+    ]
     if subprocess.run(
-        ["git", "-C", str(repo_root), "status", "--porcelain"],
-        check=True,
+        [
+            "git",
+            "-C",
+            str(repo_root),
+            "diff",
+            "--quiet",
+            "HEAD",
+            "--",
+            *source_paths,
+        ],
+        check=False,
         capture_output=True,
         text=True,
-    ).stdout:
+    ).returncode:
         commit += "-dirty"
     reviews = {
         "EX01": {
@@ -78,7 +108,7 @@ def main() -> int:
         if not complete:
             print(json.dumps({"case_id": case_id, "error": "review report incomplete"}))
             return 1
-        for platform_name in ("linux-x86_64", "macos-arm64"):
+        for platform_name in platforms:
             for language in ("rust", "go", "cpp"):
                 destination = results_root / platform_name / language / (
                     f"{case_id}-{commit}-review-{os.getpid()}.json"

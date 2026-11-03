@@ -509,7 +509,14 @@ def main() -> int:
         text=True,
     ).stdout.strip()
     dirty = subprocess.run(
-        ["git", "-C", str(repo_root), "status", "--porcelain"],
+        [
+            "git",
+            "-C",
+            str(repo_root),
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
+        ],
         check=True,
         capture_output=True,
         text=True,

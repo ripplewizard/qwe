@@ -408,10 +408,25 @@ review-results:
     python3 "{{ poc }}/test-runner/review_results.py"
     just --justfile "{{ justfile() }}" platform-comparison
 
+review-linux-results:
+    python3 "{{ poc }}/test-runner/review_results.py" --platform linux-x86_64
+
 verify-results:
     python3 "{{ poc }}/test-runner/verify_results.py" \
       --results-root "{{ poc }}/results" \
       --schema "{{ poc }}/test-spec/result.schema.json" \
+      --matrix "{{ poc }}/test-spec/matrix.md"
+
+verify-linux-results:
+    python3 "{{ poc }}/test-runner/verify_results.py" \
+      --results-root "{{ poc }}/results" \
+      --schema "{{ poc }}/test-spec/result.schema.json" \
+      --matrix "{{ poc }}/test-spec/matrix.md" \
+      --platform linux-x86_64
+
+update-matrix:
+    python3 "{{ poc }}/test-runner/update_matrix.py" \
+      --results-root "{{ poc }}/results" \
       --matrix "{{ poc }}/test-spec/matrix.md"
 
 timeout-smoke language="all":

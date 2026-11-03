@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["poc/rust"]
 members = [
     "apps/qwe",
     "apps/qwe-host",
