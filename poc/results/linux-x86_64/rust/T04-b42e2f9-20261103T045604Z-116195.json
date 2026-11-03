@@ -1,0 +1,37 @@
+{
+  "case_id": "T04",
+  "language": "rust",
+  "status": "blocked",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* htop preflight",
+  "started_at": "2026-11-03T04:56:01Z",
+  "duration_ms": 3284,
+  "metrics": {
+    "first_output_bytes": 4354,
+    "second_output_bytes": 6740,
+    "delta_bytes": 2386
+  },
+  "checks": {
+    "full_screen_started": true,
+    "first_frame_rendered": true,
+    "dynamic_refresh_observed": true,
+    "frame_changed": true,
+    "clean_exit": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/environment.txt",
+    "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/T04.pty.log",
+    "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/T11.pty.log",
+    "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/T04-T11.daemon.log"
+  ],
+  "known_limitations": [
+    "Automated launch, refresh, and exit checks only.",
+    "Interactive htop visual behavior and resize remain manual."
+  ]
+}

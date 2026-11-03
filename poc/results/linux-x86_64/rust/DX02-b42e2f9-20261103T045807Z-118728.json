@@ -1,0 +1,37 @@
+{
+  "case_id": "DX02",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/linux-x86_64/rust/developer-experience-d75efba49e3c4ded9b8cbdd340719bd9/environment.txt"
+  },
+  "command": "developer-experience-smoke rust DX02",
+  "started_at": "2026-11-03T04:57:27Z",
+  "duration_ms": 39819,
+  "metrics": {
+    "database_bytes": 36864,
+    "live_screen_bytes": 287,
+    "persisted_screen_bytes": 287
+  },
+  "checks": {
+    "alternate_screen": true,
+    "dashboard_title": true,
+    "live_task_visible": true,
+    "sqlite_after_daemon_exit": true,
+    "task_state_visible": true,
+    "task_id_visible": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/developer-experience-d75efba49e3c4ded9b8cbdd340719bd9/DX02.dashboard.log",
+    "poc/results/linux-x86_64/rust/developer-experience-d75efba49e3c4ded9b8cbdd340719bd9/DX02.dashboard.log",
+    "poc/results/linux-x86_64/rust/developer-experience-d75efba49e3c4ded9b8cbdd340719bd9/DX02.daemon.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

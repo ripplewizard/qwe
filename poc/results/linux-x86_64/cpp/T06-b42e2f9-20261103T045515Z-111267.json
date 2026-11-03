@@ -1,0 +1,31 @@
+{
+  "case_id": "T06",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rust=rustc 1.99.1 (58cf8f9c3 2026-10-13); go=go version go1.27.3 linux/amd64; cxx=c++ (GCC) 11.2.1 20210728 (Red Hat 11.2.1-1)",
+    "environment_record": "poc/results/linux-x86_64/environment/20261103T045515Z-111267.txt"
+  },
+  "command": "poc/build/cpp/qwe-poc vt-smoke /home/project/uranus/bianca/poc/results/linux-x86_64/cpp/T05-T06-20261103T045515Z-111267.pty.log",
+  "started_at": "2026-11-03T04:55:21Z",
+  "duration_ms": 40,
+  "metrics": {
+    "bytes": 598
+  },
+  "checks": {
+    "unicode": true,
+    "wide": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/cpp/T05-T06-20261103T045515Z-111267.pty.log",
+    "poc/results/linux-x86_64/cpp/T05-T06-20261103T045515Z-111267.stdout.json",
+    "poc/results/linux-x86_64/cpp/T05-T06-20261103T045515Z-111267.stderr.log"
+  ],
+  "known_limitations": [
+    "Linux x86_64 target; verify source cleanliness before final scoring",
+    "CJK, emoji, and one combining sequence covered; broader grapheme shaping remains manual"
+  ]
+}

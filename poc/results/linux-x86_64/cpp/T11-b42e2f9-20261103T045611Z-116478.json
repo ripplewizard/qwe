@@ -1,0 +1,35 @@
+{
+  "case_id": "T11",
+  "language": "cpp",
+  "status": "blocked",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "c++ (GCC) 11.2.1 20210728 (Red Hat 11.2.1-1)",
+    "environment_record": "poc/results/linux-x86_64/cpp/terminal-interaction-3c77fee4815e458fa5b2e444a794b759/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* Bash job-control preflight",
+  "started_at": "2026-11-03T04:56:08Z",
+  "duration_ms": 3205,
+  "metrics": {
+    "int_output_bytes": 254,
+    "final_output_bytes": 629
+  },
+  "checks": {
+    "ctrl_c_status_130": true,
+    "ctrl_z_stopped": true,
+    "bg_running": true,
+    "fg_foreground_interrupt": true,
+    "shell_exited": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/cpp/terminal-interaction-3c77fee4815e458fa5b2e444a794b759/environment.txt",
+    "poc/results/linux-x86_64/cpp/terminal-interaction-3c77fee4815e458fa5b2e444a794b759/T11.pty.log",
+    "poc/results/linux-x86_64/cpp/terminal-interaction-3c77fee4815e458fa5b2e444a794b759/T04-T11.daemon.log"
+  ],
+  "known_limitations": [
+    "Automated key-sequence and exit-status checks only.",
+    "Manual foreground/background terminal semantics review remains."
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "case_id": "T04",
+  "language": "cpp",
+  "status": "blocked",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "c++ (GCC) 11.2.1 20210728 (Red Hat 11.2.1-1)",
+    "environment_record": "poc/results/linux-x86_64/cpp/terminal-interaction-3c77fee4815e458fa5b2e444a794b759/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* htop preflight",
+  "started_at": "2026-11-03T04:56:08Z",
+  "duration_ms": 3198,
+  "metrics": {
+    "first_output_bytes": 4375,
+    "second_output_bytes": 6838,
+    "delta_bytes": 2463
+  },
+  "checks": {
+    "full_screen_started": true,
+    "first_frame_rendered": true,
+    "dynamic_refresh_observed": true,
+    "frame_changed": true,
+    "clean_exit": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/cpp/terminal-interaction-3c77fee4815e458fa5b2e444a794b759/environment.txt",
+    "poc/results/linux-x86_64/cpp/terminal-interaction-3c77fee4815e458fa5b2e444a794b759/T04.pty.log",
+    "poc/results/linux-x86_64/cpp/terminal-interaction-3c77fee4815e458fa5b2e444a794b759/T11.pty.log",
+    "poc/results/linux-x86_64/cpp/terminal-interaction-3c77fee4815e458fa5b2e444a794b759/T04-T11.daemon.log"
+  ],
+  "known_limitations": [
+    "Automated launch, refresh, and exit checks only.",
+    "Interactive htop visual behavior and resize remain manual."
+  ]
+}

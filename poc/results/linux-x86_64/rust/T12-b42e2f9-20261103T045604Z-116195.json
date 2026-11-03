@@ -1,0 +1,41 @@
+{
+  "case_id": "T12",
+  "language": "rust",
+  "status": "blocked",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* daemon SIGKILL recovery preflight",
+  "started_at": "2026-11-03T04:56:01Z",
+  "duration_ms": 3304,
+  "metrics": {
+    "terminal_pid": 116321,
+    "terminal_process_alive_after_daemon_restart": false,
+    "pre_restart_output_bytes": 67
+  },
+  "checks": {
+    "screen_initialized": true,
+    "daemon_was_running": true,
+    "daemon_restart_required": true,
+    "terminal_process_exit_observed": true,
+    "session_metadata_not_recovered": true,
+    "pty_not_recovered": true,
+    "screen_state_not_recovered": true,
+    "input_not_available": true,
+    "terminal_recovery_incomplete": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/environment.txt",
+    "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/T12.pty.log",
+    "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/T12.daemon.log"
+  ],
+  "known_limitations": [
+    "This preflight records the current recovery boundary; it does not claim terminal recovery.",
+    "PTY, terminal screen, session metadata, and interactive input are currently not recovered.",
+    "Manual layer-by-layer review remains required."
+  ]
+}

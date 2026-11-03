@@ -1,0 +1,33 @@
+{
+  "case_id": "XP01",
+  "language": "rust",
+  "status": "fail",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "cross-platform",
+    "architecture": "linux-x86_64+macos-arm64",
+    "toolchain": "per-language result metadata"
+  },
+  "command": "python3 poc/test-runner/platform_comparison.py",
+  "started_at": "2026-11-03T05:01:57Z",
+  "duration_ms": 0,
+  "metrics": {
+    "linux_cases": 42,
+    "macos_cases": 4,
+    "missing_case_count": 0
+  },
+  "checks": {
+    "linux_primary_present": true,
+    "macos_secondary_present": true,
+    "matrix_coverage_complete": true,
+    "manual_review_records_present": false,
+    "t12_recovery_not_overclaimed": true
+  },
+  "evidence": [
+    "poc/reports/platform-comparison.md"
+  ],
+  "known_limitations": [
+    "Comparison reflects latest per-case files rather than a clean simultaneous rerun.",
+    "Dirty source evidence remains provisional."
+  ]
+}

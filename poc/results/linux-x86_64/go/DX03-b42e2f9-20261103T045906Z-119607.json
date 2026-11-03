@@ -1,0 +1,36 @@
+{
+  "case_id": "DX03",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "go version go1.27.3 linux/amd64",
+    "environment_record": "poc/results/linux-x86_64/go/developer-experience-a3cdd4bf38674abd8abb6fda5612bc23/environment.txt"
+  },
+  "command": "developer-experience-smoke go DX03",
+  "started_at": "2026-11-03T04:58:07Z",
+  "duration_ms": 58481,
+  "metrics": {
+    "clean_build_ms": 56564.772,
+    "compiler_failure_ms": 1754.08,
+    "build_output_bytes": 175,
+    "compiler_error_bytes": 193
+  },
+  "checks": {
+    "clean_build_succeeded": true,
+    "build_duration_recorded": true,
+    "compiler_failure_rejected": true,
+    "compiler_failure_has_location": true,
+    "compiler_failure_explains_type": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/go/developer-experience-a3cdd4bf38674abd8abb6fda5612bc23/DX03.build.log",
+    "poc/results/linux-x86_64/go/developer-experience-a3cdd4bf38674abd8abb6fda5612bc23/DX03.compiler-error.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

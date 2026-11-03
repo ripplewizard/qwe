@@ -1,0 +1,41 @@
+{
+  "case_id": "T12",
+  "language": "go",
+  "status": "blocked",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "go version go1.27.3 linux/amd64",
+    "environment_record": "poc/results/linux-x86_64/go/terminal-interaction-e2ae064cf5164d9f98f2bc69d2f21e26/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* daemon SIGKILL recovery preflight",
+  "started_at": "2026-11-03T04:56:05Z",
+  "duration_ms": 3159,
+  "metrics": {
+    "terminal_pid": 116438,
+    "terminal_process_alive_after_daemon_restart": false,
+    "pre_restart_output_bytes": 67
+  },
+  "checks": {
+    "screen_initialized": true,
+    "daemon_was_running": true,
+    "daemon_restart_required": true,
+    "terminal_process_exit_observed": true,
+    "session_metadata_not_recovered": true,
+    "pty_not_recovered": true,
+    "screen_state_not_recovered": true,
+    "input_not_available": true,
+    "terminal_recovery_incomplete": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/go/terminal-interaction-e2ae064cf5164d9f98f2bc69d2f21e26/environment.txt",
+    "poc/results/linux-x86_64/go/terminal-interaction-e2ae064cf5164d9f98f2bc69d2f21e26/T12.pty.log",
+    "poc/results/linux-x86_64/go/terminal-interaction-e2ae064cf5164d9f98f2bc69d2f21e26/T12.daemon.log"
+  ],
+  "known_limitations": [
+    "This preflight records the current recovery boundary; it does not claim terminal recovery.",
+    "PTY, terminal screen, session metadata, and interactive input are currently not recovered.",
+    "Manual layer-by-layer review remains required."
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "case_id": "T04",
+  "language": "go",
+  "status": "blocked",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "go version go1.27.3 linux/amd64",
+    "environment_record": "poc/results/linux-x86_64/go/terminal-interaction-e2ae064cf5164d9f98f2bc69d2f21e26/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* htop preflight",
+  "started_at": "2026-11-03T04:56:05Z",
+  "duration_ms": 3153,
+  "metrics": {
+    "first_output_bytes": 4333,
+    "second_output_bytes": 6662,
+    "delta_bytes": 2329
+  },
+  "checks": {
+    "full_screen_started": true,
+    "first_frame_rendered": true,
+    "dynamic_refresh_observed": true,
+    "frame_changed": true,
+    "clean_exit": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/go/terminal-interaction-e2ae064cf5164d9f98f2bc69d2f21e26/environment.txt",
+    "poc/results/linux-x86_64/go/terminal-interaction-e2ae064cf5164d9f98f2bc69d2f21e26/T04.pty.log",
+    "poc/results/linux-x86_64/go/terminal-interaction-e2ae064cf5164d9f98f2bc69d2f21e26/T11.pty.log",
+    "poc/results/linux-x86_64/go/terminal-interaction-e2ae064cf5164d9f98f2bc69d2f21e26/T04-T11.daemon.log"
+  ],
+  "known_limitations": [
+    "Automated launch, refresh, and exit checks only.",
+    "Interactive htop visual behavior and resize remain manual."
+  ]
+}

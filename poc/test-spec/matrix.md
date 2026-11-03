@@ -61,7 +61,7 @@ must include reviewer notes; a passing process exit alone is not evidence.
 | DX01 | CLI and IPC | Auto | Time-to-demo, dependencies, errors |
 | DX02 | SQLite and TUI | Both | Persistence check and basic screen |
 | DX03 | Build and test workflow | Auto | Build/test time and failure clarity |
-| XP01 | Platform matrix | Both | Linux x86_64 baseline and macOS secondary |
+| XP01 | Platform matrix | Both | Fedora x86_64 baseline and macOS secondary |
 | EX01 | Extension boundaries | Review | Model-impact review against registry |
 | MC01 | Dependency health | Review | Licenses, activity, releases, risks |
 
@@ -69,57 +69,51 @@ GPU metrics are capability-gated: unsupported hardware must be reported as
 `unsupported`, not scored as failure or silently assigned to a task.
 
 <!-- LATEST_EVIDENCE_START -->
-## Latest Evidence Snapshot
 
-Generated from the newest structured result per platform, language, and
-case. Manual cells remain `blocked` until independent human sign-off.
-
-- Generated: 2026-11-02T17:50:49Z
+Generated: 2026-11-03T05:29:51Z
 
 | ID | Linux R/G/C | macOS R/G/C | Evidence |
 |---|---:|---:|---|
-| T01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T01-9abaff7-dirty-20261102T174601Z-94989.json` |
-| T02 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T02-9abaff7-dirty-20261102T174601Z-94989.json` |
-| T03 | blocked/blocked/blocked | blocked/blocked/blocked | `poc/results/linux-x86_64/manual/T03.md`, `poc/results/macos-arm64/manual/T03.md` |
-| T04 | blocked/blocked/blocked | blocked/blocked/blocked | `poc/results/linux-x86_64/manual/T04.md`, `poc/results/macos-arm64/manual/T04.md` |
-| T05 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T05-9abaff7-dirty-20261102T174601Z-94989.json` |
-| T06 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T06-9abaff7-dirty-20261102T174601Z-94989.json` |
-| T07 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T07-9abaff7-dirty-20261102T174601Z-94989.json` |
-| T08 | blocked/blocked/blocked | blocked/blocked/blocked | `poc/results/linux-x86_64/manual/T08.md`, `poc/results/macos-arm64/manual/T08.md` |
-| T09 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T09-9abaff7-dirty-20261102T174622Z-99337.json` |
-| T10 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T10-9abaff7-dirty-20261102T174601Z-94989.json` |
-| T11 | blocked/blocked/blocked | blocked/blocked/blocked | `poc/results/linux-x86_64/manual/T11.md`, `poc/results/macos-arm64/manual/T11.md` |
-| T12 | blocked/blocked/blocked | blocked/blocked/blocked | `poc/results/linux-x86_64/manual/T12.md`, `poc/results/macos-arm64/manual/T12.md` |
-| P01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P01-9abaff7-dirty-20261102T174650Z-100946.json` |
-| P02 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P02-9abaff7-dirty-20261102T174606Z-96220.json` |
-| P03 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P03-9abaff7-dirty-20261102T174650Z-100946.json` |
-| P04 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P04-9abaff7-dirty-20261102T174650Z-100946.json` |
-| P05 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P05-9abaff7-dirty-20261102T174650Z-100946.json` |
-| P06 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P06-9abaff7-dirty-20261102T174606Z-96220.json` |
-| P07 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P07-9abaff7-dirty-20261102T174643Z-100250.json` |
-| P08 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P08-9abaff7-dirty-20261102T174606Z-96220.json` |
-| P09 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P09-9abaff7-dirty-20261102T174650Z-100946.json` |
-| P10 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P10-9abaff7-dirty-20261102T174647Z-100530.json` |
-| P11 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P11-9abaff7-dirty-20261102T174606Z-96220.json` |
-| P12 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/P12-9abaff7-dirty-20261102T174650Z-100946.json` |
-| D01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D01-9abaff7-dirty-20261102T174714Z-101502.json` |
-| D02 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D02-9abaff7-dirty-20261102T174714Z-101502.json` |
-| D03 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D03-9abaff7-dirty-20261102T174606Z-96220.json` |
-| D04 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D04-9abaff7-dirty-20261102T174714Z-101502.json` |
-| D05 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D05-9abaff7-dirty-20261102T174714Z-101502.json` |
-| D06 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D06-9abaff7-dirty-20261102T174649Z-100771.json` |
-| D07 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D07-9abaff7-dirty-20261102T174606Z-96220.json` |
-| D08 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/D08-9abaff7-dirty-20261102T174714Z-101502.json` |
-| RM01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/RM01-9abaff7-dirty-20261102T174652Z-101249.json` |
-| RM02 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/RM02-9abaff7-dirty-20261102T174652Z-101249.json` |
-| RM03 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/RM03-9abaff7-dirty-20261102T174652Z-101249.json` |
-| RM04 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/RM04-9abaff7-dirty-20261102T174652Z-101249.json` |
-| RM05 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/RM05-9abaff7-dirty-20261102T174652Z-101249.json` |
-| DX01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/DX01-9abaff7-dirty-20261102T174825Z-102321.json` |
-| DX02 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/DX02-9abaff7-dirty-20261102T174825Z-102321.json` |
-| DX03 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/DX03-9abaff7-dirty-20261102T174825Z-102321.json` |
-| XP01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/XP01-9abaff7-dirty-73516.json` |
-| EX01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/EX01-9abaff7-dirty-review-73478.json` |
-| MC01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/MC01-9abaff7-dirty-review-73478.json` |
-<!-- LATEST_EVIDENCE_END -->
-
+| D01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D01-b42e2f9-20261103T045651Z-117901.json` |
+| D02 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D02-b42e2f9-20261103T045651Z-117901.json` |
+| D03 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D03-b42e2f9-20261103T045522Z-112603.json` |
+| D04 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D04-b42e2f9-20261103T045651Z-117901.json` |
+| D05 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D05-b42e2f9-20261103T045651Z-117901.json` |
+| D06 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D06-b42e2f9-20261103T045618Z-117148.json` |
+| D07 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D07-b42e2f9-20261103T045522Z-112603.json` |
+| D08 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/D08-b42e2f9-20261103T045651Z-117901.json` |
+| DX01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/DX01-b42e2f9-20261103T045807Z-118728.json` |
+| DX02 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/DX02-b42e2f9-20261103T045807Z-118728.json` |
+| DX03 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/DX03-b42e2f9-20261103T045807Z-118728.json` |
+| EX01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/EX01-4fdc75d-review-123764.json` |
+| MC01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/MC01-4fdc75d-review-123764.json` |
+| P01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P01-b42e2f9-20261103T045619Z-117320.json` |
+| P02 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P02-b42e2f9-20261103T045522Z-112603.json` |
+| P03 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P03-b42e2f9-20261103T045619Z-117320.json` |
+| P04 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P04-b42e2f9-20261103T045619Z-117320.json` |
+| P05 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P05-b42e2f9-20261103T045619Z-117320.json` |
+| P06 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P06-b42e2f9-20261103T045522Z-112603.json` |
+| P07 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P07-b42e2f9-20261103T045612Z-116630.json` |
+| P08 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P08-b42e2f9-20261103T045522Z-112603.json` |
+| P09 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P09-b42e2f9-20261103T045619Z-117320.json` |
+| P10 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P10-b42e2f9-20261103T045616Z-116907.json` |
+| P11 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P11-b42e2f9-20261103T045522Z-112603.json` |
+| P12 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/P12-b42e2f9-20261103T045619Z-117320.json` |
+| RM01 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/RM01-b42e2f9-20261103T045621Z-117618.json` |
+| RM02 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/RM02-b42e2f9-20261103T045621Z-117618.json` |
+| RM03 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/RM03-b42e2f9-20261103T045621Z-117618.json` |
+| RM04 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/RM04-b42e2f9-20261103T045621Z-117618.json` |
+| RM05 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/RM05-b42e2f9-20261103T045621Z-117618.json` |
+| T01 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T01-b42e2f9-20261103T045515Z-111267.json` |
+| T02 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T02-b42e2f9-20261103T045515Z-111267.json` |
+| T03 | blocked/blocked/blocked | blocked/blocked/blocked | `poc/results/linux-x86_64/rust/T03-b42e2f9-20261103T045515Z-111267.json` |
+| T04 | blocked/blocked/blocked | missing/missing/missing | `poc/results/linux-x86_64/rust/T04-b42e2f9-20261103T045604Z-116195.json` |
+| T05 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/T05-b42e2f9-20261103T045515Z-111267.json` |
+| T06 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/T06-b42e2f9-20261103T045515Z-111267.json` |
+| T07 | pass/pass/pass | pass/pass/pass | `poc/results/linux-x86_64/rust/T07-b42e2f9-20261103T045515Z-111267.json` |
+| T08 | blocked/blocked/blocked | missing/missing/missing | `poc/results/linux-x86_64/rust/T08-b42e2f9-20261103T045557Z-116000.json` |
+| T09 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/T09-b42e2f9-20261103T045550Z-115748.json` |
+| T10 | pass/pass/pass | missing/missing/missing | `poc/results/linux-x86_64/rust/T10-b42e2f9-20261103T045515Z-111267.json` |
+| T11 | blocked/blocked/blocked | missing/missing/missing | `poc/results/linux-x86_64/rust/T11-b42e2f9-20261103T045604Z-116195.json` |
+| T12 | blocked/blocked/blocked | missing/missing/missing | `poc/results/linux-x86_64/rust/T12-b42e2f9-20261103T045604Z-116195.json` |
+| XP01 | fail/fail/fail | fail/fail/fail | `poc/results/linux-x86_64/rust/XP01-b42e2f9-122408.json` |

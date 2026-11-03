@@ -1,0 +1,40 @@
+{
+  "case_id": "D06",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "c++ (GCC) 11.2.1 20210728 (Red Hat 11.2.1-1)",
+    "environment_record": "poc/results/linux-x86_64/cpp/D06-upgrade-20261103T045619Z-117281/environment.txt"
+  },
+  "command": "just upgrade-smoke cpp",
+  "started_at": "2026-11-03T04:56:19Z",
+  "duration_ms": 102,
+  "metrics": {
+    "schema_version": 2
+  },
+  "checks": {
+    "legacy_opens": true,
+    "task_preserved": true,
+    "schema_upgraded": true,
+    "new_tables_created": true,
+    "migration_idempotent": true,
+    "schema_v1_upgraded": true,
+    "v1_task_preserved": true,
+    "daemon_restart_compatible": true,
+    "future_schema_rejected": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/cpp/D06-upgrade-20261103T045619Z-117281/daemon.log",
+    "poc/results/linux-x86_64/cpp/D06-upgrade-20261103T045619Z-117281/future-daemon.log",
+    "poc/results/linux-x86_64/cpp/D06-upgrade-20261103T045619Z-117281/environment.txt",
+    "poc/results/linux-x86_64/cpp/D06-upgrade-20261103T045619Z-117281/legacy.sqlite",
+    "poc/results/linux-x86_64/cpp/D06-upgrade-20261103T045619Z-117281/version-one.sqlite"
+  ],
+  "known_limitations": [
+    "Online upgrade while another daemon owns the database is not covered.",
+    "Only additive schema migrations are implemented in this POC slice."
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "case_id": "RM05",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "c++ (GCC) 11.2.1 20210728 (Red Hat 11.2.1-1)"
+  },
+  "command": "resource-smoke cpp RM05",
+  "started_at": "2026-11-03T04:56:41Z",
+  "duration_ms": 9897,
+  "metrics": {
+    "process_count": 1,
+    "cpu_percent": 22.0,
+    "memory_bytes": 3506176,
+    "gpu_supported": true,
+    "sample_latency_100_ms": 113.37,
+    "sample_latency_500_ms": 512.67,
+    "sample_latency_1000_ms": 1013.1,
+    "sample_latency_5000_ms": 5013.68
+  },
+  "checks": {
+    "attribution_safe": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/cpp/resource-20261103T045641Z-117831/daemon.log",
+    "poc/results/linux-x86_64/cpp/resource-20261103T045641Z-117831/tasks.sqlite"
+  ],
+  "known_limitations": [
+    "RSS sums may double-count shared pages.",
+    "CPU is lifetime average percentage reported by ps, not an instantaneous scheduler event."
+  ]
+}

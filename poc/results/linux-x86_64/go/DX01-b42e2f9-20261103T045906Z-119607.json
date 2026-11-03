@@ -1,0 +1,43 @@
+{
+  "case_id": "DX01",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "go version go1.27.3 linux/amd64",
+    "environment_record": "poc/results/linux-x86_64/go/developer-experience-a3cdd4bf38674abd8abb6fda5612bc23/environment.txt"
+  },
+  "command": "developer-experience-smoke go DX01",
+  "started_at": "2026-11-03T04:58:07Z",
+  "duration_ms": 58475,
+  "metrics": {
+    "cli_startup_samples": 12,
+    "cli_startup_median_ms": 2.455,
+    "cli_startup_p95_ms": 2.634,
+    "cli_startup_max_ms": 2.634,
+    "ipc_missing_status_samples": 30,
+    "ipc_missing_status_median_ms": 0.516,
+    "ipc_missing_status_p95_ms": 0.73,
+    "ipc_missing_status_max_ms": 0.849,
+    "declared_dependencies": 3,
+    "time_to_demo_seconds_value": null,
+    "time_to_demo_seconds_reason": "The POC was built incrementally; retrospective wall-clock development time is not reconstructable."
+  },
+  "checks": {
+    "probe_contract": true,
+    "invalid_command_clear": true,
+    "ipc_error_clear": true,
+    "startup_latency_recorded": true,
+    "dependency_count_recorded": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/go/developer-experience-a3cdd4bf38674abd8abb6fda5612bc23/DX01.error.txt",
+    "poc/results/linux-x86_64/go/developer-experience-a3cdd4bf38674abd8abb6fda5612bc23/DX01.daemon.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

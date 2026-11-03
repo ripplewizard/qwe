@@ -1,0 +1,36 @@
+{
+  "case_id": "DX03",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/linux-x86_64/rust/developer-experience-d75efba49e3c4ded9b8cbdd340719bd9/environment.txt"
+  },
+  "command": "developer-experience-smoke rust DX03",
+  "started_at": "2026-11-03T04:57:27Z",
+  "duration_ms": 39849,
+  "metrics": {
+    "clean_build_ms": 39521.124,
+    "compiler_failure_ms": 133.399,
+    "build_output_bytes": 1261,
+    "compiler_error_bytes": 478
+  },
+  "checks": {
+    "clean_build_succeeded": true,
+    "build_duration_recorded": true,
+    "compiler_failure_rejected": true,
+    "compiler_failure_has_location": true,
+    "compiler_failure_explains_type": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/developer-experience-d75efba49e3c4ded9b8cbdd340719bd9/DX03.build.log",
+    "poc/results/linux-x86_64/rust/developer-experience-d75efba49e3c4ded9b8cbdd340719bd9/DX03.compiler-error.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

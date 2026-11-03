@@ -1,0 +1,43 @@
+{
+  "case_id": "DX01",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/linux-x86_64/rust/developer-experience-d75efba49e3c4ded9b8cbdd340719bd9/environment.txt"
+  },
+  "command": "developer-experience-smoke rust DX01",
+  "started_at": "2026-11-03T04:57:27Z",
+  "duration_ms": 39790,
+  "metrics": {
+    "cli_startup_samples": 12,
+    "cli_startup_median_ms": 0.775,
+    "cli_startup_p95_ms": 0.828,
+    "cli_startup_max_ms": 0.828,
+    "ipc_missing_status_samples": 30,
+    "ipc_missing_status_median_ms": 0.281,
+    "ipc_missing_status_p95_ms": 0.318,
+    "ipc_missing_status_max_ms": 0.322,
+    "declared_dependencies": 4,
+    "time_to_demo_seconds_value": null,
+    "time_to_demo_seconds_reason": "The POC was built incrementally; retrospective wall-clock development time is not reconstructable."
+  },
+  "checks": {
+    "probe_contract": true,
+    "invalid_command_clear": true,
+    "ipc_error_clear": true,
+    "startup_latency_recorded": true,
+    "dependency_count_recorded": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/developer-experience-d75efba49e3c4ded9b8cbdd340719bd9/DX01.error.txt",
+    "poc/results/linux-x86_64/rust/developer-experience-d75efba49e3c4ded9b8cbdd340719bd9/DX01.daemon.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

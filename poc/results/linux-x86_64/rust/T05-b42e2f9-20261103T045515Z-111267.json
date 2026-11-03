@@ -1,0 +1,36 @@
+{
+  "case_id": "T05",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rust=rustc 1.99.1 (58cf8f9c3 2026-10-13); go=go version go1.27.3 linux/amd64; cxx=c++ (GCC) 11.2.1 20210728 (Red Hat 11.2.1-1)",
+    "environment_record": "poc/results/linux-x86_64/environment/20261103T045515Z-111267.txt"
+  },
+  "command": "poc/build/rust/qwe-poc vt-smoke /home/project/uranus/bianca/poc/results/linux-x86_64/rust/T05-T06-20261103T045515Z-111267.pty.log",
+  "started_at": "2026-11-03T04:55:17Z",
+  "duration_ms": 38,
+  "metrics": {
+    "bytes": 602
+  },
+  "checks": {
+    "base_text": true,
+    "colors": true,
+    "erase": true,
+    "cursor": true,
+    "title": true,
+    "scroll_region": true,
+    "alternate_screen": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/T05-T06-20261103T045515Z-111267.pty.log",
+    "poc/results/linux-x86_64/rust/T05-T06-20261103T045515Z-111267.stdout.json",
+    "poc/results/linux-x86_64/rust/T05-T06-20261103T045515Z-111267.stderr.log"
+  ],
+  "known_limitations": [
+    "Linux x86_64 target; verify source cleanliness before final scoring",
+    "SGR color, erase, cursor, title, scroll region, and alternate screen covered; manual visual comparison remains"
+  ]
+}

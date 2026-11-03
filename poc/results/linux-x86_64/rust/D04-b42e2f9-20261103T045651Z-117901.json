@@ -1,0 +1,41 @@
+{
+  "case_id": "D04",
+  "language": "rust",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+  },
+  "command": "daemon-depth-smoke rust D04",
+  "started_at": "2026-11-03T04:56:51Z",
+  "duration_ms": 10658,
+  "metrics": {
+    "lock_latency_ms": 2018.271,
+    "image_bytes": 16777216,
+    "free_before_bytes": 14082048,
+    "free_at_enospc_bytes": 52224,
+    "free_after_cleanup_bytes": 13961216,
+    "filler_bytes": 13959168,
+    "write_error": "ENOSPC",
+    "write_attempts_before_failure": 2,
+    "failed_start_error": "internal",
+    "read_during_full": true,
+    "start_after_cleanup": true
+  },
+  "checks": {
+    "corrupt_rejected": true,
+    "lock_contention_explicit": true,
+    "disk_full_isolated": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/daemon-depth-20261103T045651Z-117901/daemon.log",
+    "poc/results/linux-x86_64/rust/daemon-depth-20261103T045651Z-117901/disk-full.json",
+    "poc/results/linux-x86_64/rust/daemon-depth-20261103T045651Z-117901/disk-full.daemon.log"
+  ],
+  "known_limitations": [
+    "Full-disk injection uses a temporary isolated filesystem and a real SQLite database.",
+    "POC request protocol is not a production wire contract."
+  ]
+}

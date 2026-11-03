@@ -1,0 +1,35 @@
+{
+  "case_id": "T11",
+  "language": "rust",
+  "status": "blocked",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "environment_record": "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/environment.txt"
+  },
+  "command": "qwe-poc daemon + SESSION_* Bash job-control preflight",
+  "started_at": "2026-11-03T04:56:01Z",
+  "duration_ms": 3294,
+  "metrics": {
+    "int_output_bytes": 288,
+    "final_output_bytes": 669
+  },
+  "checks": {
+    "ctrl_c_status_130": true,
+    "ctrl_z_stopped": true,
+    "bg_running": true,
+    "fg_foreground_interrupt": true,
+    "shell_exited": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/environment.txt",
+    "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/T11.pty.log",
+    "poc/results/linux-x86_64/rust/terminal-interaction-dc226d5bf8be4c498aedb84cd0b4f1ad/T04-T11.daemon.log"
+  ],
+  "known_limitations": [
+    "Automated key-sequence and exit-status checks only.",
+    "Manual foreground/background terminal semantics review remains."
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "case_id": "DX01",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "c++ (GCC) 11.2.1 20210728 (Red Hat 11.2.1-1)",
+    "environment_record": "poc/results/linux-x86_64/cpp/developer-experience-a87c6669123549a19907f283c29a164d/environment.txt"
+  },
+  "command": "developer-experience-smoke cpp DX01",
+  "started_at": "2026-11-03T04:59:06Z",
+  "duration_ms": 4941,
+  "metrics": {
+    "cli_startup_samples": 12,
+    "cli_startup_median_ms": 1.21,
+    "cli_startup_p95_ms": 1.346,
+    "cli_startup_max_ms": 1.346,
+    "ipc_missing_status_samples": 30,
+    "ipc_missing_status_median_ms": 0.695,
+    "ipc_missing_status_p95_ms": 0.753,
+    "ipc_missing_status_max_ms": 0.758,
+    "declared_dependencies": 3,
+    "time_to_demo_seconds_value": null,
+    "time_to_demo_seconds_reason": "The POC was built incrementally; retrospective wall-clock development time is not reconstructable."
+  },
+  "checks": {
+    "probe_contract": true,
+    "invalid_command_clear": true,
+    "ipc_error_clear": true,
+    "startup_latency_recorded": true,
+    "dependency_count_recorded": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/cpp/developer-experience-a87c6669123549a19907f283c29a164d/DX01.error.txt",
+    "poc/results/linux-x86_64/cpp/developer-experience-a87c6669123549a19907f283c29a164d/DX01.daemon.log"
+  ],
+  "known_limitations": [
+    "POC measurements are single-host comparisons, not production benchmarks.",
+    "Retrospective development time is not reconstructable from source history."
+  ]
+}

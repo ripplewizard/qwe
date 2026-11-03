@@ -1,0 +1,34 @@
+{
+  "case_id": "D08",
+  "language": "cpp",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "c++ (GCC) 11.2.1 20210728 (Red Hat 11.2.1-1)"
+  },
+  "command": "daemon-depth-smoke cpp D08",
+  "started_at": "2026-11-03T04:57:16Z",
+  "duration_ms": 10582,
+  "metrics": {
+    "duration_seconds": 8,
+    "requests": 156,
+    "errors": 0,
+    "rss_before_kib": 5020,
+    "rss_after_kib": 5020
+  },
+  "checks": {
+    "sustained_requests": true,
+    "rss_recorded": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/cpp/daemon-depth-20261103T045716Z-118414/daemon.log",
+    "poc/results/linux-x86_64/cpp/daemon-depth-20261103T045716Z-118414/disk-full.json",
+    "poc/results/linux-x86_64/cpp/daemon-depth-20261103T045716Z-118414/disk-full.daemon.log"
+  ],
+  "known_limitations": [
+    "POC request protocol is not a production wire contract.",
+    "POC request protocol is not a production wire contract."
+  ]
+}

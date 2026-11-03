@@ -1,9 +1,9 @@
 # POC Comparison and Weighted Scores
 
-Status: provisional. All automated and machine-checkable domains are complete
-on Linux x86_64 and macOS ARM64. Manual terminal observations are recorded, but
-they still need independent human sign-off before this becomes final selection
-evidence.
+Status: provisional. Linux has been regenerated from clean revision `b42e2f9`;
+the macOS comparison data still comes from the earlier dirty worktree. Manual
+terminal observations are recorded, but they still need independent human
+sign-off before this becomes final selection evidence.
 
 ## Run Metadata
 

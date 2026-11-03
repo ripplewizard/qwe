@@ -1,0 +1,34 @@
+{
+  "case_id": "T01",
+  "language": "go",
+  "status": "pass",
+  "source_commit": "b42e2f9",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "toolchain": "rust=rustc 1.99.1 (58cf8f9c3 2026-10-13); go=go version go1.27.3 linux/amd64; cxx=c++ (GCC) 11.2.1 20210728 (Red Hat 11.2.1-1)",
+    "environment_record": "poc/results/linux-x86_64/environment/20261103T045515Z-111267.txt"
+  },
+  "command": "poc/build/go/qwe-poc pty-smoke /home/project/uranus/bianca/poc/results/linux-x86_64/go/T01-T02-20261103T045515Z-111267.pty.log",
+  "started_at": "2026-11-03T04:55:15Z",
+  "duration_ms": 337,
+  "metrics": {
+    "bytes": 1034,
+    "exit_code": 0
+  },
+  "checks": {
+    "shell": true,
+    "fd_no_leak": true,
+    "process_reaped": true
+  },
+  "evidence": [
+    "poc/results/linux-x86_64/go/T01-T02-20261103T045515Z-111267.pty.log",
+    "poc/results/linux-x86_64/go/T01-T02-20261103T045515Z-111267.stdout.json",
+    "poc/results/linux-x86_64/go/T01-T02-20261103T045515Z-111267.stderr.log"
+  ],
+  "known_limitations": [
+    "Linux x86_64 target; verify source cleanliness before final scoring",
+    "Covers PTY creation, Shell launch, initial window size, and output capture",
+    "Does not cover dynamic resize, Neovim screen behavior, or recovery"
+  ]
+}
