@@ -41,15 +41,12 @@ def latest_results(root: Path) -> dict[tuple[str, str, str], dict[str, Any]]:
 
 def expected_cases(matrix: Path) -> list[str]:
     text = matrix.read_text(encoding="utf-8")
-    return [
-        case_id
-        for case_id in re.findall(
-            r"^\| ((?:T|P|D|RM|DX|XP|EX|MC)[0-9]{2}) \|",
-            text,
-            re.MULTILINE,
-        )
-        if case_id != "XP01"
-    ]
+    case_ids = re.findall(
+        r"^\| ((?:T|P|D|RM|DX|XP|EX|MC)[0-9]{2}) \|",
+        text,
+        re.MULTILINE,
+    )
+    return list(dict.fromkeys(case_id for case_id in case_ids if case_id != "XP01"))
 
 
 def fmt(value: Any) -> str:

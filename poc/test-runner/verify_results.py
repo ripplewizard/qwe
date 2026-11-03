@@ -103,6 +103,7 @@ def main() -> int:
     )
     latest = {}
     errors = []
+    checked_latest = 0
     for path in args.results_root.rglob("*.json"):
         if path.name.endswith(".stdout.json"):
             continue
@@ -136,6 +137,7 @@ def main() -> int:
                 if result is None:
                     errors.append(f"missing latest result: {platform}/{language}/{case_id}")
                     continue
+                checked_latest += 1
                 path = result.pop("_path")
                 schema_errors = validate_schema(result, schema)
                 if schema_errors:
@@ -160,7 +162,7 @@ def main() -> int:
         print(f"result verification FAIL ({len(errors)} errors)")
         return 1
     print(
-        f"result verification PASS ({len(latest)} latest results, "
+        f"result verification PASS ({checked_latest} latest results, "
         f"{len(expected) * len(platforms) * len(languages)} expected)"
     )
     return 0
