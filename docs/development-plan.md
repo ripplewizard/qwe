@@ -97,6 +97,8 @@ Evidence:
   and decision dates.
 - `vt100` capability and width-resize limitations are covered by
   `crates/qwe-runtime/tests/vt100_capabilities.rs`.
+- Stage 0, full Rust, T12, and resilience checks pass on macOS ARM64 and
+  Fedora Linux x86_64; the macOS platform probe remains macOS-only.
 
 ### Stage 1: Control Plane and Protocol Foundation
 

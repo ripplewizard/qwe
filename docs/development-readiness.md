@@ -27,8 +27,8 @@ land.
 - Worker rediscovery validates socket path and worker start token.
 - Lease release preserves a monotonic generation tombstone.
 - `just stage0-check`, `just check-qwe`, `just t12-host-smoke`, and
-  `just resilience-smoke` pass on macOS ARM64; the protocol and VT checks are
-  platform-independent Rust/Python checks.
+  `just resilience-smoke` pass on macOS ARM64 and Fedora Linux x86_64. The
+  macOS Secret Provider/resource probe is intentionally macOS-only.
 
 ## Accepted Contracts Awaiting Implementation
 
