@@ -843,6 +843,12 @@ resilience-smoke:
     target/debug/qwe --socket "$client_socket" lease touch \
       "$session_id" owner-a 1 --ttl-ms 60000 |
       jq -e '.generation == 1 and .owner == "owner-a"' >/dev/null
+    target/debug/qwe --socket "$client_socket" lease release \
+      "$session_id" owner-a 1 |
+      jq -e '.generation == 2 and .state == "released"' >/dev/null
+    target/debug/qwe --socket "$client_socket" lease claim \
+      "$session_id" owner-b --ttl-ms 60000 |
+      jq -e '.generation == 3 and .owner == "owner-b"' >/dev/null
 
     printf -v continuous_command 'exec python3 %q\r' \
       "{{ fixtures }}/continuous_output.py"
@@ -880,18 +886,33 @@ resilience-smoke:
     lost_created="$(target/debug/qwe --socket "$client_socket" task start "$lost_session_id" sh)"
     lost_task_id="$(printf '%s' "$lost_created" | jq -r '.task_id')"
     lost_worker_pid="$(printf '%s' "$lost_created" | jq -r '.worker_pid')"
+    kill -KILL "$lost_worker_pid"
+    lost_worker_pid=""
+    for _ in $(seq 1 100); do
+      control="$(target/debug/qwe --socket "$client_socket" status)"
+      printf '%s' "$control" | jq -e \
+        --arg id "$lost_session_id" \
+        '([.sessions[] | select(.id == $id and .state == "lost")] | length == 1)' \
+        >/dev/null && break
+      sleep 0.02
+    done
+    printf '%s' "$control" | jq -e \
+      --arg id "$lost_session_id" \
+      '([.sessions[] | select(.id == $id and .state == "lost")] | length == 1)' \
+      >/dev/null
+    target/debug/qwe --socket "$client_socket" task history |
+      jq -e --arg id "$lost_task_id" \
+        '([.tasks[] | select(.task_id == $id and .state == "lost")] | length == 1)' \
+        >/dev/null
     qwed_pgid="$(ps -o pgid= -p "$qwed_pid" | tr -d ' ')"
     kill -KILL -- "-$qwed_pgid"
     wait "$qwed_pid" 2>/dev/null || true
     qwed_pid=""
-    kill -KILL "$lost_worker_pid"
-    lost_worker_pid=""
     start_qwed
     control="$(target/debug/qwe --socket "$client_socket" status)"
     printf '%s' "$control" | jq -e \
       --arg id "$lost_session_id" \
-      '.reconciliation.lost_sessions >= 1 and
-       ([.sessions[] | select(.id == $id and .state == "lost")] | length == 1)' \
+      '([.sessions[] | select(.id == $id and .state == "lost")] | length == 1)' \
       >/dev/null
     target/debug/qwe --socket "$client_socket" task history |
       jq -e --arg id "$lost_task_id" \

@@ -23,8 +23,8 @@ Date: 2026-11-03
 - The worker must remain alive across both control-plane failures.
 - SQLite must restore the running Task and Lease, and Host inventory must
   reconcile without marking the live Session lost.
-- A separate Task's worker is killed; restart must persist that Session and
-  Task as `lost`.
+- A separate Task's worker is killed while `qwed` remains live; the runtime
+  monitor must persist that Session and Task as `lost` before restart.
 - A continuous-output process runs while eight clients issue 64 Attach requests.
 - Closing and duplicate-daemon behavior are also checked.
 
@@ -43,7 +43,9 @@ The latency gate is P95 <= 3,000 ms and P99 <= 5,000 ms.
 The original Session PID and start token survived Host and `qwed` restarts.
 The pre-crash screen and input history remained available. Lease owner and
 generation survived, Task history moved from `running` to `stopped`, and the
-killed worker was reconciled as `lost`.
+killed worker was reconciled as `lost` within 250 ms without restarting
+`qwed`. Releasing a Lease wrote a generation tombstone; the next claim
+continued from the next generation.
 
 ## Proven
 

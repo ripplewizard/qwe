@@ -18,6 +18,9 @@ quality or final POC audit as complete until review is signed.
 - Cross-platform XP01 has no missing language/platform/case cell.
 - Host/worker recovery, SQLite Task/Lease state, reconciliation, and concurrent
   Attach pass on macOS and Fedora.
+- Host inventory reconciliation runs every 250 ms.
+- Worker rediscovery validates socket path and worker start token.
+- Lease release preserves a monotonic generation tombstone.
 
 ## Known Development Gaps
 
@@ -31,6 +34,7 @@ These are implementation work, not reasons to delay development:
 - systemd and launchd ownership of Host and worker processes is not implemented.
 - Adversarial unauthorized-client and malformed-frame tests are incomplete.
 - Release-mode soak and larger-concurrency measurements remain pending.
+- API Key Manager, Pane resource limits, and forced teardown remain D3 scope.
 
 ## Non-Blocking Audit Items
 

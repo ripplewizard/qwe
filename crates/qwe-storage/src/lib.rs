@@ -3,7 +3,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum LeaseError {
@@ -51,7 +51,7 @@ impl Store {
     }
 
     fn migrate(&mut self) -> Result<(), StorageError> {
-        let current: i64 = self
+        let mut current: i64 = self
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if current > SCHEMA_VERSION {
@@ -88,13 +88,16 @@ impl Store {
                     owner TEXT NOT NULL,
                     generation INTEGER NOT NULL,
                     deadline_ms INTEGER NOT NULL,
-                    updated_at_ms INTEGER NOT NULL
+                    updated_at_ms INTEGER NOT NULL,
+                    released_at_ms INTEGER
                 );
-                PRAGMA user_version = 2;
+                PRAGMA user_version = 3;
                 ",
             )?;
             transaction.commit()?;
-        } else if current == 1 {
+            return Ok(());
+        }
+        if current == 1 {
             let transaction = self.connection.transaction()?;
             transaction.execute_batch(
                 "
@@ -114,6 +117,17 @@ impl Store {
                 );
                 CREATE INDEX tasks_by_session ON tasks(session_id);
                 PRAGMA user_version = 2;
+                ",
+            )?;
+            transaction.commit()?;
+            current = 2;
+        }
+        if current == 2 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "
+                ALTER TABLE leases ADD COLUMN released_at_ms INTEGER;
+                PRAGMA user_version = 3;
                 ",
             )?;
             transaction.commit()?;
@@ -181,6 +195,13 @@ impl Store {
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn find_session(&self, id: &str) -> Result<Option<SessionRecord>, StorageError> {
+        Ok(self
+            .list_sessions()?
+            .into_iter()
+            .find(|session| session.id == id))
     }
 
     pub fn mark_sessions_missing(
@@ -289,7 +310,8 @@ impl Store {
     pub fn get_lease(&self, session_id: &str) -> Result<Option<LeaseRecord>, StorageError> {
         self.connection
             .query_row(
-                "SELECT session_id, owner, generation, deadline_ms, updated_at_ms
+                "SELECT session_id, owner, generation, deadline_ms, updated_at_ms,
+                        released_at_ms
                  FROM leases WHERE session_id = ?1",
                 [session_id],
                 lease_from_row,
@@ -308,7 +330,8 @@ impl Store {
         let transaction = self.connection.transaction()?;
         let existing = transaction
             .query_row(
-                "SELECT session_id, owner, generation, deadline_ms, updated_at_ms
+                "SELECT session_id, owner, generation, deadline_ms, updated_at_ms,
+                        released_at_ms
                  FROM leases WHERE session_id = ?1",
                 [session_id],
                 lease_from_row,
@@ -321,37 +344,45 @@ impl Store {
                 generation: 1,
                 deadline_ms: now_ms + ttl_ms,
                 updated_at_ms: now_ms,
+                released_at_ms: None,
             },
-            Some(lease) if lease.owner == owner => LeaseRecord {
-                deadline_ms: now_ms + ttl_ms,
+            Some(lease) if lease.released_at_ms.is_none() && lease.owner == owner => LeaseRecord {
+                deadline_ms: now_ms.max(lease.updated_at_ms) + ttl_ms,
                 updated_at_ms: now_ms,
                 ..lease
             },
-            Some(lease) if lease.deadline_ms <= now_ms => LeaseRecord {
-                session_id: session_id.into(),
-                owner: owner.into(),
-                generation: lease.generation + 1,
-                deadline_ms: now_ms + ttl_ms,
-                updated_at_ms: now_ms,
-            },
+            Some(lease) if lease.released_at_ms.is_some() || lease.deadline_ms <= now_ms => {
+                LeaseRecord {
+                    session_id: session_id.into(),
+                    owner: owner.into(),
+                    generation: lease.generation + 1,
+                    deadline_ms: now_ms.max(lease.updated_at_ms) + ttl_ms,
+                    updated_at_ms: now_ms,
+                    released_at_ms: None,
+                }
+            }
             Some(_) => return Err(LeaseError::AlreadyHeld.into()),
         };
         transaction.execute(
             "
-            INSERT INTO leases (session_id, owner, generation, deadline_ms, updated_at_ms)
-            VALUES (?1, ?2, ?3, ?4, ?5)
+            INSERT INTO leases (
+                session_id, owner, generation, deadline_ms, updated_at_ms, released_at_ms
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             ON CONFLICT(session_id) DO UPDATE SET
                 owner = excluded.owner,
                 generation = excluded.generation,
                 deadline_ms = excluded.deadline_ms,
-                updated_at_ms = excluded.updated_at_ms
+                updated_at_ms = excluded.updated_at_ms,
+                released_at_ms = excluded.released_at_ms
             ",
             params![
                 lease.session_id,
                 lease.owner,
                 lease.generation as i64,
                 lease.deadline_ms,
-                lease.updated_at_ms
+                lease.updated_at_ms,
+                lease.released_at_ms
             ],
         )?;
         transaction.commit()?;
@@ -370,10 +401,13 @@ impl Store {
         if lease.owner != owner || lease.generation != generation {
             return Err(LeaseError::NotOwner.into());
         }
+        if lease.released_at_ms.is_some() {
+            return Err(LeaseError::Expired.into());
+        }
         if lease.deadline_ms <= now_ms {
             return Err(LeaseError::Expired.into());
         }
-        lease.deadline_ms = now_ms + ttl_ms;
+        lease.deadline_ms = now_ms.max(lease.updated_at_ms) + ttl_ms;
         lease.updated_at_ms = now_ms;
         self.write_lease(&lease)?;
         Ok(lease)
@@ -384,14 +418,18 @@ impl Store {
         session_id: &str,
         owner: &str,
         generation: u64,
+        now_ms: i64,
     ) -> Result<LeaseRecord, StorageError> {
         let mut lease = self.get_lease(session_id)?.ok_or(LeaseError::NotFound)?;
         if lease.owner != owner || lease.generation != generation {
             return Err(LeaseError::NotOwner.into());
         }
-        self.connection
-            .execute("DELETE FROM leases WHERE session_id = ?1", [session_id])?;
         lease.generation += 1;
+        lease.owner.clear();
+        lease.deadline_ms = now_ms;
+        lease.updated_at_ms = now_ms;
+        lease.released_at_ms = Some(now_ms);
+        self.write_lease(&lease)?;
         Ok(lease)
     }
 
@@ -403,7 +441,7 @@ impl Store {
         now_ms: i64,
     ) -> Result<LeaseRecord, StorageError> {
         let lease = self.get_lease(session_id)?.ok_or(LeaseError::NotFound)?;
-        if lease.deadline_ms > now_ms {
+        if lease.released_at_ms.is_none() && lease.deadline_ms > now_ms {
             return Err(LeaseError::AlreadyHeld.into());
         }
         self.claim_lease(session_id, owner, ttl_ms, now_ms)
@@ -413,7 +451,7 @@ impl Store {
         self.connection.execute(
             "
             UPDATE leases SET owner = ?2, generation = ?3, deadline_ms = ?4,
-                updated_at_ms = ?5
+                updated_at_ms = ?5, released_at_ms = ?6
             WHERE session_id = ?1
             ",
             params![
@@ -421,7 +459,8 @@ impl Store {
                 lease.owner,
                 lease.generation as i64,
                 lease.deadline_ms,
-                lease.updated_at_ms
+                lease.updated_at_ms,
+                lease.released_at_ms
             ],
         )?;
         Ok(())
@@ -459,6 +498,7 @@ fn lease_from_row(row: &Row<'_>) -> rusqlite::Result<LeaseRecord> {
         generation: row.get::<_, i64>(2)? as u64,
         deadline_ms: row.get(3)?,
         updated_at_ms: row.get(4)?,
+        released_at_ms: row.get(5)?,
     })
 }
 
@@ -526,9 +566,16 @@ mod tests {
                 .generation,
             2
         );
-        let released = store.release_lease("s1", "bob", 2).unwrap();
+        let released = store.release_lease("s1", "bob", 2, 1_200).unwrap();
         assert_eq!(released.generation, 3);
-        assert!(store.get_lease("s1").unwrap().is_none());
+        assert_eq!(released.released_at_ms, Some(1_200));
+        assert_eq!(
+            store
+                .claim_lease("s1", "carol", 100, 1_201)
+                .unwrap()
+                .generation,
+            4
+        );
     }
 
     #[test]

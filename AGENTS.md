@@ -7,8 +7,10 @@ architecture, POC evidence, and extension boundaries.
 
 ## Project Structure & Module Organization
 
-- `docs/qwe-design-baseline-v0.4.md` defines the implementation baseline.
+- `docs/qwe-design-baseline-v0.5.md` defines the active implementation
+  baseline. v0.4 is retained as history.
 - `docs/qwe-technical-architecture.md` defines process and crate boundaries.
+- `docs/ipc-protocol.md` defines qwed, Host, and worker authority and messages.
 - `docs/development-readiness.md` defines the implementation start gate and
   current gaps.
 - `docs/development-roadmap.md` defines implementation milestones.
@@ -18,10 +20,9 @@ architecture, POC evidence, and extension boundaries.
 - `docs/qwe-extension-architecture-notes-v0.1.md` records extension boundaries.
 - `Justfile` orchestrates both POC regression and the Rust workspace.
 - `crates/` and `apps/` contain the production Rust workspace.
-- `poc/{rust,go,cpp}/` contains equivalent POC implementations; shared inputs,
-  specifications, evidence, and reports stay outside language directories.
 - The active POC evidence worktree is `/Users/huangjian/project/uranus/bianca-poc`
-  on branch `poc`. Do not create POC run artifacts in the `dev` worktree.
+  on branch `poc`; its `poc/{rust,go,cpp}/` contains equivalent POC
+  implementations. Do not create POC run artifacts in the `dev` worktree.
 
 ## Build, Test, and Development Commands
 

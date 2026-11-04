@@ -1,6 +1,6 @@
 # QWE Design Baseline v0.4
 
-Status: Development approved; automated POC and resilience gates passed on macOS and Fedora
+Status: Superseded by Baseline v0.5
 Version: 0.4
 Date: 2026-11-03
 

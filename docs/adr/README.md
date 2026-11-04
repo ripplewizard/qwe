@@ -13,3 +13,5 @@ that links to the replaced decision.
 | [0006](0006-session-worker-recovery.md) | Isolated recoverable session workers | Accepted |
 | [0007](0007-control-state-reconciliation.md) | SQLite control-state reconciliation | Accepted |
 | [0008](0008-concurrent-attach-latency.md) | Concurrent Attach latency budget | Accepted |
+| [0009](0009-control-plane-authority.md) | Control-plane authority and runtime reconciliation | Accepted |
+| [0010](0010-product-capability-scope.md) | API keys, Pane limits, and forced teardown scope | Accepted |

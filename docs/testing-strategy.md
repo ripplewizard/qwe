@@ -42,6 +42,9 @@ No aggregate score may override a failed hard gate.
 - P99 at or below 5,000 ms.
 - Attach journal at most 1 MiB.
 - Host plus PTY worker RSS below 200 MiB after 100 MiB output.
+- Worker loss becomes `lost` within 250 ms without restarting `qwed`.
+- Worker rediscovery rejects stale PID start tokens and mismatched socket paths.
+- Released Lease generation never moves backwards.
 
 Release-mode and long-duration measurements are required before V0.
 

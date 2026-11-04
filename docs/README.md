@@ -2,10 +2,12 @@
 
 ## Implementation
 
-- [Design Baseline v0.4](qwe-design-baseline-v0.4.md): current production
-  scope, decisions, recovery matrix, and acceptance gates.
+- [Design Baseline v0.5](qwe-design-baseline-v0.5.md): active authority,
+  Lease, backpressure, and product-capability baseline.
+- [Design Baseline v0.4](qwe-design-baseline-v0.4.md): retained prior baseline.
 - [Technical Architecture](qwe-technical-architecture.md): process model, crate
   graph, IPC, state ownership, persistence, and security.
+- [IPC Protocol](ipc-protocol.md): field-level client, Host, and worker protocol.
 - [Development Readiness](development-readiness.md): start gate and known
   implementation gaps.
 - [Development Roadmap](development-roadmap.md): implementation milestones.
@@ -31,7 +33,7 @@
 
 ## Reading Order
 
-1. Read Baseline v0.4 for current scope and non-negotiable decisions.
+1. Read Baseline v0.5 for current scope and non-negotiable decisions.
 2. Read Development Readiness, Roadmap, Testing Strategy, and Workflow before
    starting implementation.
 3. Read Technical Architecture before adding crates, processes, or protocols.

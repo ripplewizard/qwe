@@ -13,7 +13,9 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const RECONCILE_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Parser)]
 struct Args {
@@ -29,7 +31,7 @@ struct Context {
     host_socket: String,
     epoch: AtomicU64,
     store: Mutex<Store>,
-    reconciliation: Value,
+    reconciliation: Mutex<Value>,
 }
 
 #[derive(Default)]
@@ -177,7 +179,9 @@ fn lease_json(lease: &LeaseRecord) -> Value {
         "owner": lease.owner,
         "generation": lease.generation,
         "deadline_ms": lease.deadline_ms,
-        "updated_at_ms": lease.updated_at_ms
+        "updated_at_ms": lease.updated_at_ms,
+        "released_at_ms": lease.released_at_ms,
+        "state": if lease.released_at_ms.is_some() { "released" } else { "active" }
     })
 }
 
@@ -376,7 +380,7 @@ fn lease_operation(
             let generation = required_u64(payload, "generation")?;
             lease_json(
                 &store
-                    .release_lease(session_id, owner, generation)
+                    .release_lease(session_id, owner, generation, now_ms())
                     .map_err(storage_error)?,
             )
         }
@@ -473,10 +477,15 @@ fn client_operation(
                 .store
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let reconciliation = context
+                .reconciliation
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
             Ok(json!({
                 "daemon": "ok",
                 "epoch": context.epoch.load(Ordering::SeqCst),
-                "reconciliation": context.reconciliation,
+                "reconciliation": reconciliation,
                 "sessions": store.list_sessions().map_err(storage_error)?,
                 "tasks": store.list_tasks().map_err(storage_error)?
             }))
@@ -516,6 +525,11 @@ fn client_operation(
                 store
                     .update_task(&task.id, TaskState::Stopped, None, None, Some(now_ms()))
                     .map_err(storage_error)?;
+            }
+            if let Some(mut session) = store.find_session(&session_id).map_err(storage_error)? {
+                session.state = "stopped".into();
+                session.updated_at_ms = now_ms();
+                store.upsert_session(&session).map_err(storage_error)?;
             }
             Ok(result)
         }
@@ -570,20 +584,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| format!("{}.sqlite", args.socket));
     let store = Store::open(&store_path)?;
     let epoch = register(&args.host_socket)?;
-    let mut context = Context {
+    let context = Context {
         host_socket: args.host_socket,
         epoch: AtomicU64::new(epoch),
         store: Mutex::new(store),
-        reconciliation: json!({}),
+        reconciliation: Mutex::new(json!({})),
     };
     let report = reconcile(&context)?;
-    context.reconciliation = json!({
+    *context
+        .reconciliation
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = json!({
         "live_sessions": report.live_sessions,
         "lost_sessions": report.lost_sessions,
         "exited_tasks": report.exited_tasks,
-        "lost_tasks": report.lost_tasks
+        "lost_tasks": report.lost_tasks,
+        "checked_at_ms": now_ms()
     });
     let context = Arc::new(context);
+    let monitor_context = Arc::clone(&context);
+    thread::spawn(move || {
+        loop {
+            thread::sleep(RECONCILE_INTERVAL);
+            if let Ok(report) = reconcile(&monitor_context) {
+                *monitor_context
+                    .reconciliation
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = json!({
+                    "live_sessions": report.live_sessions,
+                    "lost_sessions": report.lost_sessions,
+                    "exited_tasks": report.exited_tasks,
+                    "lost_tasks": report.lost_tasks,
+                    "checked_at_ms": now_ms()
+                });
+            }
+        }
+    });
     for client in listener.incoming() {
         let context = Arc::clone(&context);
         thread::spawn(move || {

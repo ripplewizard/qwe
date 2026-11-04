@@ -34,6 +34,9 @@ Task and Lease history.
 - Add systemd user-service and launchd integration.
 - Verify worker orphan cleanup and upgrade behavior.
 - Add unauthorized UID, stale epoch, malformed frame, and oversized input tests.
+- Add API Key Manager with broker/fd injection and secret scrubbing.
+- Add Pane CPU, memory, and process-limit policy.
+- Add `kill-session`, `kill-server`, and batch Task teardown commands.
 
 Exit: lifecycle and negative-security suites pass on both platforms.
 

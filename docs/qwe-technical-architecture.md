@@ -34,8 +34,12 @@ This ownership boundary is exercised by `just t12-host-smoke`.
 
 Current production implementation includes durable session workers, Host epoch
 recovery, SQLite Task/Lease state, startup reconciliation, and concurrent
-Attach. Production resize and complete VT-mode snapshots remain in progress;
-see [Development Readiness](development-readiness.md).
+Attach. `qwed` also reconciles Host inventory every 250 ms. Worker rediscovery
+validates the expected socket path and worker start token. The detailed
+protocol and authority boundary are in [IPC Protocol](ipc-protocol.md).
+
+Production resize and complete VT-mode snapshots remain in progress; see
+[Development Readiness](development-readiness.md).
 
 ## 2. Process Responsibilities
 
@@ -140,7 +144,8 @@ persistence_failure
 
 ## 5. Host Protocol
 
-The host protocol is internal and versioned separately from client IPC:
+The host protocol is internal and versioned separately from client IPC. The
+authoritative field-level contract is [IPC Protocol](ipc-protocol.md):
 
 ```text
 HOST_REGISTER
@@ -162,6 +167,11 @@ SESSION_CLOSE
 - `truncated_from` sequence number.
 
 It does not replay an unbounded historical PTY stream.
+
+The journal is one bounded buffer per Session worker. Each concurrent Attach
+gets a private snapshot; a slow client does not hold the PTY reader or another
+client's response writer. The journal tail may begin mid-escape-sequence and is
+therefore diagnostic data, while the VT screen snapshot is authoritative.
 
 In the V0 implementation, `SESSION_STATUS`, `SESSION_CREATE`, `SESSION_INPUT`,
 and `SESSION_DETACH` return lightweight metadata only. `SESSION_ATTACH` is the
@@ -216,7 +226,8 @@ The process start token is mandatory. PID alone is never sufficient.
 - High-frequency terminal bytes are not written to SQLite per frame.
 - Mutating requests retain idempotency keys to prevent duplicate tasks.
 - Startup reconciliation marks missing Sessions and Tasks as `lost`.
-- Lease owner and generation changes are transactional.
+- Runtime reconciliation marks a vanished worker `lost` within 250 ms.
+- Lease release writes a generation tombstone; expiration does not kill Tasks.
 
 ## 10. Resource Model
 
@@ -249,7 +260,14 @@ exists; otherwise the field is `unsupported`.
 - V0 requires zero request failures, P95 at or below 3,000 ms, and P99 at or
   below 5,000 ms.
 
-## 13. Remaining Architecture Decisions
+## 13. Product Capabilities Scheduled
+
+- D3 API Key Manager uses a broker or inherited descriptor; secrets cannot
+  enter args, environment, files, logs, or persisted state.
+- D3 Pane resource policy covers CPU, memory, and process limits.
+- D3 forced teardown covers Session, Server, and batch Task termination.
+
+## 14. Remaining Architecture Decisions
 
 1. Whether read-only observers are supported.
 2. Final VT engine after broader compatibility benchmarks.

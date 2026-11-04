@@ -131,6 +131,7 @@ pub struct LeaseRecord {
     pub generation: u64,
     pub deadline_ms: i64,
     pub updated_at_ms: i64,
+    pub released_at_ms: Option<i64>,
 }
 
 #[cfg(test)]

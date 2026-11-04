@@ -5,8 +5,8 @@ use qwe_protocol::{
     PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope, ResponseEnvelope, read_frame,
     validate_version, verify_same_uid, write_frame,
 };
-use qwe_runtime::{BoundedJournal, process_identity};
-use serde_json::{Value, json};
+use qwe_runtime::{BoundedJournal, process_identity, process_matches};
+use serde_json::{Value, from_value, json};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -41,6 +41,7 @@ struct Args {
 struct WorkerSession {
     pid: u32,
     identity: ProcessIdentity,
+    worker_identity: ProcessIdentity,
     writer: Mutex<Box<dyn Write + Send>>,
     journal: Mutex<BoundedJournal>,
     screen: Mutex<String>,
@@ -52,6 +53,7 @@ struct WorkerSession {
 struct WorkerHandle {
     socket: PathBuf,
     worker_pid: u32,
+    worker_identity: ProcessIdentity,
 }
 
 struct Host {
@@ -65,6 +67,7 @@ struct Host {
 enum HostAction {
     Done(Result<Value, ProtocolErrorBody>),
     Forward {
+        session_id: String,
         socket: PathBuf,
         worker_pid: u32,
         operation: String,
@@ -124,6 +127,24 @@ fn call_socket(socket: &Path, operation: &str, payload: Value) -> Result<Value, 
     response.result
 }
 
+fn handle_from_hello(runtime_dir: &Path, socket: &Path, value: &Value) -> Option<WorkerHandle> {
+    let session_id = value.get("session_id")?.as_str()?;
+    if socket != worker_socket(runtime_dir, session_id) {
+        return None;
+    }
+    let worker_pid = value.get("worker_pid")?.as_u64()? as u32;
+    let worker_identity: ProcessIdentity =
+        from_value(value.get("worker_identity")?.clone()).ok()?;
+    if worker_identity.pid != worker_pid || !process_matches(&worker_identity) {
+        return None;
+    }
+    Some(WorkerHandle {
+        socket: socket.to_path_buf(),
+        worker_pid,
+        worker_identity,
+    })
+}
+
 impl Host {
     fn recover(runtime_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         fs::create_dir_all(&runtime_dir)?;
@@ -145,17 +166,11 @@ impl Host {
             }
             match call_socket(&path, "WORKER_HELLO", json!({})) {
                 Ok(value) => {
-                    if let (Some(id), Some(worker_pid)) = (
-                        value.get("session_id").and_then(Value::as_str),
-                        value.get("worker_pid").and_then(Value::as_u64),
-                    ) {
-                        sessions.insert(
-                            id.to_string(),
-                            WorkerHandle {
-                                socket: path.clone(),
-                                worker_pid: worker_pid as u32,
-                            },
-                        );
+                    if let Some(handle) = handle_from_hello(&runtime_dir, &path, &value) {
+                        let id = value["session_id"].as_str().unwrap_or_default().to_string();
+                        sessions.insert(id, handle);
+                    } else {
+                        let _ = fs::remove_file(path);
                     }
                 }
                 Err(_) => {
@@ -225,20 +240,11 @@ impl Host {
                 if let Ok(value) = call_socket(&socket, "WORKER_HELLO", json!({})) {
                     let status =
                         call_socket(&socket, "SESSION_STATUS", json!({"session_id": session_id}))?;
-                    let worker_pid =
-                        value
-                            .get("worker_pid")
-                            .and_then(Value::as_u64)
-                            .ok_or_else(|| {
-                                error("worker_start_failed", "worker hello has no process ID")
-                            })?;
-                    self.sessions.insert(
-                        session_id.to_string(),
-                        WorkerHandle {
-                            socket: socket.clone(),
-                            worker_pid: worker_pid as u32,
-                        },
-                    );
+                    let handle =
+                        handle_from_hello(&self.runtime_dir, &socket, &value).ok_or_else(|| {
+                            error("worker_start_failed", "worker identity validation failed")
+                        })?;
+                    self.sessions.insert(session_id.to_string(), handle);
                     return Ok(status);
                 }
                 thread::sleep(Duration::from_millis(10));
@@ -260,6 +266,10 @@ impl Host {
         let mut sessions = Vec::new();
         let mut stale = Vec::new();
         for (id, handle) in &self.sessions {
+            if !process_matches(&handle.worker_identity) {
+                stale.push(id.clone());
+                continue;
+            }
             match call_socket(&handle.socket, "SESSION_STATUS", json!({"session_id": id})) {
                 Ok(status) => sessions.push(status),
                 Err(_) => stale.push(id.clone()),
@@ -314,6 +324,7 @@ impl Host {
                     )));
                 };
                 HostAction::Forward {
+                    session_id: id.clone(),
                     socket: handle.socket.clone(),
                     worker_pid: handle.worker_pid,
                     operation: request.operation.clone(),
@@ -352,6 +363,7 @@ impl WorkerSession {
         let session = Arc::new(Self {
             pid,
             identity,
+            worker_identity: process_identity(std::process::id())?,
             writer: Mutex::new(writer),
             journal: Mutex::new(BoundedJournal::new(JOURNAL_LIMIT)?),
             screen: Mutex::new(String::new()),
@@ -417,6 +429,7 @@ impl WorkerSession {
         json!({
             "session_id": session_id,
             "worker_pid": std::process::id(),
+            "worker_identity": self.worker_identity,
             "pid": self.pid,
             "pgid": self.identity.pgid,
             "start_token": self.identity.start_token,
@@ -453,6 +466,7 @@ impl WorkerSession {
         json!({
             "session_id": session_id,
             "worker_pid": std::process::id(),
+            "worker_identity": self.worker_identity,
             "pid": self.pid,
             "pgid": self.identity.pgid,
             "start_token": self.identity.start_token,
@@ -568,13 +582,28 @@ fn serve_host(
     let result = match action {
         HostAction::Done(result) => result,
         HostAction::Forward {
+            session_id,
             socket,
             worker_pid,
             operation,
             payload,
             remove_session,
         } => {
-            let result = call_socket(&socket, &operation, payload);
+            let mut result = call_socket(&socket, &operation, payload);
+            if matches!(
+                result.as_ref().err().map(|failure| failure.code.as_str()),
+                Some("worker_unavailable" | "transport")
+            ) {
+                host.lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .sessions
+                    .remove(&session_id);
+                let _ = fs::remove_file(&socket);
+                result = Err(error(
+                    "terminal_lost",
+                    "session worker disappeared during request",
+                ));
+            }
             if let Some(session_id) = remove_session {
                 host.lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -697,6 +726,30 @@ mod tests {
             }),
             HostAction::Done(Err(error)) if error.code == "stale_epoch"
         ));
+        let _ = fs::remove_dir_all(runtime_dir);
+    }
+
+    #[test]
+    fn worker_hello_requires_expected_socket_and_start_token() {
+        let runtime_dir = std::env::temp_dir().join(format!(
+            "qwe-worker-identity-{}-{}",
+            std::process::id(),
+            request_id("identity")
+        ));
+        fs::create_dir_all(&runtime_dir).unwrap();
+        let session_id = "identity-session";
+        let socket = worker_socket(&runtime_dir, session_id);
+        let identity = process_identity(std::process::id()).unwrap();
+        let hello = json!({
+            "session_id": session_id,
+            "worker_pid": identity.pid,
+            "worker_identity": identity
+        });
+        assert!(handle_from_hello(&runtime_dir, &socket, &hello).is_some());
+        assert!(handle_from_hello(&runtime_dir, &runtime_dir.join("wrong.sock"), &hello).is_none());
+        let mut invalid = hello;
+        invalid["worker_identity"]["start_token"] = json!("stale");
+        assert!(handle_from_hello(&runtime_dir, &socket, &invalid).is_none());
         let _ = fs::remove_dir_all(runtime_dir);
     }
 }
