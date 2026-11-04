@@ -18,6 +18,10 @@ history rather than versioned filenames.
 | D039 | Worker rediscovery validates socket path, worker PID/start token, and Session ID. |
 | D040 | A missing worker becomes `terminal_lost`; only that Session becomes `lost`. |
 
+[ADR 0011](adr/0011-consolidate-control-plane.md) proposes replacing the
+separate Host with a qwed supervisor. It remains Proposed; this table describes
+the currently implemented authority model.
+
 The detailed Host operations are defined in [IPC Protocol](ipc-protocol.md).
 
 ## 3. Lease Semantics
@@ -36,7 +40,7 @@ The detailed Host operations are defined in [IPC Protocol](ipc-protocol.md).
 |---|---|
 | D046 | The journal is per Session worker, not per client. |
 | D047 | Each Attach gets a private 1 MiB tail snapshot; slow clients cannot block the PTY reader. |
-| D048 | Journal tail bytes are opaque diagnostics; screen state is authoritative. |
+| D048 | Journal tail is diagnostic-only and never a replay format; screen state is authoritative. |
 | D049 | Compact structured VT state with cursor and terminal modes is a D1 requirement. |
 
 ## 5. Required Product Capabilities
@@ -52,6 +56,10 @@ deferred scope:
 
 API Key injection must use an explicit broker or inherited file descriptor.
 Secrets must be removed from the child environment before exec.
+
+The journal may start mid-ANSI or mid-UTF-8 sequence. No feature may parse the
+journal to reconstruct terminal state. Recording or diff features require a
+separate gap-aware framing contract with VT state checkpoints.
 
 ## 6. Security
 

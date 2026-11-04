@@ -37,6 +37,8 @@ These are implementation work, not reasons to delay development:
 - Adversarial unauthorized-client and malformed-frame tests are incomplete.
 - Release-mode soak and larger-concurrency measurements remain pending.
 - API Key Manager, Pane resource limits, and forced teardown remain D3 scope.
+- macOS Secret Provider delivery remains undecided and requires an explicit
+  D3 spike before API Key Manager implementation.
 
 ## Non-Blocking Audit Items
 

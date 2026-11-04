@@ -35,10 +35,13 @@ Task and Lease history.
 - Verify worker orphan cleanup and upgrade behavior.
 - Add unauthorized UID, stale epoch, malformed frame, and oversized input tests.
 - Add API Key Manager with broker/fd injection and secret scrubbing.
+- Complete a macOS Secret Provider spike; launchd sockets are not equivalent to
+  Linux credential FDs.
 - Add Pane CPU, memory, and process-limit policy.
 - Add `kill-session`, `kill-server`, and batch Task teardown commands.
 
-Exit: lifecycle and negative-security suites pass on both platforms.
+Exit: lifecycle, negative-security, Linux credential injection, and a chosen
+macOS Secret Provider design pass on both platforms.
 
 ## Milestone D4: User-Facing V0
 
