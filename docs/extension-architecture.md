@@ -1,4 +1,4 @@
-# QWE Extension Architecture Notes v0.1
+# QWE Extension Architecture
 
 这份文档与前两个文档不同：它不是当前开发任务列表，而是未来架构变化的研究记录。
 
@@ -9,8 +9,7 @@ QWE — Extension Architecture Notes
 Future Capabilities and Architecture Extension Boundaries
 
 Status: Research Notes
-Version: 0.1
-Date: 2026-10-30
+Updated: 2026-11-04
 
 ⸻
 

@@ -1,41 +1,35 @@
 # QWE Documentation
 
-## Implementation
+## Current Design
 
-- [Design Baseline v0.5](qwe-design-baseline-v0.5.md): active authority,
-  Lease, backpressure, and product-capability baseline.
-- [Design Baseline v0.4](qwe-design-baseline-v0.4.md): retained prior baseline.
-- [Technical Architecture](qwe-technical-architecture.md): process model, crate
-  graph, IPC, state ownership, persistence, and security.
+- [Design Baseline](design-baseline.md): scope, authority, recovery, leases,
+  backpressure, and required capabilities.
+- [Technical Architecture](technical-architecture.md): process model, crate
+  graph, state ownership, persistence, and security.
 - [IPC Protocol](ipc-protocol.md): field-level client, Host, and worker protocol.
-- [Development Readiness](development-readiness.md): start gate and known
-  implementation gaps.
-- [Development Roadmap](development-roadmap.md): implementation milestones.
-- [Testing Strategy](testing-strategy.md): test layers, commands, and gates.
-- [Development Workflow](development-workflow.md): branch and change workflow.
-- [POC Branch Index](poc-branch-index.md): historical branch lookup.
-- [ADR Index](adr/README.md): accepted architecture decisions and consequences.
+- [Extension Architecture](extension-architecture.md): deferred capabilities
+  and architecture reservations.
+- [ADR Index](adr/README.md): accepted decisions and consequences.
+
+## Development
+
+- [Readiness](development-readiness.md): known gaps and start gate.
+- [Roadmap](development-roadmap.md): implementation milestones.
+- [Testing Strategy](testing-strategy.md): layers, commands, and acceptance.
+- [Workflow](development-workflow.md): branch, commit, and evidence rules.
+
+## Evidence
+
+- [POC Index](poc-index.md): external POC worktree, reports, and branches.
 - [Experiment 0001](experiments/0001-t12-host-ownership.md): daemon restart and
   bounded-output validation.
-- [Experiment 0002](experiments/0002-resilience-and-concurrency.md): Host crash
-  recovery, control-state reconciliation, and concurrent Attach latency.
-
-## POC Evidence
-
-- [Technical POC Specification v0.1](qwe-technical-poc-specification-v0.1.md):
-  test design and scoring method.
-- [Design Baseline v0.2](qwe-design-baseline-v0.2.md): pre-implementation
-  product baseline retained for history.
-- [Extension Architecture Notes v0.1](qwe-extension-architecture-notes-v0.1.md):
-  deferred capabilities and extension boundaries.
-- [`../poc/reports/decision.md`](../poc/reports/decision.md): accepted Rust
-  decision and language comparison.
+- [Experiment 0002](experiments/0002-resilience-and-concurrency.md): recovery,
+  reconciliation, and concurrent Attach.
 
 ## Reading Order
 
-1. Read Baseline v0.5 for current scope and non-negotiable decisions.
-2. Read Development Readiness, Roadmap, Testing Strategy, and Workflow before
-   starting implementation.
-3. Read Technical Architecture before adding crates, processes, or protocols.
-4. Read the relevant ADR before revisiting an accepted decision.
-5. Treat `poc` reports and v0.2 as evidence, not current implementation rules.
+1. Read Design Baseline.
+2. Read Technical Architecture and IPC Protocol.
+3. Read Readiness, Roadmap, Testing Strategy, and Workflow.
+4. Read the relevant ADR before changing an accepted decision.
+5. Use the POC Index only for historical evidence.

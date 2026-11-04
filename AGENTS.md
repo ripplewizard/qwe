@@ -7,17 +7,16 @@ architecture, POC evidence, and extension boundaries.
 
 ## Project Structure & Module Organization
 
-- `docs/qwe-design-baseline-v0.5.md` defines the active implementation
-  baseline. v0.4 is retained as history.
-- `docs/qwe-technical-architecture.md` defines process and crate boundaries.
+- `docs/design-baseline.md` defines the active implementation baseline.
+- `docs/technical-architecture.md` defines process and crate boundaries.
 - `docs/ipc-protocol.md` defines qwed, Host, and worker authority and messages.
 - `docs/development-readiness.md` defines the implementation start gate and
   current gaps.
 - `docs/development-roadmap.md` defines implementation milestones.
 - `docs/testing-strategy.md` defines test layers and acceptance criteria.
 - `docs/development-workflow.md` defines branch and change flow.
-- `docs/qwe-technical-poc-specification-v0.1.md` defines the POC plan.
-- `docs/qwe-extension-architecture-notes-v0.1.md` records extension boundaries.
+- `docs/extension-architecture.md` records extension boundaries.
+- `docs/poc-index.md` indexes the external POC workspace.
 - `Justfile` orchestrates both POC regression and the Rust workspace.
 - `crates/` and `apps/` contain the production Rust workspace.
 - The active POC evidence worktree is `/Users/huangjian/project/uranus/bianca-poc`

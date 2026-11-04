@@ -9,10 +9,10 @@ extension boundaries.
 Active development starts on the `dev` branch. Automated POC evidence is
 complete on Linux and macOS; manual POC sign-off remains a non-blocking audit
 task. Implementation follows
-[`docs/qwe-design-baseline-v0.5.md`](docs/qwe-design-baseline-v0.5.md).
+[`docs/design-baseline.md`](docs/design-baseline.md).
 
 The process and crate boundaries are described in
-[`docs/qwe-technical-architecture.md`](docs/qwe-technical-architecture.md).
+[`docs/technical-architecture.md`](docs/technical-architecture.md).
 Host authority and field-level IPC are in
 [`docs/ipc-protocol.md`](docs/ipc-protocol.md).
 See [`docs/development-readiness.md`](docs/development-readiness.md) for known

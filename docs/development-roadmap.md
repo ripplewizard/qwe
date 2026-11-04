@@ -46,4 +46,5 @@ Exit: lifecycle and negative-security suites pass on both platforms.
 - Run release-mode latency, memory, and soak benchmarks.
 - Complete manual UX acceptance and documentation.
 
-Exit: V0 acceptance gates in Baseline v0.4 pass without unsupported claims.
+Exit: V0 acceptance gates in the current Design Baseline pass without
+unsupported claims.

@@ -1,13 +1,12 @@
-# QWE Design Baseline v0.5
+# QWE Design Baseline
 
 Status: Active Development Baseline
-Version: 0.5
-Date: 2026-11-04
+Updated: 2026-11-04
 
 ## 1. Purpose
 
-This baseline supersedes v0.4 and closes control-plane ownership, runtime
-worker discovery, rediscovery identity, Lease state, and backpressure gaps.
+This is the current implementation baseline. Revisions are tracked by Git
+history rather than versioned filenames.
 
 ## 2. Authority Model
 

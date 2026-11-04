@@ -1,8 +1,7 @@
 # QWE Technical Architecture
 
 Status: Implementation Active
-Version: 0.1
-Date: 2026-11-03
+Updated: 2026-11-04
 
 ## 1. Process Model
 
