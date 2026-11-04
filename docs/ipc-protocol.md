@@ -1,20 +1,26 @@
 # QWE IPC Protocol
 
-Status: V0 Draft
+Status: Current migration contract; accepted V0 target is authoritative
 Date: 2026-11-04
 
 This document describes the currently implemented request/response protocol.
-[ADR 0012](adr/0012-terminal-attach-data-plane.md) and
-[ADR 0013](adr/0013-core-object-model.md) propose the long-lived Attach channel
-and authoritative object semantics that will replace parts of this contract
-after acceptance.
+The accepted V0 Attach frames and state contracts are canonical in
+[`protocol/schema/qwe-v1.schema.json`](../protocol/schema/qwe-v1.schema.json).
+ADRs [0011](adr/0011-consolidate-control-plane.md),
+[0012](adr/0012-terminal-attach-data-plane.md), and
+[0013](adr/0013-core-object-model.md) define the Stage 1-3 replacements for
+this migration contract.
 
 ## 1. Authority Boundaries
 
 - `qwed` is the sole authority for SQLite Sessions, Tasks, and Leases.
-- `qwe-host` is the authority for live worker inventory and PTY/process health.
-- Session workers own PTYs and report resource state through Host IPC.
-- Clients never connect directly to workers in V0.
+- In the current migration topology, `qwe-host` owns live worker inventory and
+  Host epoch fencing.
+- The accepted V0 target moves worker inventory and health authority into
+  `qwed`; Stage 1 removes `qwe-host`.
+- Session workers own PTYs and report resource state through the current
+  qwed-to-Host path.
+- Clients never connect directly to worker control sockets.
 
 ## 2. Transport
 
@@ -36,6 +42,9 @@ Request fields:
 ```
 
 ## 3. qwed to qwe-host
+
+This section documents the temporary migration protocol. It is not a
+compatibility requirement for the accepted Stage 1 clean cutover.
 
 `HOST_REGISTER` requests a new monotonic fencing epoch:
 
@@ -89,6 +98,9 @@ Only `HOST_REGISTER` omits `host_epoch`. The Host rejects stale epochs.
 
 ## 4. Runtime Reconciliation
 
+This is the current migration behavior. Stage 1 replaces Host polling with the
+accepted event-first supervisor and safety scan.
+
 `qwed` reconciles Host inventory every 250 ms while running. Host inventory
 checks every worker; an unavailable worker is removed and reported as
 `terminal_lost`. Reconciliation then marks missing running Sessions and Tasks
@@ -108,8 +120,8 @@ Worker operations are `WORKER_HELLO`, `SESSION_STATUS`, `SESSION_ATTACH`,
 
 `SESSION_ATTACH` returns a bounded screen snapshot and at most the newest
 1 MiB journal tail. The journal tail is opaque raw bytes; the screen snapshot
-is the authoritative display. A future compact VT protocol will make all
-cursor and terminal modes explicit.
+is the authoritative display. Stage 2 replaces this one-shot operation with the
+accepted binary Attach channel and makes cursor and terminal modes explicit.
 
 ## 6. Lease State Machine
 
@@ -127,10 +139,10 @@ operations cannot reuse an older fencing token.
 
 ## 7. Backpressure
 
-Each Session has one bounded 16 MiB journal. Attach takes a private snapshot of
-at most 1 MiB; slow clients write only their own response and do not hold the
-PTY reader or other clients' writers. A blocked client may consume one bounded
-response buffer until its socket timeout or disconnect.
+Each Session has one bounded 16 MiB journal. The current Attach takes a private
+snapshot of at most 1 MiB. The accepted V0 channel additionally gives each live
+attachment an independent 1 MiB output queue and closes only that channel on
+overflow; no silent output loss is permitted.
 
 ## 8. Security Model
 

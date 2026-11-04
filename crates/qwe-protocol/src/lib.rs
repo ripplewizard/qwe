@@ -6,6 +6,260 @@ use thiserror::Error;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+pub const ATTACH_PROTOCOL_VERSION: u16 = 1;
+pub const MAX_ATTACH_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
+pub const MAX_ATTACH_OUTPUT_BYTES: usize = 64 * 1024;
+
+pub mod attach {
+    use serde::{Deserialize, Serialize};
+    use thiserror::Error;
+
+    use super::{ATTACH_PROTOCOL_VERSION, MAX_ATTACH_FRAME_PAYLOAD_BYTES, MAX_ATTACH_OUTPUT_BYTES};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Direction {
+        ClientToServer,
+        ServerToClient,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum FrameType {
+        AttachOpen = 0x01,
+        Input = 0x02,
+        Resize = 0x03,
+        Ack = 0x04,
+        Detach = 0x05,
+        AttachAccepted = 0x81,
+        Snapshot = 0x82,
+        Output = 0x83,
+        Resized = 0x84,
+        ProcessExited = 0x85,
+        OwnershipRevoked = 0x86,
+        Error = 0x87,
+    }
+
+    impl FrameType {
+        pub const ALL: [Self; 12] = [
+            Self::AttachOpen,
+            Self::Input,
+            Self::Resize,
+            Self::Ack,
+            Self::Detach,
+            Self::AttachAccepted,
+            Self::Snapshot,
+            Self::Output,
+            Self::Resized,
+            Self::ProcessExited,
+            Self::OwnershipRevoked,
+            Self::Error,
+        ];
+
+        #[must_use]
+        pub fn direction(self) -> Direction {
+            match self {
+                Self::AttachOpen | Self::Input | Self::Resize | Self::Ack | Self::Detach => {
+                    Direction::ClientToServer
+                }
+                Self::AttachAccepted
+                | Self::Snapshot
+                | Self::Output
+                | Self::Resized
+                | Self::ProcessExited
+                | Self::OwnershipRevoked
+                | Self::Error => Direction::ServerToClient,
+            }
+        }
+
+        #[must_use]
+        pub fn code(self) -> u8 {
+            self as u8
+        }
+
+        #[must_use]
+        pub fn name(self) -> &'static str {
+            match self {
+                Self::AttachOpen => "ATTACH_OPEN",
+                Self::Input => "INPUT",
+                Self::Resize => "RESIZE",
+                Self::Ack => "ACK",
+                Self::Detach => "DETACH",
+                Self::AttachAccepted => "ATTACH_ACCEPTED",
+                Self::Snapshot => "SNAPSHOT",
+                Self::Output => "OUTPUT",
+                Self::Resized => "RESIZED",
+                Self::ProcessExited => "PROCESS_EXITED",
+                Self::OwnershipRevoked => "OWNERSHIP_REVOKED",
+                Self::Error => "ERROR",
+            }
+        }
+    }
+
+    impl TryFrom<u8> for FrameType {
+        type Error = AttachCodecError;
+
+        fn try_from(value: u8) -> Result<Self, AttachCodecError> {
+            Self::ALL
+                .into_iter()
+                .find(|frame_type| frame_type.code() == value)
+                .ok_or(AttachCodecError::UnknownFrameType { code: value })
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct FrameHeader {
+        pub frame_type: FrameType,
+        pub payload_length: usize,
+    }
+
+    impl FrameHeader {
+        pub fn encode(self) -> Result<[u8; 5], AttachCodecError> {
+            self.validate()?;
+            let length = u32::try_from(self.payload_length).map_err(|_| {
+                AttachCodecError::PayloadTooLarge {
+                    frame_type: self.frame_type,
+                    size: self.payload_length,
+                    maximum: MAX_ATTACH_FRAME_PAYLOAD_BYTES,
+                }
+            })?;
+            let mut encoded = [0_u8; 5];
+            encoded[0] = self.frame_type.code();
+            encoded[1..].copy_from_slice(&length.to_be_bytes());
+            Ok(encoded)
+        }
+
+        pub fn decode(bytes: [u8; 5]) -> Result<Self, AttachCodecError> {
+            let header = Self {
+                frame_type: FrameType::try_from(bytes[0])?,
+                payload_length: u32::from_be_bytes(bytes[1..].try_into().expect("fixed size"))
+                    as usize,
+            };
+            header.validate()?;
+            Ok(header)
+        }
+
+        fn validate(self) -> Result<(), AttachCodecError> {
+            let maximum = if self.frame_type == FrameType::Output {
+                MAX_ATTACH_OUTPUT_BYTES
+            } else {
+                MAX_ATTACH_FRAME_PAYLOAD_BYTES
+            };
+            if self.payload_length > maximum {
+                return Err(AttachCodecError::PayloadTooLarge {
+                    frame_type: self.frame_type,
+                    size: self.payload_length,
+                    maximum,
+                });
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Debug, Error, PartialEq, Eq)]
+    pub enum AttachCodecError {
+        #[error("unknown attach frame type 0x{code:02x}")]
+        UnknownFrameType { code: u8 },
+        #[error(
+            "{frame_type:?} payload is {size} bytes; maximum for this frame is {maximum} bytes"
+        )]
+        PayloadTooLarge {
+            frame_type: FrameType,
+            size: usize,
+            maximum: usize,
+        },
+    }
+
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum AttachMode {
+        #[default]
+        Exclusive,
+        ReadOnly,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum MouseProtocolMode {
+        None,
+        Press,
+        PressRelease,
+        ButtonMotion,
+        AnyMotion,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum MouseProtocolEncoding {
+        Default,
+        Utf8,
+        Sgr,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum CursorStyle {
+        Default,
+        BlinkBlock,
+        SteadyBlock,
+        BlinkUnderline,
+        SteadyUnderline,
+        BlinkVerticalBar,
+        SteadyVerticalBar,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct AttachOpen {
+        pub protocol_version: u16,
+        pub session_id: String,
+        pub owner: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub reclaim_token: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub lease_generation: Option<u64>,
+        pub rows: u16,
+        pub columns: u16,
+        #[serde(default)]
+        pub mode: AttachMode,
+    }
+
+    impl AttachOpen {
+        #[must_use]
+        pub fn versioned(
+            session_id: impl Into<String>,
+            owner: impl Into<String>,
+            rows: u16,
+            columns: u16,
+        ) -> Self {
+            Self {
+                protocol_version: ATTACH_PROTOCOL_VERSION,
+                session_id: session_id.into(),
+                owner: owner.into(),
+                reclaim_token: None,
+                lease_generation: None,
+                rows,
+                columns,
+                mode: AttachMode::default(),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct TerminalSnapshot {
+        pub rows: u16,
+        pub columns: u16,
+        pub cursor_row: u16,
+        pub cursor_column: u16,
+        pub cursor_visible: bool,
+        pub cursor_style: CursorStyle,
+        pub alternate_screen: bool,
+        pub application_cursor: bool,
+        pub application_keypad: bool,
+        pub bracketed_paste: bool,
+        pub mouse_protocol_mode: MouseProtocolMode,
+        pub mouse_protocol_encoding: MouseProtocolEncoding,
+        pub screen_text: String,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestEnvelope {
@@ -204,5 +458,65 @@ mod tests {
         let (left, right) = UnixStream::pair().unwrap();
         verify_same_uid(&left).unwrap();
         verify_same_uid(&right).unwrap();
+    }
+
+    #[test]
+    fn attach_frame_header_round_trips() {
+        let header = attach::FrameHeader {
+            frame_type: attach::FrameType::AttachOpen,
+            payload_length: 42,
+        };
+        assert_eq!(
+            attach::FrameHeader::decode(header.encode().unwrap()).unwrap(),
+            header
+        );
+    }
+
+    #[test]
+    fn attach_codec_rejects_unknown_and_oversized_frames() {
+        assert_eq!(
+            attach::FrameType::try_from(0x42),
+            Err(attach::AttachCodecError::UnknownFrameType { code: 0x42 })
+        );
+        let output = attach::FrameHeader {
+            frame_type: attach::FrameType::Output,
+            payload_length: MAX_ATTACH_OUTPUT_BYTES + 1,
+        };
+        assert!(matches!(
+            output.encode(),
+            Err(attach::AttachCodecError::PayloadTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn attach_open_defaults_to_exclusive_mode() {
+        let value = serde_json::to_value(attach::AttachOpen::versioned("s", "o", 24, 80)).unwrap();
+        assert_eq!(value["mode"], "exclusive");
+        assert!(value.get("reclaim_token").is_none());
+    }
+
+    #[test]
+    fn attach_frame_contract_matches_canonical_schema() {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../../protocol/schema/qwe-v1.schema.json"))
+                .unwrap();
+        for frame_type in attach::FrameType::ALL {
+            let direction = match frame_type.direction() {
+                attach::Direction::ClientToServer => "client_to_server",
+                attach::Direction::ServerToClient => "server_to_client",
+            };
+            assert_eq!(
+                schema["x-qwe-frame-types"][direction][frame_type.name()],
+                frame_type.code()
+            );
+        }
+        assert_eq!(
+            schema["x-qwe-frame-header"]["maximum_payload_bytes"],
+            MAX_ATTACH_FRAME_PAYLOAD_BYTES
+        );
+        assert_eq!(
+            schema["$defs"]["OutputMetadata"]["properties"]["maximum_output_bytes"]["const"],
+            MAX_ATTACH_OUTPUT_BYTES
+        );
     }
 }

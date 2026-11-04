@@ -12,12 +12,11 @@ test environments. They are targets, not release commitments.
 - One engineer: approximately 10-12 weeks.
 - Two engineers: approximately 6-7 weeks.
 - Three engineers: approximately 4-5 weeks after design acceptance.
-- If ADRs 0011-0015 are not accepted on schedule, the critical path moves by
-  the same delay.
+- ADRs 0011-0015 were accepted during the Stage 0 gate, so the implementation
+  critical path starts at supervisor consolidation.
 
-Work that does not depend on a pending public contract may start immediately:
-PTY/VT primitives, TUI rendering experiments, protocol-schema tooling, and the
-macOS credential/resource capability spikes.
+The canonical protocol schema, stable contract test IDs, and initial macOS/VT
+de-risking are complete.
 
 ## Current Baseline
 
@@ -28,21 +27,21 @@ Implemented with current repository evidence:
 - SQLite Session/Task/Lease state, generation tombstones, and reconciliation.
 - qwed-to-Host epoch fencing and 250 ms inventory polling.
 - One-shot Attach snapshot with 1 MiB journal tail.
-- 13 workspace unit tests pass.
+- 26 workspace tests pass, including five `vt100` capability probes.
 
 Not ready for V0:
 
 - No long-lived terminal output channel or interactive Attach loop.
 - Public resize, complete VT state, and TUI attach are incomplete.
-- Session/Task/Pane semantics and authorization are not frozen.
+- Session/Task/Pane and authorization contracts are accepted, but their runtime
+  migration is incomplete.
 - Durable idempotency, service ownership, credentials, resource limits, and
   forced teardown are incomplete.
 
 ## Critical Path
 
 ```text
-ADR acceptance
-  -> protocol schema and test matrix
+Stage 0 design gate (complete)
   -> supervisor consolidation and typed protocol
   -> long-lived Attach and VT/TUI
   -> authorization, liveness, Task/Lease
@@ -50,9 +49,9 @@ ADR acceptance
   -> release benchmarks and manual acceptance
 ```
 
-The largest uncertainty is not the PTY implementation. It is the coupled
-contract between Attach, ownership, object lifecycle, and worker liveness.
-Those decisions must be fixed before public schemas are frozen.
+The coupled Attach, ownership, object lifecycle, and worker-liveness decisions
+are fixed. Their implementation and cross-platform state-matrix tests remain
+the critical path.
 
 ## Workstreams
 
@@ -72,6 +71,7 @@ with Track E time-boxed inside the first two weeks.
 ### Stage 0: Design Gate and De-risking
 
 Target: 2026-11-05 to 2026-11-06
+Status: Complete on 2026-11-04.
 
 - Accept or revise ADRs 0011-0015.
 - Choose the canonical machine-readable protocol schema and CI drift check.
@@ -82,6 +82,21 @@ Target: 2026-11-05 to 2026-11-06
 
 Exit: no critical-path contract remains `Proposed`; platform unknowns have an
 owner and a decision date.
+
+Evidence:
+
+- ADRs 0011-0015 are Accepted.
+- The canonical schema is
+  [`protocol/schema/qwe-v1.schema.json`](../protocol/schema/qwe-v1.schema.json)
+  and `just protocol-check` validates schema examples, stable test IDs, frame
+  codes, and Rust contract types.
+- Authorization, liveness, Attach, and object-model rows have stable IDs in
+  [Test Matrices](test-matrices.md).
+- macOS Keychain and resource-control probes are recorded in
+  [Experiment 0003](experiments/0003-stage-0-macos-capabilities.md), with owners
+  and decision dates.
+- `vt100` capability and width-resize limitations are covered by
+  `crates/qwe-runtime/tests/vt100_capabilities.rs`.
 
 ### Stage 1: Control Plane and Protocol Foundation
 
@@ -200,19 +215,21 @@ Do not implement during V0:
 V0 may return `unsupported` for a platform capability only when the capability
 matrix explicitly records it. It must not silently degrade and claim success.
 
-## Immediate Actions
+## Stage 1 Entry Actions
 
-1. Accept or revise ADRs 0011-0015 and update their status in the same change.
-2. Create the canonical protocol schema and drift check from ADR 0012.
-3. Assign stable IDs to every authorization and liveness matrix row.
-4. Start the macOS credential and resource-capability spikes.
-5. Begin supervisor consolidation only after the Stage 0 gate closes.
+1. Begin supervisor consolidation from a short-lived branch based on `dev`.
+2. Add the `flock(2)` singleton guard and persistent worker control channels.
+3. Implement event-first worker lifecycle plus the safety-scan fallback.
+4. Add typed control framing and make the Stage 0 drift check mandatory for
+   protocol changes.
+5. Migrate storage and API behavior to explicit Session/Pane/TaskInstance 1:1
+   cardinality and remove the duplicate `task.start` creation path.
 
 ## Schedule Risks
 
 | Risk | Trigger | Mitigation |
 |---|---|---|
-| ADR acceptance slips | Contracts still `Proposed` after Stage 0 | Stop schema freeze; move calendar one-for-one |
+| Late contract change | An accepted ADR is reopened without a superseding record | Require a new ADR and rerun `just protocol-check` with the state-matrix impact |
 | VT engine gaps | Neovim/htop mismatch during Stage 2 | Keep engine behind trait; evaluate `alacritty_terminal` immediately |
 | macOS credentials unresolved | No viable injection path by end of Stage 1 | Narrow V0 support or schedule a dedicated platform block before D3 |
 | macOS resource limits diverge | No equivalent to Linux controls | Define capability matrix early; never fake enforcement |

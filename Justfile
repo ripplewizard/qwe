@@ -70,6 +70,8 @@ doctor:
     printf 'sqlite3=%s\n' "$(version_of sqlite3)"
     printf 'jq=%s\n' "$(version_of jq)"
     printf 'python3=%s\n' "$(if command -v python3 >/dev/null 2>&1; then python3 --version 2>&1; else printf missing; fi)"
+    printf 'python_jsonschema=%s\n' \
+      "$(python3 -c 'import importlib.util; print("available" if importlib.util.find_spec("jsonschema") else "missing")' 2>/dev/null || printf missing)"
     printf 'bash=%s\n' "$(version_of bash)"
     printf 'zsh=%s\n' "$(version_of zsh)"
     printf 'nvim=%s\n' "$(version_of nvim)"
@@ -586,12 +588,44 @@ check-qwe:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
+    python3 "{{ justfile_directory() }}/scripts/check_protocol_schema.py"
 
 build-qwe:
     cargo build --workspace
 
 test-qwe:
     cargo test --workspace
+
+protocol-check:
+    cargo test -p qwe-core accepted_state_machines_match_protocol_schema
+    cargo test -p qwe-protocol
+    python3 "{{ justfile_directory() }}/scripts/check_protocol_schema.py"
+
+stage0-macos-spike:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Darwin" ] || {
+      printf 'stage0-macos-spike must run on Darwin\n' >&2
+      exit 2
+    }
+    scratch="$(mktemp -d "${TMPDIR:-/tmp}/qwe-stage0.XXXXXX")"
+    trap 'rm -rf "$scratch"' EXIT
+    clang -std=c11 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+      -framework Security -framework CoreFoundation \
+      "{{ justfile_directory() }}/tests/fixtures/macos_stage0_probe.c" \
+      -o "$scratch/macos-stage0-probe"
+    "$scratch/macos-stage0-probe"
+
+stage0-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo test -p qwe-runtime --test vt100_capabilities
+    just --justfile "{{ justfile() }}" protocol-check
+    if [ "$(uname -s)" = "Darwin" ]; then
+      just --justfile "{{ justfile() }}" stage0-macos-spike
+    else
+      printf 'macOS Stage 0 platform spike not run on %s\n' "$(uname -s)"
+    fi
 
 t12-host-smoke:
     #!/usr/bin/env bash

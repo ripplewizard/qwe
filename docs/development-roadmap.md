@@ -16,9 +16,10 @@ Exit: clean build, lint, unit tests, T12 smoke, and resilience smoke pass.
 
 ## Milestone D1: Terminal Core
 
-- Accept ADRs 0011-0015 before freezing public Attach and Session/Task schema.
+- Implement the accepted ADRs 0011-0015 contracts without reopening their
+  decisions.
 - Implement the long-lived terminal attach channel and snapshot handoff.
-- Add a machine-readable protocol schema and CI drift check.
+- Keep the canonical machine-readable protocol schema and drift check passing.
 - Convert the ownership and worker-liveness state matrices into integration
   tests, including every rejection branch.
 - Add production `SESSION_RESIZE`.

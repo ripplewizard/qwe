@@ -1,0 +1,635 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:qwe:protocol:v1",
+  "title": "QWE V0 protocol contract",
+  "description": "Canonical JSON Schema for attach payloads and accepted V0 state contracts. The binary attach header is documented in x-qwe-frame-header.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/AttachOpen"
+    },
+    {
+      "$ref": "#/$defs/InputMetadata"
+    },
+    {
+      "$ref": "#/$defs/Resize"
+    },
+    {
+      "$ref": "#/$defs/Ack"
+    },
+    {
+      "$ref": "#/$defs/Detach"
+    },
+    {
+      "$ref": "#/$defs/AttachAccepted"
+    },
+    {
+      "$ref": "#/$defs/TerminalSnapshot"
+    },
+    {
+      "$ref": "#/$defs/OutputMetadata"
+    },
+    {
+      "$ref": "#/$defs/Resized"
+    },
+    {
+      "$ref": "#/$defs/ProcessExited"
+    },
+    {
+      "$ref": "#/$defs/OwnershipRevoked"
+    },
+    {
+      "$ref": "#/$defs/AttachError"
+    }
+  ],
+  "$defs": {
+    "UInt64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "Rows": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "Columns": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "AttachMode": {
+      "type": "string",
+      "enum": [
+        "exclusive",
+        "read_only"
+      ]
+    },
+    "MouseProtocolMode": {
+      "type": "string",
+      "enum": [
+        "none",
+        "press",
+        "press_release",
+        "button_motion",
+        "any_motion"
+      ]
+    },
+    "MouseProtocolEncoding": {
+      "type": "string",
+      "enum": [
+        "default",
+        "utf8",
+        "sgr"
+      ]
+    },
+    "CursorStyle": {
+      "type": "string",
+      "enum": [
+        "default",
+        "blink_block",
+        "steady_block",
+        "blink_underline",
+        "steady_underline",
+        "blink_vertical_bar",
+        "steady_vertical_bar"
+      ]
+    },
+    "AttachOpen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "session_id",
+        "owner",
+        "rows",
+        "columns",
+        "mode"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reclaim_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lease_generation": {
+          "$ref": "#/$defs/UInt64"
+        },
+        "rows": {
+          "$ref": "#/$defs/Rows"
+        },
+        "columns": {
+          "$ref": "#/$defs/Columns"
+        },
+        "mode": {
+          "$ref": "#/$defs/AttachMode"
+        }
+      }
+    },
+    "InputMetadata": {
+      "type": "object",
+      "description": "INPUT payload metadata. The wire payload consists only of raw input bytes without this JSON object.",
+      "additionalProperties": false,
+      "required": [
+        "frame_type",
+        "payload_encoding"
+      ],
+      "properties": {
+        "frame_type": {
+          "const": "INPUT"
+        },
+        "payload_encoding": {
+          "const": "raw"
+        }
+      }
+    },
+    "Resize": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "rows",
+        "columns"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "rows": {
+          "$ref": "#/$defs/Rows"
+        },
+        "columns": {
+          "$ref": "#/$defs/Columns"
+        }
+      }
+    },
+    "Ack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "stream_offset"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "stream_offset": {
+          "$ref": "#/$defs/UInt64"
+        }
+      }
+    },
+    "Detach": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "hold_ttl_ms"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "hold_ttl_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Zero releases immediately; a positive value creates a detached hold."
+        }
+      }
+    },
+    "AttachAccepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "session_id",
+        "owner",
+        "generation",
+        "reclaim_token",
+        "rows",
+        "columns",
+        "stream_offset"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation": {
+          "$ref": "#/$defs/UInt64"
+        },
+        "reclaim_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rows": {
+          "$ref": "#/$defs/Rows"
+        },
+        "columns": {
+          "$ref": "#/$defs/Columns"
+        },
+        "stream_offset": {
+          "$ref": "#/$defs/UInt64"
+        }
+      }
+    },
+    "TerminalSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rows",
+        "columns",
+        "cursor_row",
+        "cursor_column",
+        "cursor_visible",
+        "cursor_style",
+        "alternate_screen",
+        "application_cursor",
+        "application_keypad",
+        "bracketed_paste",
+        "mouse_protocol_mode",
+        "mouse_protocol_encoding",
+        "screen_text",
+        "next_stream_offset"
+      ],
+      "properties": {
+        "rows": {
+          "$ref": "#/$defs/Rows"
+        },
+        "columns": {
+          "$ref": "#/$defs/Columns"
+        },
+        "cursor_row": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65534
+        },
+        "cursor_column": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65534
+        },
+        "cursor_visible": {
+          "type": "boolean"
+        },
+        "cursor_style": {
+          "$ref": "#/$defs/CursorStyle"
+        },
+        "alternate_screen": {
+          "type": "boolean"
+        },
+        "application_cursor": {
+          "type": "boolean"
+        },
+        "application_keypad": {
+          "type": "boolean"
+        },
+        "bracketed_paste": {
+          "type": "boolean"
+        },
+        "mouse_protocol_mode": {
+          "$ref": "#/$defs/MouseProtocolMode"
+        },
+        "mouse_protocol_encoding": {
+          "$ref": "#/$defs/MouseProtocolEncoding"
+        },
+        "screen_text": {
+          "type": "string"
+        },
+        "next_stream_offset": {
+          "$ref": "#/$defs/UInt64"
+        }
+      }
+    },
+    "OutputMetadata": {
+      "type": "object",
+      "description": "OUTPUT payload starts with an eight-byte big-endian stream offset followed by at most 65536 raw PTY bytes. It is not a JSON payload.",
+      "additionalProperties": false,
+      "required": [
+        "frame_type",
+        "offset_bytes",
+        "offset_encoding",
+        "payload_encoding",
+        "maximum_output_bytes"
+      ],
+      "properties": {
+        "frame_type": {
+          "const": "OUTPUT"
+        },
+        "offset_bytes": {
+          "const": 8
+        },
+        "offset_encoding": {
+          "const": "u64_be"
+        },
+        "payload_encoding": {
+          "const": "raw"
+        },
+        "maximum_output_bytes": {
+          "const": 65536
+        }
+      }
+    },
+    "Resized": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "rows",
+        "columns",
+        "stream_offset"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "rows": {
+          "$ref": "#/$defs/Rows"
+        },
+        "columns": {
+          "$ref": "#/$defs/Columns"
+        },
+        "stream_offset": {
+          "$ref": "#/$defs/UInt64"
+        }
+      }
+    },
+    "ProcessExited": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "exit_code",
+        "exit_signal",
+        "stream_offset"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 255
+        },
+        "exit_signal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stream_offset": {
+          "$ref": "#/$defs/UInt64"
+        }
+      }
+    },
+    "OwnershipRevoked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "reason"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "supervisor_restart",
+            "reclaimed",
+            "session_closed"
+          ]
+        }
+      }
+    },
+    "AttachError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "code",
+        "message"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "code": {
+          "type": "string",
+          "enum": [
+            "incompatible_version",
+            "unknown_frame_type",
+            "unsupported_mode",
+            "already_attached",
+            "not_attached",
+            "not_owner",
+            "session_lost",
+            "worker_unreachable",
+            "output_backpressure",
+            "frame_too_large",
+            "worker_protocol_error"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "x-qwe-contract-version": 1,
+  "x-qwe-frame-header": {
+    "frame_type_bytes": 1,
+    "payload_length_bytes": 4,
+    "payload_length_encoding": "u32_be",
+    "maximum_payload_bytes": 1048576
+  },
+  "x-qwe-frame-types": {
+    "client_to_server": {
+      "ATTACH_OPEN": 1,
+      "INPUT": 2,
+      "RESIZE": 3,
+      "ACK": 4,
+      "DETACH": 5
+    },
+    "server_to_client": {
+      "ATTACH_ACCEPTED": 129,
+      "SNAPSHOT": 130,
+      "OUTPUT": 131,
+      "RESIZED": 132,
+      "PROCESS_EXITED": 133,
+      "OWNERSHIP_REVOKED": 134,
+      "ERROR": 135
+    }
+  },
+  "x-qwe-state-machines": {
+    "session": {
+      "states": [
+        "creating",
+        "running",
+        "exited",
+        "lost",
+        "closing",
+        "closed"
+      ],
+      "transitions": [
+        ["creating", "running"],
+        ["creating", "lost"],
+        ["running", "exited"],
+        ["running", "lost"],
+        ["running", "closing"],
+        ["exited", "lost"],
+        ["exited", "closing"],
+        ["closing", "closed"]
+      ]
+    },
+    "task_instance": {
+      "states": [
+        "starting",
+        "running",
+        "exited",
+        "stopped",
+        "lost"
+      ],
+      "transitions": [
+        ["starting", "running"],
+        ["starting", "stopped"],
+        ["starting", "lost"],
+        ["running", "exited"],
+        ["running", "stopped"],
+        ["running", "lost"]
+      ]
+    },
+    "attachment_authority": {
+      "states": [
+        "unattached",
+        "active",
+        "reclaim_grace",
+        "held"
+      ],
+      "transitions": [
+        ["unattached", "active"],
+        ["active", "unattached"],
+        ["active", "reclaim_grace"],
+        ["active", "held"],
+        ["reclaim_grace", "active"],
+        ["reclaim_grace", "unattached"],
+        ["held", "unattached"],
+        ["held", "active"],
+        ["held", "held"]
+      ]
+    },
+    "worker_health": [
+      "healthy",
+      "unreachable",
+      "absent"
+    ],
+    "reconciliation_disposition": [
+      "matched",
+      "orphaned",
+      "conflict"
+    ]
+  },
+  "x-qwe-test-case-ids": [
+    "AUTH-001",
+    "AUTH-002",
+    "AUTH-003",
+    "AUTH-004",
+    "AUTH-005",
+    "AUTH-006",
+    "AUTH-007",
+    "AUTH-008",
+    "AUTH-009",
+    "AUTH-010",
+    "AUTH-011",
+    "AUTH-012",
+    "AUTH-013",
+    "AUTH-014",
+    "AUTH-015",
+    "AUTH-016",
+    "AUTH-017",
+    "AUTH-018",
+    "AUTH-019",
+    "AUTH-020",
+    "AUTH-021",
+    "AUTH-022",
+    "AUTH-023",
+    "AUTH-024",
+    "AUTH-025",
+    "AUTH-026",
+    "AUTH-027",
+    "AUTH-028",
+    "AUTH-029",
+    "AUTH-030",
+    "AUTH-031",
+    "AUTH-032",
+    "AUTH-033",
+    "AUTH-034",
+    "AUTH-035",
+    "AUTH-036",
+    "AUTH-037",
+    "AUTH-038",
+    "AUTH-039",
+    "LIVE-001",
+    "LIVE-002",
+    "LIVE-003",
+    "LIVE-004",
+    "LIVE-005",
+    "LIVE-006",
+    "LIVE-007",
+    "LIVE-008",
+    "LIVE-009",
+    "LIVE-010",
+    "LIVE-011",
+    "LIVE-012",
+    "LIVE-013",
+    "LIVE-014",
+    "LIVE-015",
+    "LIVE-016",
+    "ATTACH-001",
+    "ATTACH-002",
+    "ATTACH-003",
+    "ATTACH-004",
+    "ATTACH-005",
+    "ATTACH-006",
+    "ATTACH-007",
+    "ATTACH-008",
+    "ATTACH-009",
+    "ATTACH-010",
+    "ATTACH-011",
+    "ATTACH-012",
+    "ATTACH-013",
+    "ATTACH-014",
+    "OBJ-001",
+    "OBJ-002",
+    "OBJ-003",
+    "OBJ-004",
+    "OBJ-005",
+    "OBJ-006",
+    "OBJ-007",
+    "OBJ-008",
+    "OBJ-009",
+    "OBJ-010"
+  ]
+}

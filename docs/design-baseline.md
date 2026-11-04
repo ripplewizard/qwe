@@ -13,23 +13,22 @@ history rather than versioned filenames.
 | ID | Decision |
 |---|---|
 | D036 | `qwed` is the sole authority for SQLite Session, Task, and Lease state. |
-| D037 | `qwe-host` is the authority for live worker and PTY/process health. |
-| D038 | `qwed` reconciles Host inventory at startup and every 250 ms while running. |
+| D037 | The V0 target is one `qwed` supervisor authoritative for the public API, SQLite, worker inventory, and control state. |
+| D038 | Startup reconciliation completes before clients are accepted; runtime worker loss is event-first with a maximum 2 second safety scan. |
 | D039 | Worker rediscovery validates socket path, worker PID/start token, and Session ID. |
-| D040 | A missing worker becomes `terminal_lost`; only that Session becomes `lost`. |
+| D040 | A missing or identity-mismatched worker becomes `lost`; a live but unresponsive worker is `unreachable` and is not declared exited. |
+| D053 | Each Session remains in an independent worker process that owns its PTY, process group, VT state, and bounded journal. |
 
-[ADR 0011](adr/0011-consolidate-control-plane.md) proposes replacing the
-separate Host with a qwed supervisor. It remains Proposed; this table describes
-the currently implemented authority model.
+ADRs [0011](adr/0011-consolidate-control-plane.md) through
+[0015](adr/0015-worker-liveness-reconciliation.md) are accepted. The current
+code still uses `qwed` + `qwe-host` and the 250 ms inventory poll; that split
+topology is the migration state, not the V0 contract.
 
-ADRs [0012](adr/0012-terminal-attach-data-plane.md),
-[0013](adr/0013-core-object-model.md),
-[0014](adr/0014-attachment-ownership-authorization.md), and
-[0015](adr/0015-worker-liveness-reconciliation.md) propose the terminal
-channel, object model, authorization matrix, and worker-health contract needed
-before the public Session/Task protocol is frozen.
-
-The detailed Host operations are defined in [IPC Protocol](ipc-protocol.md).
+The accepted terminal channel, object model, authorization matrix, and
+worker-health contract are defined by those ADRs and represented in the
+[canonical protocol schema](../protocol/schema/qwe-v1.schema.json). The current
+one-shot Host operations remain documented in [IPC Protocol](ipc-protocol.md)
+until the Stage 1 migration.
 
 ## 3. Lease Semantics
 
@@ -46,7 +45,7 @@ The detailed Host operations are defined in [IPC Protocol](ipc-protocol.md).
 | ID | Decision |
 |---|---|
 | D046 | The journal is per Session worker, not per client. |
-| D047 | Each Attach gets a private 1 MiB tail snapshot; slow clients cannot block the PTY reader. |
+| D047 | Each Attach gets a private 1 MiB journal tail and, after the Stage 2 cutover, an independent 1 MiB live-output queue. |
 | D048 | Journal tail is diagnostic-only and never a replay format; screen state is authoritative. |
 | D049 | Compact structured VT state with cursor and terminal modes is a D1 requirement. |
 
@@ -81,16 +80,22 @@ separate gap-aware framing contract with VT state checkpoints.
 
 | Failure | Result |
 |---|---|
-| `qwed` SIGKILL | Host/workers continue; startup reconciliation repairs control state |
-| `qwe-host` SIGKILL | Workers continue; Host rediscovery validates identity |
-| Worker SIGKILL | Runtime monitor records `lost` within 250 ms |
-| Host unavailable | Clients receive explicit Host transport errors |
+| `qwed` SIGKILL | Workers continue; supervisor restart reconciles worker inventory |
+| Worker SIGKILL | Lifecycle event records `lost`; safety scan covers missed events |
+| Worker process alive but unresponsive | Health becomes `unreachable`; Session/Task are not falsely marked exited |
+| Supervisor unavailable | Clients receive an explicit transport error |
 | OS reboot | Out of V0 scope |
+
+The current migration topology still observes Host death and worker death
+through Host inventory polling every 250 ms. Stage 1 replaces that path with the
+accepted event-first behavior above.
 
 ## 8. Development Gates
 
 - Automated POC evidence exists on Linux and macOS.
 - Manual POC visual sign-off remains a non-blocking audit task.
+- Stage 0 design acceptance, stable test IDs, protocol-schema drift checking,
+  macOS platform spikes, and VT capability confirmation are complete.
 - D1 adds Resize and complete VT state.
 - D2 adds durable idempotency and Task control.
 - D3 adds Key Manager, Pane limits, teardown, services, and security negatives.

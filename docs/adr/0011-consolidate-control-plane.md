@@ -1,11 +1,11 @@
 # ADR 0011: Consolidate qwed and qwe-host
 
-Status: Proposed
+Status: Accepted
 Date: 2026-11-04
-Implementation state: Not implemented. The accepted topology in ADRs 0006 and
-0009 remains authoritative until this proposal is accepted and migrated. This
-ADR also depends on the attach and authorization contracts in ADRs 0012 and
-0014.
+Implementation state: Accepted target; not implemented. The current
+`qwed` + `qwe-host` topology remains the migration baseline until the Stage 1
+cutover completes. The attach and authorization contracts in ADRs 0012 and
+0014 are accepted as dependencies.
 
 ## Context
 
@@ -155,8 +155,8 @@ invented these individual mechanisms.
 
 ## Migration Plan
 
-1. Record this ADR as Proposed and keep the current Design Baseline as the
-   implemented state.
+1. Record this ADR as Accepted while keeping the current split topology as the
+   implemented migration state.
 2. Add supervisor singleton lock and worker control-connection events.
 3. Move Host inventory and worker management into qwed behind existing public
    operations.

@@ -1,8 +1,9 @@
 # ADR 0015: Worker Liveness and Reconciliation
 
-Status: Proposed
+Status: Accepted
 Date: 2026-11-04
-Implementation state: Not implemented under the consolidated supervisor.
+Implementation state: Accepted target; not implemented under the consolidated
+supervisor.
 
 ## Context
 
