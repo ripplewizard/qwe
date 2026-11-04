@@ -29,6 +29,10 @@ The daemon and Host manager are replaceable. Session workers are the only
 owners of live terminal and process resources. A client never owns a PTY or
 process group.
 
+[ADR 0011](adr/0011-consolidate-control-plane.md) proposes consolidating qwed
+and Host into one supervisor for V0. It remains Proposed; this document and the
+implemented topology stay authoritative until the migration completes.
+
 This ownership boundary is exercised by `just t12-host-smoke`.
 
 Current production implementation includes durable session workers, Host epoch

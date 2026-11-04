@@ -26,6 +26,8 @@ quality or final POC audit as complete until review is signed.
 
 These are implementation work, not reasons to delay development:
 
+- ADR 0011 proposes merging qwed and Host, with event-driven worker lifecycle
+  and connection-bound active attachment ownership. It is not implemented yet.
 - `SESSION_RESIZE` is not implemented in the production protocol.
 - Attach exposes screen text and journal tail, but not the complete cursor,
   terminal modes, alternate-screen state, mouse mode, or paste mode.

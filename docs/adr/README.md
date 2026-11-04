@@ -15,3 +15,4 @@ that links to the replaced decision.
 | [0008](0008-concurrent-attach-latency.md) | Concurrent Attach latency budget | Accepted |
 | [0009](0009-control-plane-authority.md) | Control-plane authority and runtime reconciliation | Accepted |
 | [0010](0010-product-capability-scope.md) | API keys, Pane limits, and forced teardown scope | Accepted |
+| [0011](0011-consolidate-control-plane.md) | Consolidate qwed and qwe-host | Proposed |

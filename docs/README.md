@@ -10,6 +10,8 @@
 - [Extension Architecture](extension-architecture.md): deferred capabilities
   and architecture reservations.
 - [ADR Index](adr/README.md): accepted decisions and consequences.
+- [ADR 0011](adr/0011-consolidate-control-plane.md): proposed V0 control-plane
+  consolidation; not yet implemented.
 
 ## Development
 
