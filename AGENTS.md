@@ -20,6 +20,8 @@ architecture, POC evidence, and extension boundaries.
 - `crates/` and `apps/` contain the production Rust workspace.
 - `poc/{rust,go,cpp}/` contains equivalent POC implementations; shared inputs,
   specifications, evidence, and reports stay outside language directories.
+- The active POC evidence worktree is `/Users/huangjian/project/uranus/bianca-poc`
+  on branch `poc`. Do not create POC run artifacts in the `dev` worktree.
 
 ## Build, Test, and Development Commands
 

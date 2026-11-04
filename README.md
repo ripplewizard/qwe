@@ -23,6 +23,11 @@ gaps and the implementation start gate.
 - `apps/`: CLI, daemon, and durable host binaries
 - `poc/`: cross-language POC harness and historical evidence
 
+The working POC evidence checkout is
+`/Users/huangjian/project/uranus/bianca-poc` on branch `poc`. The `dev`
+worktree is reserved for production development and ignores generated POC
+results.
+
 ## Rust Commands
 
 ```sh

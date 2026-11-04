@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 /target/
+/poc/results/
 poc/build/
 poc/rust/target/
 poc/results/**/tmp/
