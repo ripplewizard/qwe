@@ -43,6 +43,8 @@
   reconciliation, and concurrent Attach.
 - [Experiment 0003](experiments/0003-stage-0-macos-capabilities.md): macOS
   Secret Provider/resource-control and VT capability probes.
+- [Experiment 0004](experiments/0004-lifecycle-regression-fixes.md): lifecycle
+  transaction, teardown, identity, and reconciliation fixes on both platforms.
 
 ## Reading Order
 

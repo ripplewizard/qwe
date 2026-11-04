@@ -48,6 +48,21 @@ the following accepted contracts are not yet implemented:
 The contract is stable; implementation status is tracked separately. A schema
 entry does not claim that a runtime behavior is complete.
 
+## Recently Closed Lifecycle Defects
+
+The following pre-Stage-1 defects are fixed and covered by real-process
+regression tests:
+
+- Session/Task creation rollback and orphan-runtime adoption.
+- Terminal SessionId/TaskId reuse.
+- Premature `closed` reporting.
+- Task stop closing the Session instead of preserving its final snapshot.
+- Exited Session worker-loss reconciliation.
+- No-op detach success; the operation now returns `unsupported_operation`.
+- Stale reconciliation overwriting a newer terminal lifecycle state.
+
+See [Experiment 0004](experiments/0004-lifecycle-regression-fixes.md).
+
 ## Known Development Gaps
 
 These are implementation work, not reasons to delay development:

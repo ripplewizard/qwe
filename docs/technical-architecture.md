@@ -243,7 +243,8 @@ The process start token is mandatory. PID alone is never sufficient.
 - High-frequency terminal bytes are not written to SQLite per frame.
 - Requests carry idempotency keys, but durable deduplication and response
   replay are not implemented until Stage 3.
-- Startup reconciliation marks missing Sessions and Tasks as `lost`.
+- Startup reconciliation marks missing running or exited Sessions as `lost`;
+  an exited Task remains `exited`.
 - Lifecycle events identify vanished workers; the safety scan covers missed
   events without treating an unresponsive but live worker as exited.
 - The current migration topology retains the 250 ms inventory poll until the

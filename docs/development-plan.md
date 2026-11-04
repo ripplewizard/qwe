@@ -27,7 +27,7 @@ Implemented with current repository evidence:
 - SQLite Session/Task/Lease state, generation tombstones, and reconciliation.
 - qwed-to-Host epoch fencing and 250 ms inventory polling.
 - One-shot Attach snapshot with 1 MiB journal tail.
-- 26 workspace tests pass, including five `vt100` capability probes.
+- 28 workspace tests pass, including five `vt100` capability probes.
 
 Not ready for V0:
 
@@ -103,6 +103,7 @@ Evidence:
 ### Stage 1: Control Plane and Protocol Foundation
 
 Target: 2026-11-09 to 2026-11-13
+Status: In progress; pre-cutover lifecycle regressions are fixed.
 
 - Implement the qwed supervisor and remove the separate Host runtime path.
 - Add `flock(2)` singleton protection and persistent worker control channels.

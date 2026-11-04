@@ -103,8 +103,8 @@ accepted event-first supervisor and safety scan.
 
 `qwed` reconciles Host inventory every 250 ms while running. Host inventory
 checks every worker; an unavailable worker is removed and reported as
-`terminal_lost`. Reconciliation then marks missing running Sessions and Tasks
-as `lost`.
+`terminal_lost`. Reconciliation marks missing running or exited Sessions as
+`lost`; an exited Task remains `exited`.
 
 Host restart scans its private runtime directory. A worker is accepted only
 when:
