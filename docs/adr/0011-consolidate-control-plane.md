@@ -93,10 +93,22 @@ Task or Session.
 Supervisor restart clears all active connections. To prevent an original client
 from losing a race to an unrelated client during the restart window:
 
-- The first attach returns an unguessable reclaim token.
-- qwed persists only its hash plus the logical owner identity.
-- On restart, a configurable short grace period gives the prior token priority.
-- Clients without the prior token cannot claim during that grace period.
+- qwed generates each reclaim token from a CSPRNG with at least 128 bits of
+  entropy. It never uses counters, timestamps, or predictable identifiers.
+- A cryptographic hash of the token is SHA-256 or stronger. qwed persists only
+  that hash plus the logical owner identity in the same transaction that grants
+  active ownership, before acknowledging an Attach. The raw token is returned
+  once, retained only in client memory, and never logged.
+- Token verification uses constant-time comparison.
+- The grace period is per Session and applies only to Sessions that held an
+  active attachment when the supervisor stopped. A persisted active-attachment
+  record recovered at startup enters grace; unaffected Sessions follow normal
+  Attach semantics.
+- Within the grace period, only the matching reclaim token may resume the
+  Session. Other clients cannot claim it.
+- After the grace period, a Session without a detached hold falls back to
+  first-valid-Attach-wins semantics. Stale tokens receive no priority. A
+  detached hold continues to use the normal Lease claim/takeover rules.
 - The grace duration is provisional until measured; it is not a Lease.
 
 ## Journal Contract
@@ -136,8 +148,12 @@ invented these individual mechanisms.
    operations.
 4. Add restart attachment reclaim tokens and grace-period tests.
 5. Remove Host epoch, Host registration, and periodic inventory RPC.
-6. Preserve old protocol compatibility until worker/session migration completes.
-7. Accept a follow-up baseline update only after Linux and macOS recovery,
+6. Do not add a pre-release Host protocol compatibility layer. Stop existing
+   development Sessions and recreate runtime state during the one-time
+   topology cutover.
+7. Replace the polling-era 250 ms worker-loss gate with the event-driven and
+   fallback-scan gates defined in the Testing Strategy.
+8. Accept a follow-up baseline update only after Linux and macOS recovery,
    concurrency, and security tests pass.
 
 ## Acceptance Required
@@ -150,6 +166,8 @@ Adoption requires explicit decisions on all of the following:
   generation-fenced SQLite Lease only for detached holds.
 - Treat the bounded journal as diagnostic-only.
 - Fund a macOS Secret Provider spike before D3 implementation.
+- Treat the topology cutover as pre-release and permit disposable development
+  runtime state.
 
 ## Alternatives Considered
 
@@ -178,5 +196,6 @@ loss on daemon failure.
 - Worker lifetime remains independent from supervisor restarts.
 - Runtime worker loss is event-driven, with a low-frequency safety scan.
 - Supervisor restart needs reclaim-token protection for attachment ownership.
+- No compatibility adapter is needed for pre-release Host protocol state.
 - Linux and macOS orphan behavior remain intentionally different and documented.
 - macOS Secret Provider delivery remains an explicit open decision.

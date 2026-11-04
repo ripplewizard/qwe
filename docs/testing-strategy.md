@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Status: Active
-Date: 2026-11-03
+Date: 2026-11-04
 
 ## Test Layers
 
@@ -34,7 +34,10 @@ the host that generated it.
 
 No aggregate score may override a failed hard gate.
 
-## Performance Gates
+## Current Performance Gates
+
+These gates describe the implemented polling topology and remain active until
+the proposed consolidation is accepted and migrated.
 
 - Eight concurrent clients, 64 Attach requests during continuous output.
 - Zero failed requests.
@@ -47,6 +50,28 @@ No aggregate score may override a failed hard gate.
 - Released Lease generation never moves backwards.
 
 Release-mode and long-duration measurements are required before V0.
+
+## ADR 0011 Acceptance Gates
+
+These gates apply only after the proposed control-plane consolidation is
+implemented. They are planned acceptance criteria, not current results.
+
+- A worker exit delivered through `SIGCHLD` or control-connection EOF becomes
+  `lost` with P95 at or below 50 ms.
+- A deliberately dropped lifecycle event is found by the safety scan. The scan
+  interval is at most 2 seconds and the fallback result is visible within
+  2.5 seconds.
+- Reclaim tokens contain at least 128 CSPRNG-generated bits. SQLite stores only
+  a cryptographic hash, comparison is constant-time, and the raw token never
+  appears in logs or evidence.
+- A valid reclaim token restores the original Session attachment during its
+  per-Session grace period; invalid, stale, or mismatched tokens are rejected.
+- An active grace period for one Session does not delay Attach for unaffected
+  Sessions.
+- After grace expiry, first-valid-Attach-wins applies unless a detached hold is
+  active. A stale token gives no priority and Lease fencing remains unchanged.
+- The migration uses a clean pre-release runtime cutover and does not require
+  compatibility with the retired Host protocol.
 
 ## Evidence Policy
 
