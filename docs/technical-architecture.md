@@ -159,8 +159,8 @@ HOST_LIST
 PING
 SESSION_CREATE
 SESSION_ATTACH
-SESSION_DETACH
 SESSION_INPUT
+TASK_STOP
 SESSION_CLOSE
 ```
 
@@ -180,9 +180,12 @@ client's response writer. The journal tail may begin mid-escape-sequence and is
 therefore diagnostic data, while the VT screen snapshot is authoritative.
 
 In the V0 implementation, `SESSION_STATUS`, `SESSION_CREATE`, `SESSION_INPUT`,
-and `SESSION_DETACH` return lightweight metadata only. `SESSION_ATTACH` is the
+and `TASK_STOP` return lightweight metadata only. `SESSION_ATTACH` is the
 only operation that returns the VT screen and journal tail, preventing status
 polling from serializing large responses ahead of PTY input.
+
+The current `session detach` CLI command returns `unsupported_operation` until
+the Stage 2 channel provides an actual attachment-state transition.
 
 [ADR 0012](adr/0012-terminal-attach-data-plane.md) is accepted. Stage 2 replaces
 one-shot Attach, input, resize, and detach calls with the long-lived channel.
@@ -238,7 +241,8 @@ The process start token is mandatory. PID alone is never sufficient.
 - Migrations are monotonic and transactional.
 - A newer schema is rejected by older binaries.
 - High-frequency terminal bytes are not written to SQLite per frame.
-- Mutating requests retain idempotency keys to prevent duplicate tasks.
+- Requests carry idempotency keys, but durable deduplication and response
+  replay are not implemented until Stage 3.
 - Startup reconciliation marks missing Sessions and Tasks as `lost`.
 - Lifecycle events identify vanished workers; the safety scan covers missed
   events without treating an unresponsive but live worker as exited.

@@ -1,5 +1,7 @@
 use clap::Parser;
-use qwe_core::{LeaseRecord, ProcessIdentity, SessionRecord, TaskId, TaskRecord, TaskState};
+use qwe_core::{
+    LeaseRecord, ProcessIdentity, SessionRecord, SessionState, TaskId, TaskRecord, TaskState,
+};
 use qwe_protocol::{
     PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope, ResponseEnvelope, read_frame,
     validate_version, verify_same_uid, write_frame,
@@ -37,6 +39,7 @@ struct Context {
 #[derive(Default)]
 struct Reconciliation {
     live_sessions: usize,
+    orphaned_sessions: u64,
     lost_sessions: u64,
     exited_tasks: u64,
     lost_tasks: u64,
@@ -191,43 +194,69 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
         .and_then(Value::as_str)
         .ok_or_else(|| error("invalid_request", "missing session_id"))?
         .to_string();
-    let mut status = host_call(context, "SESSION_CREATE", payload)?;
-    let identity = parse_identity(&status)?;
-    let now = now_ms();
-    let state = if status.get("running").and_then(Value::as_bool) == Some(true) {
-        "running"
-    } else {
-        "exited"
-    };
     let mut store = context
         .store
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let existing_task = store
-        .find_task_for_session(&session_id)
-        .map_err(storage_error)?;
-    store
-        .upsert_session(&session_record(&session_id, &status, state, now)?)
-        .map_err(storage_error)?;
-    let task_id = if let Some(task) = existing_task {
-        task.id
-    } else {
+    if let Some(existing) = store.find_session(&session_id).map_err(storage_error)? {
+        return Err(error(
+            "already_exists",
+            format!(
+                "session '{session_id}' already exists in state '{}'",
+                existing.state
+            ),
+        ));
+    }
+
+    let mut status = host_call(context, "SESSION_CREATE", payload)?;
+    let persisted = (|| {
+        let identity = parse_identity(&status)?;
+        let now = now_ms();
+        let running = status.get("running").and_then(Value::as_bool) == Some(true);
+        let session_state = if running { "running" } else { "exited" };
+        let task_state = if running {
+            TaskState::Running
+        } else {
+            TaskState::Exited
+        };
         let task_id = TaskId::new();
         store
-            .insert_task(&TaskRecord {
-                id: task_id.clone(),
-                session_id: session_id.clone(),
-                identity,
-                state: TaskState::Running,
-                exit_code: None,
-                exit_signal: None,
-                started_at_ms: now,
-                ended_at_ms: None,
-            })
+            .insert_created_session(
+                &session_record(&session_id, &status, session_state, now)?,
+                &TaskRecord {
+                    id: task_id.clone(),
+                    session_id: session_id.clone(),
+                    identity,
+                    state: task_state,
+                    exit_code: status
+                        .get("exit_code")
+                        .and_then(Value::as_i64)
+                        .map(|value| value as i32),
+                    exit_signal: status
+                        .get("exit_signal")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    started_at_ms: now,
+                    ended_at_ms: (!running).then_some(now),
+                },
+            )
             .map_err(storage_error)?;
-        task_id
-    };
-    status["task_id"] = json!(task_id);
+        status["task_id"] = json!(task_id);
+        Ok::<(), ProtocolErrorBody>(())
+    })();
+    if let Err(failure) = persisted {
+        let cleanup = host_call(context, "SESSION_CLOSE", json!({"session_id": session_id}));
+        if let Err(cleanup_failure) = cleanup {
+            return Err(error(
+                &failure.code,
+                format!(
+                    "{}; rollback also failed: {}: {}",
+                    failure.message, cleanup_failure.code, cleanup_failure.message
+                ),
+            ));
+        }
+        return Err(failure);
+    }
     Ok(status)
 }
 
@@ -236,6 +265,12 @@ fn update_task_from_status(
     task: &TaskRecord,
     status: &Value,
 ) -> Result<TaskRecord, ProtocolErrorBody> {
+    if matches!(
+        task.state,
+        TaskState::Exited | TaskState::Stopped | TaskState::Lost
+    ) {
+        return Ok(task.clone());
+    }
     let running = status
         .get("running")
         .and_then(Value::as_bool)
@@ -293,7 +328,11 @@ fn task_status(context: &Context, payload: &Value) -> Result<Value, ProtocolErro
         .upsert_session(&session_record(
             &task.session_id,
             &status,
-            task.state.as_str(),
+            if status.get("running").and_then(Value::as_bool) == Some(true) {
+                "running"
+            } else {
+                "exited"
+            },
             now_ms(),
         )?)
         .map_err(storage_error)?;
@@ -318,13 +357,31 @@ fn task_stop(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorB
         .find_task(&id)
         .map_err(storage_error)?
         .ok_or_else(|| error("not_found", "task not found"))?;
-    host_call(
-        context,
-        "SESSION_CLOSE",
-        json!({"session_id": task.session_id}),
-    )?;
+    let status = host_call(context, "TASK_STOP", json!({"session_id": task.session_id}))?;
+    let exit_code = status
+        .get("exit_code")
+        .and_then(Value::as_i64)
+        .map(|value| value as i32);
+    let exit_signal = status
+        .get("exit_signal")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     store
-        .update_task(&task.id, TaskState::Stopped, None, None, Some(now_ms()))
+        .update_task(
+            &task.id,
+            TaskState::Stopped,
+            exit_code,
+            exit_signal,
+            Some(now_ms()),
+        )
+        .map_err(storage_error)?;
+    store
+        .upsert_session(&session_record(
+            &task.session_id,
+            &status,
+            "exited",
+            now_ms(),
+        )?)
         .map_err(storage_error)?;
     let task = store
         .find_task(&task.id)
@@ -444,7 +501,14 @@ fn reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::error::Er
             .get("running")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let Some(existing) = store.find_session(session_id)? else {
+            report.orphaned_sessions += 1;
+            continue;
+        };
         let state = if running { "running" } else { "exited" };
+        if !session_transition_is_valid(&existing.state, state) {
+            continue;
+        }
         let record = session_record(session_id, status, state, now).map_err(|failure| {
             std::io::Error::other(format!("{}: {}", failure.code, failure.message))
         })?;
@@ -465,6 +529,30 @@ fn reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::error::Er
         }
     }
     Ok(report)
+}
+
+fn session_transition_is_valid(current: &str, next: &str) -> bool {
+    if current == next {
+        return true;
+    }
+    let current = match current {
+        "creating" => SessionState::Creating,
+        "running" => SessionState::Running,
+        "exited" => SessionState::Exited,
+        "lost" => SessionState::Lost,
+        "closing" | "stopped" => SessionState::Closing,
+        "closed" => SessionState::Closed,
+        _ => return false,
+    };
+    let next = match next {
+        "running" => SessionState::Running,
+        "exited" => SessionState::Exited,
+        "lost" => SessionState::Lost,
+        "closing" => SessionState::Closing,
+        "closed" => SessionState::Closed,
+        _ => return false,
+    };
+    current.can_transition_to(next)
 }
 
 fn client_operation(
@@ -522,19 +610,22 @@ fn client_operation(
                 .find_task_for_session(&session_id)
                 .map_err(storage_error)?
             {
-                store
-                    .update_task(&task.id, TaskState::Stopped, None, None, Some(now_ms()))
-                    .map_err(storage_error)?;
+                if task.state == TaskState::Running {
+                    store
+                        .update_task(&task.id, TaskState::Stopped, None, None, Some(now_ms()))
+                        .map_err(storage_error)?;
+                }
             }
             if let Some(mut session) = store.find_session(&session_id).map_err(storage_error)? {
-                session.state = "stopped".into();
+                session.state = "closed".into();
                 session.updated_at_ms = now_ms();
                 store.upsert_session(&session).map_err(storage_error)?;
             }
             Ok(result)
         }
-        "SESSION_STATUS" | "SESSION_ATTACH" | "SESSION_INPUT" | "SESSION_DETACH" | "PING"
-        | "HOST_LIST" => host_call(context, &request.operation, request.payload.clone()),
+        "SESSION_STATUS" | "SESSION_ATTACH" | "SESSION_INPUT" | "PING" | "HOST_LIST" => {
+            host_call(context, &request.operation, request.payload.clone())
+        }
         _ => Err(error("unsupported_operation", request.operation.clone())),
     }
 }
@@ -596,6 +687,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = json!({
         "live_sessions": report.live_sessions,
+        "orphaned_sessions": report.orphaned_sessions,
         "lost_sessions": report.lost_sessions,
         "exited_tasks": report.exited_tasks,
         "lost_tasks": report.lost_tasks,
@@ -612,6 +704,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) = json!({
                     "live_sessions": report.live_sessions,
+                    "orphaned_sessions": report.orphaned_sessions,
                     "lost_sessions": report.lost_sessions,
                     "exited_tasks": report.exited_tasks,
                     "lost_tasks": report.lost_tasks,

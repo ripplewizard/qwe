@@ -17,10 +17,12 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const JOURNAL_LIMIT: usize = 16 * 1024 * 1024;
 const ATTACH_TAIL_BYTES: usize = 1024 * 1024;
+const TASK_STOP_GRACE: Duration = Duration::from_secs(1);
+const TASK_STOP_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Parser)]
 struct Args {
@@ -314,7 +316,7 @@ impl Host {
                 let id = session_id(request);
                 HostAction::Done(self.create(&id, &request.payload))
             }
-            "SESSION_STATUS" | "SESSION_ATTACH" | "SESSION_INPUT" | "SESSION_DETACH"
+            "SESSION_STATUS" | "SESSION_ATTACH" | "SESSION_INPUT" | "TASK_STOP"
             | "SESSION_CLOSE" => {
                 let id = session_id(request);
                 let Some(handle) = self.sessions.get(&id) else {
@@ -496,11 +498,78 @@ impl WorkerSession {
         Ok(self.status(session_id))
     }
 
-    fn close(&self, session_id: &str) -> Value {
-        unsafe {
-            libc::kill(-(self.pid as libc::pid_t), libc::SIGTERM);
+    fn signal_process_group(&self, signal: libc::c_int) -> Result<(), ProtocolErrorBody> {
+        let result = unsafe { libc::kill(-(self.pid as libc::pid_t), signal) };
+        if result == 0 {
+            return Ok(());
         }
-        json!({"session_id": session_id, "state": "closed"})
+        let failure = std::io::Error::last_os_error();
+        if failure.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(());
+        }
+        Err(error(
+            "signal_failed",
+            format!(
+                "failed to signal process group {}: {failure}",
+                self.identity.pgid
+            ),
+        ))
+    }
+
+    fn wait_for_exit(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while self.running.load(Ordering::SeqCst) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        !self.running.load(Ordering::SeqCst)
+    }
+
+    fn process_group_exists(&self) -> bool {
+        let result = unsafe { libc::kill(-(self.identity.pgid as libc::pid_t), 0) };
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    fn wait_for_process_group_exit(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while self.process_group_exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        !self.process_group_exists()
+    }
+
+    fn stop_task(&self, session_id: &str) -> Result<Value, ProtocolErrorBody> {
+        if self.process_group_exists() {
+            self.signal_process_group(libc::SIGTERM)?;
+            if !self.wait_for_process_group_exit(TASK_STOP_GRACE) {
+                self.signal_process_group(libc::SIGKILL)?;
+                if !self.wait_for_process_group_exit(TASK_STOP_WAIT) {
+                    return Err(error(
+                        "task_stop_timeout",
+                        format!(
+                            "task process group {} did not exit after SIGKILL",
+                            self.identity.pgid
+                        ),
+                    ));
+                }
+            }
+        }
+        if !self.wait_for_exit(TASK_STOP_WAIT) {
+            return Err(error(
+                "task_status_timeout",
+                "task process group exited but terminal status did not settle",
+            ));
+        }
+        Ok(self.status(session_id))
+    }
+
+    fn close(&self, session_id: &str) -> Result<Value, ProtocolErrorBody> {
+        let status = self.stop_task(session_id)?;
+        Ok(json!({
+            "session_id": session_id,
+            "state": "closed",
+            "exit_code": status.get("exit_code"),
+            "exit_signal": status.get("exit_signal")
+        }))
     }
 }
 
@@ -511,10 +580,11 @@ fn worker_handle(
     payload: &Value,
 ) -> Result<Value, ProtocolErrorBody> {
     match operation {
-        "WORKER_HELLO" | "SESSION_STATUS" | "SESSION_DETACH" => Ok(session.status(session_id)),
+        "WORKER_HELLO" | "SESSION_STATUS" => Ok(session.status(session_id)),
         "SESSION_ATTACH" => Ok(session.snapshot(session_id)),
         "SESSION_INPUT" => session.input(session_id, payload),
-        "SESSION_CLOSE" => Ok(session.close(session_id)),
+        "TASK_STOP" => session.stop_task(session_id),
+        "SESSION_CLOSE" => session.close(session_id),
         _ => Err(error("unsupported_operation", operation)),
     }
 }
@@ -605,14 +675,16 @@ fn serve_host(
                 ));
             }
             if let Some(session_id) = remove_session {
-                host.lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .sessions
-                    .remove(&session_id);
-                unsafe {
-                    libc::kill(worker_pid as libc::pid_t, libc::SIGTERM);
+                if result.is_ok() {
+                    host.lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .sessions
+                        .remove(&session_id);
+                    unsafe {
+                        libc::kill(worker_pid as libc::pid_t, libc::SIGTERM);
+                    }
+                    let _ = fs::remove_file(&socket);
                 }
-                let _ = fs::remove_file(&socket);
             }
             result
         }

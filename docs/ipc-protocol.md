@@ -90,7 +90,7 @@ SESSION_CREATE
 SESSION_STATUS
 SESSION_ATTACH
 SESSION_INPUT
-SESSION_DETACH
+TASK_STOP
 SESSION_CLOSE
 ```
 
@@ -116,7 +116,11 @@ when:
 ## 5. Session Worker Protocol
 
 Worker operations are `WORKER_HELLO`, `SESSION_STATUS`, `SESSION_ATTACH`,
-`SESSION_INPUT`, and `SESSION_CLOSE`.
+`SESSION_INPUT`, `TASK_STOP`, and `SESSION_CLOSE`.
+
+The current CLI still exposes `session detach`, but the operation returns
+`unsupported_operation` until the Stage 2 Attach channel defines an actual
+authority transition. A no-op success is not accepted.
 
 `SESSION_ATTACH` returns a bounded screen snapshot and at most the newest
 1 MiB journal tail. The journal tail is opaque raw bytes; the screen snapshot

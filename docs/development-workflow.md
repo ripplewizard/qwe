@@ -27,9 +27,11 @@ continue feature work on them.
 5. Run `just protocol-check` for protocol, state, or test-contract changes.
 6. Run `just t12-host-smoke` and `just resilience-smoke` for ownership,
    persistence, concurrency, or protocol changes.
-7. Update the state matrices and machine-readable protocol schema together for
+7. Run `just stage1-regression-smoke` for Session/Task lifecycle or
+   reconciliation changes.
+8. Update the state matrices and machine-readable protocol schema together for
    contract changes.
-8. Merge back to `dev` only after validation.
+9. Merge back to `dev` only after validation.
 
 ## Commit Rules
 

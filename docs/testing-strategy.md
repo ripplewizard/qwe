@@ -18,6 +18,7 @@ Date: 2026-11-04
 just check-qwe
 just protocol-check
 just stage0-check
+just stage1-regression-smoke
 just t12-host-smoke
 just resilience-smoke
 just verify-linux-results

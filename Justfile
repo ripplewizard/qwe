@@ -627,6 +627,218 @@ stage0-check:
       printf 'macOS Stage 0 platform spike not run on %s\n' "$(uname -s)"
     fi
 
+stage1-regression-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-host
+    run_root="$(mktemp -d "/tmp/qwe-stage1-regression.XXXXXX")"
+    host_socket="$run_root/host.sock"
+    client_socket="$run_root/client.sock"
+    store_path="$run_root/store.sqlite"
+    host_pid=""
+    qwed_pid=""
+    worker_pid=""
+    close_pgid=""
+
+    cleanup_regression() {
+      target/debug/qwe --socket "$client_socket" session close task-stop-case \
+        >/dev/null 2>&1 || true
+      target/debug/qwe --socket "$client_socket" session close close-ignore \
+        >/dev/null 2>&1 || true
+      if [ -n "$close_pgid" ]; then
+        kill -KILL -- "-$close_pgid" 2>/dev/null || true
+      fi
+      if [ -n "$worker_pid" ]; then
+        kill -KILL "$worker_pid" 2>/dev/null || true
+      fi
+      if [ -n "$qwed_pid" ]; then
+        kill -TERM "$qwed_pid" 2>/dev/null || true
+        wait "$qwed_pid" 2>/dev/null || true
+      fi
+      if [ -n "$host_pid" ]; then
+        kill -TERM "$host_pid" 2>/dev/null || true
+        wait "$host_pid" 2>/dev/null || true
+      fi
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_regression EXIT
+
+    target/debug/qwe-host --socket "$host_socket" \
+      >"$run_root/host.log" 2>&1 &
+    host_pid=$!
+    for _ in $(seq 1 200); do
+      [ -S "$host_socket" ] && break
+      sleep 0.02
+    done
+    [ -S "$host_socket" ]
+
+    python3 -c 'import os,sys; os.setsid(); os.execv(sys.argv[1],sys.argv[1:])' \
+      target/debug/qwed --socket "$client_socket" --host-socket "$host_socket" \
+      --store "$store_path" >"$run_root/qwed.log" 2>&1 &
+    qwed_pid=$!
+    for _ in $(seq 1 200); do
+      target/debug/qwe --socket "$client_socket" ping >/dev/null 2>&1 && break
+      sleep 0.02
+    done
+    target/debug/qwe --socket "$client_socket" ping >/dev/null
+    printf 'regression: daemons ready\n'
+
+    # A SQLite task failure must not leave a live or persisted Session.
+    sqlite3 "$store_path" \
+      "CREATE TRIGGER reject_task_insert BEFORE INSERT ON tasks BEGIN SELECT RAISE(ABORT, 'injected task insert failure'); END;"
+    set +e
+    target/debug/qwe --socket "$client_socket" session create transaction-failure sh \
+      >"$run_root/transaction-failure.out" 2>"$run_root/transaction-failure.err"
+    transaction_status=$?
+    set -e
+    sqlite3 "$store_path" "DROP TRIGGER reject_task_insert;"
+    printf 'regression: persistence failure exit=%s\n' "$transaction_status"
+    [ "$transaction_status" -ne 0 ]
+    grep -Fq 'persistence_failure' "$run_root/transaction-failure.err" || {
+      cat "$run_root/transaction-failure.err" >&2
+      exit 1
+    }
+    set +e
+    target/debug/qwe --socket "$client_socket" session attach transaction-failure \
+      >"$run_root/transaction-failure-attach.out" 2>"$run_root/transaction-failure-attach.err"
+    transaction_attach_status=$?
+    set -e
+    printf 'regression: attach after persistence failure exit=%s\n' \
+      "$transaction_attach_status"
+    [ "$transaction_attach_status" -ne 0 ]
+    grep -Fq 'terminal_lost' "$run_root/transaction-failure-attach.err"
+    sleep 0.5
+    [ "$(sqlite3 "$store_path" "select count(*) from sessions where id='transaction-failure';")" -eq 0 ]
+    [ "$(sqlite3 "$store_path" "select count(*) from tasks where session_id='transaction-failure';")" -eq 0 ]
+    printf 'regression: transaction rollback PASS\n'
+
+    # A terminal SessionId cannot be resurrected or reuse its old TaskId.
+    target/debug/qwe --socket "$client_socket" session create identity-reuse sh \
+      >"$run_root/identity-reuse.json"
+    reused_task_id="$(jq -r '.task_id' "$run_root/identity-reuse.json")"
+    worker_pid="$(jq -r '.worker_pid' "$run_root/identity-reuse.json")"
+    kill -KILL "$worker_pid"
+    worker_pid=""
+    for _ in $(seq 1 100); do
+      target/debug/qwe --socket "$client_socket" status \
+        >"$run_root/identity-reuse-status.json"
+      jq -e \
+        --arg id identity-reuse \
+        '([.sessions[] | select(.id == $id and .state == "lost")] | length == 1)' \
+        "$run_root/identity-reuse-status.json" >/dev/null && break
+      sleep 0.05
+    done
+    set +e
+    target/debug/qwe --socket "$client_socket" session create identity-reuse sh \
+      >"$run_root/identity-reuse-retry.out" 2>"$run_root/identity-reuse-retry.err"
+    identity_reuse_status=$?
+    set -e
+    [ "$identity_reuse_status" -ne 0 ]
+    grep -Fq "state 'lost'" "$run_root/identity-reuse-retry.err"
+    target/debug/qwe --socket "$client_socket" task history \
+      >"$run_root/identity-reuse-history.json"
+    jq -e \
+      --arg task_id "$reused_task_id" \
+      '([.tasks[] | select(.task_id == $task_id and .state == "lost")] | length == 1)' \
+      "$run_root/identity-reuse-history.json" >/dev/null
+    printf 'regression: terminal SessionId reuse rejection PASS\n'
+
+    # An exited Session whose worker disappears becomes lost; its Task stays exited.
+    target/debug/qwe --socket "$client_socket" session create exited-worker sh \
+      >"$run_root/exited-worker.json"
+    worker_pid="$(jq -r '.worker_pid' "$run_root/exited-worker.json")"
+    target/debug/qwe --socket "$client_socket" session input exited-worker $'exit\r' \
+      >/dev/null
+    for _ in $(seq 1 100); do
+      target/debug/qwe --socket "$client_socket" session status exited-worker \
+        >"$run_root/exited-worker-status.json"
+      jq -e '.running == false' "$run_root/exited-worker-status.json" >/dev/null &&
+        break
+      sleep 0.02
+    done
+    sleep 0.5
+    kill -KILL "$worker_pid"
+    worker_pid=""
+    for _ in $(seq 1 100); do
+      target/debug/qwe --socket "$client_socket" status \
+        >"$run_root/exited-worker-control.json"
+      jq -e \
+        '([.sessions[] | select(.id == "exited-worker" and .state == "lost")] | length == 1) and
+         ([.tasks[] | select(.session_id == "exited-worker" and .state == "exited")] | length == 1)' \
+        "$run_root/exited-worker-control.json" >/dev/null && break
+      sleep 0.05
+    done
+    jq -e \
+      '([.sessions[] | select(.id == "exited-worker" and .state == "lost")] | length == 1) and
+       ([.tasks[] | select(.session_id == "exited-worker" and .state == "exited")] | length == 1)' \
+      "$run_root/exited-worker-control.json" >/dev/null
+    printf 'regression: exited worker reconciliation PASS\n'
+
+    # task.stop stops only the Task and preserves the final Session snapshot.
+    target/debug/qwe --socket "$client_socket" session create task-stop-case sh \
+      >"$run_root/task-stop-create.json"
+    task_id="$(jq -r '.task_id' "$run_root/task-stop-create.json")"
+    target/debug/qwe --socket "$client_socket" session input task-stop-case \
+      $'printf "FINAL_SNAPSHOT\\n"\r' >/dev/null
+    for _ in $(seq 1 100); do
+      target/debug/qwe --socket "$client_socket" session attach task-stop-case \
+        >"$run_root/task-stop-before.json"
+      jq -e '.screen | contains("FINAL_SNAPSHOT")' \
+        "$run_root/task-stop-before.json" >/dev/null && break
+      sleep 0.02
+    done
+    target/debug/qwe --socket "$client_socket" task stop "$task_id" \
+      >"$run_root/task-stop.json"
+    target/debug/qwe --socket "$client_socket" session attach task-stop-case \
+      >"$run_root/task-stop-after.json"
+    target/debug/qwe --socket "$client_socket" status \
+      >"$run_root/task-stop-control.json"
+    jq -e '.state == "stopped"' "$run_root/task-stop.json" >/dev/null
+    jq -e \
+      '.running == false and .state == "exited" and
+       (.screen | contains("FINAL_SNAPSHOT"))' \
+      "$run_root/task-stop-after.json" >/dev/null
+    jq -e \
+      '([.sessions[] | select(.id == "task-stop-case" and .state == "exited")] | length == 1) and
+       ([.tasks[] | select(.session_id == "task-stop-case" and .state == "stopped")] | length == 1)' \
+      "$run_root/task-stop-control.json" >/dev/null
+    set +e
+    target/debug/qwe --socket "$client_socket" session detach task-stop-case \
+      >"$run_root/detach.out" 2>"$run_root/detach.err"
+    detach_status=$?
+    set -e
+    [ "$detach_status" -ne 0 ]
+    grep -Fq 'unsupported_operation' "$run_root/detach.err"
+    printf 'regression: task.stop lifecycle and detach rejection PASS\n'
+
+    # close must not report success while a SIGTERM-ignoring group remains alive.
+    target/debug/qwe --socket "$client_socket" session create close-ignore sh \
+      >"$run_root/close-create.json"
+    close_pgid="$(jq -r '.pgid' "$run_root/close-create.json")"
+    target/debug/qwe --socket "$client_socket" session input close-ignore \
+      $'trap \'\' HUP TERM\r' >/dev/null
+    target/debug/qwe --socket "$client_socket" session input close-ignore \
+      $'while :; do sleep 1; done\r' >/dev/null
+    sleep 0.3
+    target/debug/qwe --socket "$client_socket" session close close-ignore \
+      >"$run_root/close.json"
+    jq -e '.state == "closed"' "$run_root/close.json" >/dev/null
+    if kill -0 -- "-$close_pgid" 2>/dev/null; then
+      printf 'close reported success while process group %s is alive\n' \
+        "$close_pgid" >&2
+      exit 1
+    fi
+    close_pgid=""
+    target/debug/qwe --socket "$client_socket" status \
+      >"$run_root/close-control.json"
+    jq -e \
+      '([.sessions[] | select(.id == "close-ignore" and .state == "closed")] | length == 1)' \
+      "$run_root/close-control.json" >/dev/null
+    printf 'regression: close process-group verification PASS\n'
+
+    target/debug/qwe --socket "$client_socket" session close task-stop-case >/dev/null
+    printf 'Stage 1 lifecycle regression PASS\n'
+
 t12-host-smoke:
     #!/usr/bin/env bash
     set -euo pipefail

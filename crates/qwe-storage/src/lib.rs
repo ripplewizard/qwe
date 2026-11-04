@@ -27,6 +27,8 @@ pub enum StorageError {
     Uuid(#[from] uuid::Error),
     #[error("database schema is newer than this binary")]
     SchemaTooNew,
+    #[error("invalid storage invariant: {0}")]
+    Invariant(String),
 }
 
 pub struct Store {
@@ -204,6 +206,57 @@ impl Store {
             .find(|session| session.id == id))
     }
 
+    pub fn insert_created_session(
+        &mut self,
+        session: &SessionRecord,
+        task: &TaskRecord,
+    ) -> Result<(), StorageError> {
+        if task.session_id != session.id {
+            return Err(StorageError::Invariant(
+                "created Task must belong to the created Session".into(),
+            ));
+        }
+        let identity = session.identity.as_ref();
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "
+            INSERT INTO sessions (id, owner, state, pid, pgid, start_token, updated_at_ms)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ",
+            params![
+                session.id,
+                session.owner,
+                session.state,
+                identity.map(|value| value.pid),
+                identity.map(|value| value.pgid),
+                identity.map(|value| value.start_token.as_str()),
+                session.updated_at_ms
+            ],
+        )?;
+        transaction.execute(
+            "
+            INSERT INTO tasks (
+                id, session_id, pid, pgid, start_token, state,
+                exit_code, exit_signal, started_at_ms, ended_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ",
+            params![
+                task.id.to_string(),
+                task.session_id,
+                task.identity.pid,
+                task.identity.pgid,
+                task.identity.start_token,
+                task.state.as_str(),
+                task.exit_code,
+                task.exit_signal,
+                task.started_at_ms,
+                task.ended_at_ms
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn mark_sessions_missing(
         &mut self,
         live_ids: &[String],
@@ -211,7 +264,9 @@ impl Store {
     ) -> Result<u64, StorageError> {
         let mut changed = 0;
         for mut session in self.list_sessions()? {
-            if !live_ids.contains(&session.id) && session.state == "running" {
+            if !live_ids.contains(&session.id)
+                && matches!(session.state.as_str(), "running" | "exited")
+            {
                 session.state = "lost".into();
                 session.updated_at_ms = now_ms;
                 self.upsert_session(&session)?;
@@ -546,6 +601,34 @@ mod tests {
     }
 
     #[test]
+    fn created_session_and_task_commit_atomically() {
+        let mut store = Store::open_in_memory().unwrap();
+        let existing_id = TaskId::new();
+        store
+            .insert_task(&task(existing_id.clone(), "existing"))
+            .unwrap();
+        let session = SessionRecord {
+            id: "new".into(),
+            owner: "local".into(),
+            state: "running".into(),
+            identity: Some(ProcessIdentity {
+                pid: 200,
+                pgid: 200,
+                start_token: "boot:200".into(),
+            }),
+            updated_at_ms: 10,
+        };
+        let mut conflicting_task = task(existing_id, "new");
+        conflicting_task.identity.pid = 200;
+        assert!(
+            store
+                .insert_created_session(&session, &conflicting_task)
+                .is_err()
+        );
+        assert!(store.find_session("new").unwrap().is_none());
+    }
+
+    #[test]
     fn lease_claim_touch_release_and_takeover() {
         let mut store = Store::open_in_memory().unwrap();
         let claimed = store.claim_lease("s1", "alice", 100, 1_000).unwrap();
@@ -632,6 +715,22 @@ mod tests {
                 id: "missing".into(),
                 owner: "local".into(),
                 state: "running".into(),
+                identity: None,
+                updated_at_ms: 1,
+            })
+            .unwrap();
+        assert_eq!(store.mark_sessions_missing(&[], 2).unwrap(), 1);
+        assert_eq!(store.list_sessions().unwrap()[0].state, "lost");
+    }
+
+    #[test]
+    fn reconciliation_marks_exited_sessions_lost_when_worker_is_absent() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .upsert_session(&SessionRecord {
+                id: "exited".into(),
+                owner: "local".into(),
+                state: "exited".into(),
                 identity: None,
                 updated_at_ms: 1,
             })

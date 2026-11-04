@@ -37,6 +37,7 @@ results.
 just check-qwe
 just protocol-check
 just stage0-check
+just stage1-regression-smoke
 just build-qwe
 just test-qwe
 just t12-host-smoke
