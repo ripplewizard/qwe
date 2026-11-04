@@ -1,8 +1,8 @@
 # ADR 0014: Attachment Ownership and Authorization
 
-Status: Proposed
+Status: Accepted
 Date: 2026-11-04
-Implementation state: Not implemented.
+Implementation state: Accepted target; not implemented.
 
 ## Context
 
@@ -14,9 +14,9 @@ QWE currently refers to several different identities as ownership:
 - A detached-hold Lease with a generation.
 - A reclaim token used after supervisor restart.
 
-The documents do not define how those identities authorize individual
+The documents did not define how those identities authorize individual
 operations. The current implementation also uses a fixed persisted owner value,
-which cannot express the proposed attachment model.
+which cannot express the accepted attachment model.
 
 ## Decision
 

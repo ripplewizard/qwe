@@ -10,11 +10,7 @@ Client
   |
   | versioned client IPC
   v
-qwed control daemon -------- SQLite WAL
-  |
-  | versioned host IPC
-  v
-qwe-host (recoverable manager)
+qwed supervisor ------------ SQLite WAL
   |
   +-- session worker
   |     +-- PTY and VT state
@@ -25,21 +21,22 @@ qwe-host (recoverable manager)
         +-- ...
 ```
 
-The daemon and Host manager are replaceable. Session workers are the only
-owners of live terminal and process resources. A client never owns a PTY or
-process group.
-
-[ADR 0011](adr/0011-consolidate-control-plane.md) proposes consolidating qwed
-and Host into one supervisor for V0. It remains Proposed; this document and the
-implemented topology stay authoritative until the migration completes.
+The supervisor is replaceable. Session workers are the only owners of live
+terminal and process resources. A client never owns a PTY or process group.
 
 This ownership boundary is exercised by `just t12-host-smoke`.
 
-Current production implementation includes durable session workers, Host epoch
-recovery, SQLite Task/Lease state, startup reconciliation, and concurrent
-Attach. `qwed` also reconciles Host inventory every 250 ms. Worker rediscovery
-validates the expected socket path and worker start token. The detailed
-protocol and authority boundary are in [IPC Protocol](ipc-protocol.md).
+[ADR 0011](adr/0011-consolidate-control-plane.md) accepts one qwed supervisor
+for V0. The current code still uses the migration topology
+`qwed -> qwe-host -> session worker`, including Host epoch recovery and 250 ms
+inventory polling. The Stage 1 cutover moves worker inventory and lifecycle
+events into qwed without changing the worker isolation boundary.
+
+Current production implementation includes durable session workers, SQLite
+Task/Lease state, startup reconciliation, and concurrent Attach. Worker
+rediscovery validates the expected socket path, Session ID, PID, and start
+token. The detailed current protocol and authority boundary are in
+[IPC Protocol](ipc-protocol.md).
 
 Production resize and complete VT-mode snapshots remain in progress; see
 [Development Readiness](development-readiness.md).
@@ -58,16 +55,16 @@ Production resize and complete VT-mode snapshots remain in progress; see
 - Provides the stable public local API.
 - Authorizes clients and manages leases.
 - Stores metadata, topology, and task history in SQLite.
-- Reconciles persisted state against Host inventory before accepting clients.
-- Starts or reconnects to `qwe-host`.
+- Reconciles persisted state against worker inventory before accepting clients.
+- Starts workers, observes lifecycle events, and runs the bounded safety scan.
 - Does not own PTYs or process groups.
 
 ### qwe-host
 
-- Manages isolated session workers and reconnects to them after Host restart.
-- Enforces bounded output retention and backpressure.
-- Exposes session and task operations over the host protocol.
-- Remains alive when `qwed` is killed or restarted.
+- Temporary migration component that manages isolated session workers until the
+  Stage 1 supervisor cutover.
+- Owns Host epoch registration and the current 250 ms inventory path.
+- Is removed from the V0 process model after migration.
 
 ### Session worker
 
@@ -145,10 +142,16 @@ truncated_history
 persistence_failure
 ```
 
-## 5. Host Protocol
+## 5. Attach Protocol and Migration Host Protocol
 
-The host protocol is internal and versioned separately from client IPC. The
-authoritative field-level contract is [IPC Protocol](ipc-protocol.md):
+The accepted V0 Attach endpoint is a dedicated, owner-only Unix socket with
+typed binary framing. Its frame numbers, payload limits, payload schemas, and
+stable test IDs are defined by the
+[canonical protocol schema](../protocol/schema/qwe-v1.schema.json).
+
+The current migration Host protocol is internal and versioned separately from
+client IPC. The implemented field-level contract is
+[IPC Protocol](ipc-protocol.md):
 
 ```text
 HOST_REGISTER
@@ -156,8 +159,8 @@ HOST_LIST
 PING
 SESSION_CREATE
 SESSION_ATTACH
-SESSION_DETACH
 SESSION_INPUT
+TASK_STOP
 SESSION_CLOSE
 ```
 
@@ -177,14 +180,17 @@ client's response writer. The journal tail may begin mid-escape-sequence and is
 therefore diagnostic data, while the VT screen snapshot is authoritative.
 
 In the V0 implementation, `SESSION_STATUS`, `SESSION_CREATE`, `SESSION_INPUT`,
-and `SESSION_DETACH` return lightweight metadata only. `SESSION_ATTACH` is the
+and `TASK_STOP` return lightweight metadata only. `SESSION_ATTACH` is the
 only operation that returns the VT screen and journal tail, preventing status
 polling from serializing large responses ahead of PTY input.
 
-[ADR 0012](adr/0012-terminal-attach-data-plane.md) proposes replacing
-one-shot Attach, input, resize, and detach calls with a long-lived typed binary
-channel. The current request/response table remains authoritative until that
-ADR is accepted and migrated.
+The current `session detach` CLI command returns `unsupported_operation` until
+the Stage 2 channel provides an actual attachment-state transition.
+
+[ADR 0012](adr/0012-terminal-attach-data-plane.md) is accepted. Stage 2 replaces
+one-shot Attach, input, resize, and detach calls with the long-lived channel.
+The current request/response table remains the migration contract until that
+implementation lands.
 
 ## 6. State Ownership
 
@@ -197,6 +203,7 @@ ADR is accepted and migrated.
 | Session metadata | `qwed` | SQLite |
 | Lease owner/deadline | `qwed` | SQLite |
 | Task history | `qwed` | SQLite |
+| Worker health/inventory | `qwed` supervisor | Runtime, rebuilt by reconciliation |
 | Configuration | Workspace files | Files |
 
 ## 7. Recovery Semantics
@@ -204,15 +211,17 @@ ADR is accepted and migrated.
 | Failure | Expected Behavior |
 |---|---|
 | CLI disconnect | Session and task continue; attach later |
-| `qwed` SIGKILL | Host and all session workers continue |
-| `qwed` restart | Rediscover Host and reconcile SQLite inventory |
+| `qwed` SIGKILL | All session workers continue |
+| `qwed` restart | Rediscover workers and reconcile SQLite inventory |
 | Corrupt SQLite | Fail explicitly; do not start with silent data loss |
-| `qwe-host` SIGKILL | Restart scans runtime directory and reconnects workers |
 | Session worker SIGKILL | That Session is lost; return `terminal_lost` |
 | OS reboot | No V0 recovery |
 
-Host recovery uses socket discovery and worker-owned PTY state. It never
-reconstructs a terminal by replaying an unbounded byte stream.
+The current migration topology additionally recovers `qwe-host` by scanning the
+runtime directory and reconnecting workers. The accepted target removes Host
+from this path while retaining socket discovery, identity validation, and
+worker-owned PTY state. Recovery never reconstructs a terminal by replaying an
+unbounded byte stream.
 
 ## 8. Task Identity
 
@@ -232,9 +241,14 @@ The process start token is mandatory. PID alone is never sufficient.
 - Migrations are monotonic and transactional.
 - A newer schema is rejected by older binaries.
 - High-frequency terminal bytes are not written to SQLite per frame.
-- Mutating requests retain idempotency keys to prevent duplicate tasks.
-- Startup reconciliation marks missing Sessions and Tasks as `lost`.
-- Runtime reconciliation marks a vanished worker `lost` within 250 ms.
+- Requests carry idempotency keys, but durable deduplication and response
+  replay are not implemented until Stage 3.
+- Startup reconciliation marks missing running or exited Sessions as `lost`;
+  an exited Task remains `exited`.
+- Lifecycle events identify vanished workers; the safety scan covers missed
+  events without treating an unresponsive but live worker as exited.
+- The current migration topology retains the 250 ms inventory poll until the
+  Stage 1 cutover.
 - Lease release writes a generation tombstone; expiration does not kill Tasks.
 
 ## 10. Resource Model
@@ -275,17 +289,18 @@ exists; otherwise the field is `unsupported`.
 - D3 Pane resource policy covers CPU, memory, and process limits.
 - D3 forced teardown covers Session, Server, and batch Task termination.
 
-## 14. Remaining Architecture Decisions
+## 14. Accepted Contracts Awaiting Implementation
 
-Proposed contracts awaiting explicit acceptance:
+The Stage 0 design gate is closed. The following accepted decisions are now
+implementation work:
 
-1. V0 control-plane consolidation in ADR 0011.
-2. Terminal attach data plane and snapshot handoff in ADR 0012.
-3. Core object cardinality and lifecycle in ADR 0013.
-4. Attachment ownership and authorization in ADR 0014.
-5. Worker liveness and reconciliation in ADR 0015.
+1. Consolidate qwed and qwe-host in Stage 1.
+2. Implement the long-lived Attach channel in Stage 2.
+3. Migrate storage and API behavior to the accepted 1:1 object model.
+4. Enforce the accepted attachment authorization matrix.
+5. Implement event-first worker liveness and reconciliation.
 
-Other decisions still open:
+Other decisions still open and must be recorded in ADRs before implementation:
 
 1. Whether read-only observers are supported beyond the reserved Attach mode.
 2. Final VT engine after broader compatibility benchmarks.

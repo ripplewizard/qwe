@@ -1,8 +1,8 @@
 # ADR 0013: V0 Core Object Model and Lifecycle
 
-Status: Proposed
+Status: Accepted
 Date: 2026-11-04
-Implementation state: Not implemented as an authoritative contract.
+Implementation state: Accepted contract; migration not implemented.
 
 ## Context
 

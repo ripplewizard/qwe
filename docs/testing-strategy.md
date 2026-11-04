@@ -16,6 +16,9 @@ Date: 2026-11-04
 
 ```sh
 just check-qwe
+just protocol-check
+just stage0-check
+just stage1-regression-smoke
 just t12-host-smoke
 just resilience-smoke
 just verify-linux-results
@@ -37,7 +40,7 @@ No aggregate score may override a failed hard gate.
 ## Current Performance Gates
 
 These gates describe the implemented polling topology and remain active until
-the proposed consolidation is accepted and migrated.
+the accepted consolidation is migrated in Stage 1.
 
 - Eight concurrent clients, 64 Attach requests during continuous output.
 - Zero failed requests.
@@ -53,8 +56,8 @@ Release-mode and long-duration measurements are required before V0.
 
 ## ADR 0011 Acceptance Gates
 
-These gates apply only after the proposed control-plane consolidation is
-implemented. They are planned acceptance criteria, not current results.
+These gates apply only after the accepted control-plane consolidation is
+implemented. They are required acceptance criteria, not current results.
 
 - A worker exit delivered through `SIGCHLD` or control-connection EOF becomes
   `lost` with P95 at or below 50 ms.
@@ -73,10 +76,11 @@ implemented. They are planned acceptance criteria, not current results.
 - The migration uses a clean pre-release runtime cutover and does not require
   compatibility with the retired Host protocol.
 
-## ADR 0012-0015 Planned Matrices
+## ADR 0012-0015 Contract Matrices
 
-These are required test inputs once the corresponding ADRs are accepted. They
-are not current results.
+The corresponding ADRs are accepted. Every row has a stable ID in
+[Test Matrices](test-matrices.md); those IDs are not implementation results
+until the named integration test exists and passes on the required platforms.
 
 - Attach channel: snapshot then output continuity, no duplicate or gap,
   exclusive-attach rejection, raw input/output framing, resize ordering,

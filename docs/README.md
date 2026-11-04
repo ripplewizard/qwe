@@ -7,18 +7,20 @@
 - [Technical Architecture](technical-architecture.md): process model, crate
   graph, state ownership, persistence, and security.
 - [IPC Protocol](ipc-protocol.md): field-level client, Host, and worker protocol.
+- [Protocol Schema](../protocol/schema/qwe-v1.schema.json): canonical Attach
+  frames, payloads, limits, state machines, and stable test-ID manifest.
 - [Extension Architecture](extension-architecture.md): deferred capabilities
   and architecture reservations.
 - [ADR Index](adr/README.md): accepted and proposed decisions.
-- [ADR 0011](adr/0011-consolidate-control-plane.md): proposed V0 control-plane
-  consolidation; not yet implemented.
-- [ADR 0012](adr/0012-terminal-attach-data-plane.md): proposed long-lived
+- [ADR 0011](adr/0011-consolidate-control-plane.md): accepted V0 control-plane
+  consolidation; Stage 1 migration.
+- [ADR 0012](adr/0012-terminal-attach-data-plane.md): accepted long-lived
   binary-framed terminal channel and snapshot handoff.
-- [ADR 0013](adr/0013-core-object-model.md): proposed explicit V0 object
+- [ADR 0013](adr/0013-core-object-model.md): accepted explicit V0 object
   cardinalities and lifecycle.
-- [ADR 0014](adr/0014-attachment-ownership-authorization.md): proposed
+- [ADR 0014](adr/0014-attachment-ownership-authorization.md): accepted
   attachment, owner, and detached-hold authorization matrix.
-- [ADR 0015](adr/0015-worker-liveness-reconciliation.md): proposed worker
+- [ADR 0015](adr/0015-worker-liveness-reconciliation.md): accepted worker
   health states and startup reconciliation truth table.
 
 ## Development
@@ -28,6 +30,8 @@
 - [Readiness](development-readiness.md): known gaps and start gate.
 - [Roadmap](development-roadmap.md): implementation milestones.
 - [Testing Strategy](testing-strategy.md): layers, commands, and acceptance.
+- [Test Matrices](test-matrices.md): stable authorization, liveness, Attach, and
+  object-model case IDs.
 - [Workflow](development-workflow.md): branch, commit, and evidence rules.
 
 ## Evidence
@@ -37,6 +41,10 @@
   bounded-output validation.
 - [Experiment 0002](experiments/0002-resilience-and-concurrency.md): recovery,
   reconciliation, and concurrent Attach.
+- [Experiment 0003](experiments/0003-stage-0-macos-capabilities.md): macOS
+  Secret Provider/resource-control and VT capability probes.
+- [Experiment 0004](experiments/0004-lifecycle-regression-fixes.md): lifecycle
+  transaction, teardown, identity, and reconciliation fixes on both platforms.
 
 ## Reading Order
 

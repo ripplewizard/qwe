@@ -1,8 +1,8 @@
 # ADR 0012: Terminal Attach Data Plane
 
-Status: Proposed
+Status: Accepted
 Date: 2026-11-04
-Implementation state: Not implemented.
+Implementation state: Accepted target; not implemented.
 
 ## Context
 

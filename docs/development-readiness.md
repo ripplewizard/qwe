@@ -1,6 +1,6 @@
 # Development Readiness
 
-Status: Ready for implementation
+Status: Stage 0 complete; Stage 1 ready
 Date: 2026-11-04
 
 ## Decision
@@ -9,9 +9,10 @@ Rust development may start. Manual POC sign-off remains pending, but it is not
 a dependency for implementation. The project must not describe manual TUI
 quality or final POC audit as complete until review is signed.
 
-Internal D1 work on PTY, VT state, and resize primitives may proceed. The public
-Attach protocol and Session/Task schema must not be frozen until ADRs 0011-0015
-are accepted.
+ADRs 0011-0015 are accepted. The Attach framing contract and V0 object/state
+contract now have a canonical machine-readable schema and drift gate. Current
+code remains on the pre-cutover migration topology until Stage 1 and Stage 2
+land.
 
 ## Confirmed Inputs
 
@@ -25,24 +26,42 @@ are accepted.
 - Host inventory reconciliation runs every 250 ms.
 - Worker rediscovery validates socket path and worker start token.
 - Lease release preserves a monotonic generation tombstone.
+- `just stage0-check`, `just check-qwe`, `just t12-host-smoke`, and
+  `just resilience-smoke` pass on macOS ARM64 and Fedora Linux x86_64. The
+  macOS Secret Provider/resource probe is intentionally macOS-only.
 
-## Design Contracts Pending Acceptance
+## Accepted Contracts Awaiting Implementation
 
 The current process topology and request/response protocol are implemented, but
-the following public contracts are not frozen:
+the following accepted contracts are not yet implemented:
 
-- ADR 0011: consolidate qwed and qwe-host. Not implemented.
+- ADR 0011: consolidate qwed and qwe-host. Stage 1 migration.
 - ADR 0012: long-lived Attach channel, typed binary frames, and snapshot
-  continuity. Not implemented.
+  continuity. Stage 2 migration.
 - ADR 0013: explicit V0 Session/Task/Pane cardinality and lifecycle. The
-  current code still has implicit 1:1 behavior.
-- ADR 0014: attachment, owner, and detached-hold authorization matrix. Not
-  implemented.
+  current code still has implicit 1:1 behavior and a duplicate creation path.
+- ADR 0014: attachment, owner, and detached-hold authorization matrix. Stage 3
+  implementation.
 - ADR 0015: worker health, unresponsive detection, and reconciliation truth
-  table. Not implemented.
+  table. Stage 1/3 implementation.
 
-Public `session.attach` and Session/Task schema work must not be declared stable
-until ADRs 0011-0015 are accepted and their state matrices pass.
+The contract is stable; implementation status is tracked separately. A schema
+entry does not claim that a runtime behavior is complete.
+
+## Recently Closed Lifecycle Defects
+
+The following pre-Stage-1 defects are fixed and covered by real-process
+regression tests:
+
+- Session/Task creation rollback and orphan-runtime adoption.
+- Terminal SessionId/TaskId reuse.
+- Premature `closed` reporting.
+- Task stop closing the Session instead of preserving its final snapshot.
+- Exited Session worker-loss reconciliation.
+- No-op detach success; the operation now returns `unsupported_operation`.
+- Stale reconciliation overwriting a newer terminal lifecycle state.
+
+See [Experiment 0004](experiments/0004-lifecycle-regression-fixes.md).
 
 ## Known Development Gaps
 
@@ -61,10 +80,10 @@ These are implementation work, not reasons to delay development:
 - Adversarial unauthorized-client and malformed-frame tests are incomplete.
 - Release-mode soak and larger-concurrency measurements remain pending.
 - API Key Manager, Pane resource limits, and forced teardown remain D3 scope.
-- macOS Secret Provider delivery remains undecided and requires an explicit
-  D3 spike before API Key Manager implementation.
-- There is no machine-readable protocol schema or CI drift check comparing
-  accepted ADR state matrices with `qwe-protocol`.
+- macOS Secret Provider delivery has a candidate inherited-descriptor broker
+  design; signed-build ACL and locked-keychain validation are due by 2026-11-13.
+- The accepted Attach channel is not implemented even though its contract and
+  test IDs are defined.
 
 ## Non-Blocking Audit Items
 
@@ -75,7 +94,7 @@ These are implementation work, not reasons to delay development:
 
 ## Start Gate
 
-Implementation starts from the `dev` branch. The `poc` branch is read-only
-historical evidence and must not be used as the active development branch.
-The executable sequence and current target dates are in the
-[Development Plan](development-plan.md).
+Stage 0 is complete. Stage 1 starts from a short-lived branch based on `dev`.
+The `poc` branch is read-only historical evidence and must not be used as the
+active development branch. The executable sequence and current target dates
+are in the [Development Plan](development-plan.md).

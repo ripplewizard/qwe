@@ -24,11 +24,14 @@ continue feature work on them.
 2. Keep changes within one component or decision boundary.
 3. Update tests and authoritative docs with behavior changes.
 4. Run `just check-qwe`.
-5. Run `just t12-host-smoke` and `just resilience-smoke` for ownership,
+5. Run `just protocol-check` for protocol, state, or test-contract changes.
+6. Run `just t12-host-smoke` and `just resilience-smoke` for ownership,
    persistence, concurrency, or protocol changes.
-6. Update the state matrices and machine-readable protocol schema for contract
-   changes; once implemented, run the contract drift check.
-7. Merge back to `dev` only after validation.
+7. Run `just stage1-regression-smoke` for Session/Task lifecycle or
+   reconciliation changes.
+8. Update the state matrices and machine-readable protocol schema together for
+   contract changes.
+9. Merge back to `dev` only after validation.
 
 ## Commit Rules
 

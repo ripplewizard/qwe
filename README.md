@@ -6,9 +6,10 @@ extension boundaries.
 
 ## Current Phase
 
-Active development starts on the `dev` branch. Automated POC evidence is
-complete on Linux and macOS; manual POC sign-off remains a non-blocking audit
-task. Implementation follows
+Active development starts on the `dev` branch. Stage 0 design acceptance and
+de-risking are complete; Stage 1 is the control-plane and protocol foundation.
+Automated POC evidence is complete on Linux and macOS; manual POC sign-off
+remains a non-blocking audit task. Implementation follows
 [`docs/design-baseline.md`](docs/design-baseline.md).
 
 The process and crate boundaries are described in
@@ -34,11 +35,18 @@ results.
 
 ```sh
 just check-qwe
+just protocol-check
+just stage0-check
+just stage1-regression-smoke
 just build-qwe
 just test-qwe
 just t12-host-smoke
 just resilience-smoke
 ```
+
+Protocol schema validation uses
+`scripts/requirements-protocol.txt`; `just doctor` reports whether the Python
+`jsonschema` package is available.
 
 ## POC Audit Commands
 
