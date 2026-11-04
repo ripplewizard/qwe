@@ -23,6 +23,8 @@
 
 ## Development
 
+- [Development Plan](development-plan.md): delivery sequence, estimates,
+  gates, risks, and scope controls.
 - [Readiness](development-readiness.md): known gaps and start gate.
 - [Roadmap](development-roadmap.md): implementation milestones.
 - [Testing Strategy](testing-strategy.md): layers, commands, and acceptance.
@@ -40,6 +42,6 @@
 
 1. Read Design Baseline.
 2. Read Technical Architecture and IPC Protocol.
-3. Read Readiness, Roadmap, Testing Strategy, and Workflow.
+3. Read Readiness, Development Plan, Roadmap, Testing Strategy, and Workflow.
 4. Read the relevant ADR before changing an accepted decision.
 5. Use the POC Index only for historical evidence.

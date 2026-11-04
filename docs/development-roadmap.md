@@ -3,6 +3,9 @@
 Status: Active
 Date: 2026-11-04
 
+Detailed sequencing, estimates, staffing sensitivity, and release gates are in
+[Development Plan](development-plan.md).
+
 ## Milestone D0: Development Baseline
 
 - Establish `poc` as the unified evidence branch.

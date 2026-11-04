@@ -77,3 +77,5 @@ These are implementation work, not reasons to delay development:
 
 Implementation starts from the `dev` branch. The `poc` branch is read-only
 historical evidence and must not be used as the active development branch.
+The executable sequence and current target dates are in the
+[Development Plan](development-plan.md).
