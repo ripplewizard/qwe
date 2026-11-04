@@ -1,7 +1,8 @@
 # QWE POC orchestration. Platform-specific recipes write isolated evidence.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-poc := justfile_directory() / "poc"
+poc := env_var_or_default("QWE_POC_DIR", justfile_directory() / "../bianca-poc/poc")
+fixtures := justfile_directory() / "tests/fixtures"
 linux_host := env_var_or_default("QWE_LINUX_HOST", "istoria")
 linux_repo := env_var_or_default("QWE_LINUX_REPO", "project/uranus/bianca")
 
@@ -685,7 +686,7 @@ t12-host-smoke:
     done
     printf '%s' "$after" | jq -e '.screen | contains("QWE_T12_AFTER")' >/dev/null
     printf -v bounded_command 'exec python3 %q\r' \
-      "$PWD/poc/test-data/scripts/bounded_output.py"
+      "{{ fixtures }}/bounded_output.py"
     target/debug/qwe --socket "$client_socket" session input "$session_id" \
       "$bounded_command" >/dev/null
     bounded_attach="/tmp/qwe-t12-bounded-$$.json"
@@ -844,7 +845,7 @@ resilience-smoke:
       jq -e '.generation == 1 and .owner == "owner-a"' >/dev/null
 
     printf -v continuous_command 'exec python3 %q\r' \
-      "$PWD/poc/test-data/scripts/continuous_output.py"
+      "{{ fixtures }}/continuous_output.py"
     target/debug/qwe --socket "$client_socket" session input "$session_id" \
       "$continuous_command" >/dev/null
     for _ in $(seq 1 100); do
@@ -852,7 +853,7 @@ resilience-smoke:
       printf '%s' "$output_status" | jq -e '.total_written > 0' >/dev/null && break
       sleep 0.02
     done
-    benchmark="$(python3 poc/test-data/scripts/attach_benchmark.py \
+    benchmark="$(python3 "{{ fixtures }}/attach_benchmark.py" \
       --cli "$PWD/target/debug/qwe" \
       --socket "$client_socket" \
       --session-id "$session_id" \

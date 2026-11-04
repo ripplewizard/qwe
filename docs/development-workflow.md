@@ -11,7 +11,8 @@ Date: 2026-11-03
 
 The POC branch is checked out separately at
 `/Users/huangjian/project/uranus/bianca-poc`. Run POC-wide discovery and
-evidence checks there. Generated `poc/results/` files are ignored in `dev`.
+evidence checks there. The `dev` worktree uses sparse checkout and excludes
+`/poc/`; production smoke workloads live in `tests/fixtures/`.
 
 Historical `master`, `codex/poc-session-lease`, and
 `codex/rust-core-spikes` are ancestors of the unified POC history. Do not
