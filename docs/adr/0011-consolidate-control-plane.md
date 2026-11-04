@@ -3,7 +3,9 @@
 Status: Proposed
 Date: 2026-11-04
 Implementation state: Not implemented. The accepted topology in ADRs 0006 and
-0009 remains authoritative until this proposal is accepted and migrated.
+0009 remains authoritative until this proposal is accepted and migrated. This
+ADR also depends on the attach and authorization contracts in ADRs 0012 and
+0014.
 
 ## Context
 
@@ -81,10 +83,19 @@ must not depend on PID-file contents or cleanup after process exit.
 Worker rediscovery must continue to validate the expected socket path, Session
 ID, worker PID, and PID start token.
 
+[ADR 0015](0015-worker-liveness-reconciliation.md) defines the distinction
+between worker health and terminal Session loss.
+
 ## Attachment Ownership
 
 Active attachment ownership is bound to the client connection lifetime. Socket
 EOF releases it immediately without heartbeat or wall-clock expiry.
+
+The persistent connection and frame contract are defined by
+[ADR 0012](0012-terminal-attach-data-plane.md). Operation authorization and the
+state transition matrix are defined by
+[ADR 0014](0014-attachment-ownership-authorization.md). This ADR cannot be
+accepted without both.
 
 Detach hold remains a persistent SQLite Lease with owner, deadline, and
 monotonic generation. Expiry releases control authority only and never kills a
@@ -93,13 +104,16 @@ Task or Session.
 Supervisor restart clears all active connections. To prevent an original client
 from losing a race to an unrelated client during the restart window:
 
-- qwed generates each reclaim token from a CSPRNG with at least 128 bits of
-  entropy. It never uses counters, timestamps, or predictable identifiers.
+- Every successful attach gets a fresh reclaim token generated from a CSPRNG
+  with at least 128 bits of entropy. It never uses counters, timestamps, or
+  predictable identifiers.
 - A cryptographic hash of the token is SHA-256 or stronger. qwed persists only
   that hash plus the logical owner identity in the same transaction that grants
   active ownership, before acknowledging an Attach. The raw token is returned
   once, retained only in client memory, and never logged.
 - Token verification uses constant-time comparison.
+- A successful attach replaces the persisted token hash; older reclaim tokens
+  become invalid.
 - The grace period is per Session and applies only to Sessions that held an
   active attachment when the supervisor stopped. A persisted active-attachment
   record recovered at startup enters grace; unaffected Sessions follow normal
@@ -168,6 +182,8 @@ Adoption requires explicit decisions on all of the following:
 - Fund a macOS Secret Provider spike before D3 implementation.
 - Treat the topology cutover as pre-release and permit disposable development
   runtime state.
+- Accept ADRs 0012 and 0014, which make connection-bound ownership
+  implementable and authorize each operation.
 
 ## Alternatives Considered
 

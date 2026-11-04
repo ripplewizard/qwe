@@ -16,3 +16,7 @@ that links to the replaced decision.
 | [0009](0009-control-plane-authority.md) | Control-plane authority and runtime reconciliation | Accepted |
 | [0010](0010-product-capability-scope.md) | API keys, Pane limits, and forced teardown scope | Accepted |
 | [0011](0011-consolidate-control-plane.md) | Consolidate qwed and qwe-host | Proposed |
+| [0012](0012-terminal-attach-data-plane.md) | Terminal Attach data plane and snapshot handoff | Proposed |
+| [0013](0013-core-object-model.md) | V0 core object model and lifecycle | Proposed |
+| [0014](0014-attachment-ownership-authorization.md) | Attachment ownership and authorization | Proposed |
+| [0015](0015-worker-liveness-reconciliation.md) | Worker liveness and reconciliation | Proposed |

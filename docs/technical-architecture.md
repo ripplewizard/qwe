@@ -181,6 +181,11 @@ and `SESSION_DETACH` return lightweight metadata only. `SESSION_ATTACH` is the
 only operation that returns the VT screen and journal tail, preventing status
 polling from serializing large responses ahead of PTY input.
 
+[ADR 0012](adr/0012-terminal-attach-data-plane.md) proposes replacing
+one-shot Attach, input, resize, and detach calls with a long-lived typed binary
+channel. The current request/response table remains authoritative until that
+ADR is accepted and migrated.
+
 ## 6. State Ownership
 
 | State | Owner | Durable Storage |
@@ -272,8 +277,21 @@ exists; otherwise the field is `unsupported`.
 
 ## 14. Remaining Architecture Decisions
 
-1. Whether read-only observers are supported.
-2. Final VT engine after broader compatibility benchmarks.
-3. Exact idle-timeout defaults for non-terminal Sessions.
+Proposed contracts awaiting explicit acceptance:
 
-These decisions must be recorded as ADRs before their implementation.
+1. V0 control-plane consolidation in ADR 0011.
+2. Terminal attach data plane and snapshot handoff in ADR 0012.
+3. Core object cardinality and lifecycle in ADR 0013.
+4. Attachment ownership and authorization in ADR 0014.
+5. Worker liveness and reconciliation in ADR 0015.
+
+Other decisions still open:
+
+1. Whether read-only observers are supported beyond the reserved Attach mode.
+2. Final VT engine after broader compatibility benchmarks.
+3. Lease clock-anomaly behavior and default detached-hold TTL before D2.
+4. Idempotency key scope, response replay, and retention before D2.
+5. Session/Task history retention policy before V0.
+6. Exact idle-timeout defaults for non-terminal Sessions.
+
+These decisions must be recorded as accepted ADRs before their implementation.

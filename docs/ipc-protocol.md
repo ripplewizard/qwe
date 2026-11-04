@@ -3,6 +3,12 @@
 Status: V0 Draft
 Date: 2026-11-04
 
+This document describes the currently implemented request/response protocol.
+[ADR 0012](adr/0012-terminal-attach-data-plane.md) and
+[ADR 0013](adr/0013-core-object-model.md) propose the long-lived Attach channel
+and authoritative object semantics that will replace parts of this contract
+after acceptance.
+
 ## 1. Authority Boundaries
 
 - `qwed` is the sole authority for SQLite Sessions, Tasks, and Leases.

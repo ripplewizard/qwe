@@ -73,6 +73,26 @@ implemented. They are planned acceptance criteria, not current results.
 - The migration uses a clean pre-release runtime cutover and does not require
   compatibility with the retired Host protocol.
 
+## ADR 0012-0015 Planned Matrices
+
+These are required test inputs once the corresponding ADRs are accepted. They
+are not current results.
+
+- Attach channel: snapshot then output continuity, no duplicate or gap,
+  exclusive-attach rejection, raw input/output framing, resize ordering,
+  explicit detach, connection EOF, and backpressure close.
+- Attach performance uses eight Sessions; same-Session exclusive contention is
+  tested separately for the correct rejection or reclaim result.
+- Object model: every legal Session/Task/Pane transition and rejection of
+  duplicate creation or resurrection from a terminal state.
+- Authorization: every cell in the ADR 0014 permission matrix, including
+  active-owner, unattached, reclaim-grace, and detached-hold cases.
+- Liveness and reconciliation: every row in the ADR 0015 truth table, including
+  `SIGSTOP`, `SIGKILL`, missing socket, PID mismatch, orphan, duplicate, and
+  Task-exited-but-worker-alive cases.
+- Protocol drift: generated or checked protocol types match the accepted
+  machine-readable frame and state schema before merge.
+
 ## Evidence Policy
 
 Structured JSON and concise manual reports are committed. Raw PTY captures,

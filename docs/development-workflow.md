@@ -1,7 +1,7 @@
 # Development Workflow
 
 Status: Active
-Date: 2026-11-03
+Date: 2026-11-04
 
 ## Branches
 
@@ -26,7 +26,9 @@ continue feature work on them.
 4. Run `just check-qwe`.
 5. Run `just t12-host-smoke` and `just resilience-smoke` for ownership,
    persistence, concurrency, or protocol changes.
-6. Merge back to `dev` only after validation.
+6. Update the state matrices and machine-readable protocol schema for contract
+   changes; once implemented, run the contract drift check.
+7. Merge back to `dev` only after validation.
 
 ## Commit Rules
 

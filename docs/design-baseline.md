@@ -22,6 +22,13 @@ history rather than versioned filenames.
 separate Host with a qwed supervisor. It remains Proposed; this table describes
 the currently implemented authority model.
 
+ADRs [0012](adr/0012-terminal-attach-data-plane.md),
+[0013](adr/0013-core-object-model.md),
+[0014](adr/0014-attachment-ownership-authorization.md), and
+[0015](adr/0015-worker-liveness-reconciliation.md) propose the terminal
+channel, object model, authorization matrix, and worker-health contract needed
+before the public Session/Task protocol is frozen.
+
 The detailed Host operations are defined in [IPC Protocol](ipc-protocol.md).
 
 ## 3. Lease Semantics

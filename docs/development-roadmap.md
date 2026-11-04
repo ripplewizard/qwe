@@ -1,7 +1,7 @@
 # Development Roadmap
 
 Status: Active
-Date: 2026-11-03
+Date: 2026-11-04
 
 ## Milestone D0: Development Baseline
 
@@ -13,18 +13,25 @@ Exit: clean build, lint, unit tests, T12 smoke, and resilience smoke pass.
 
 ## Milestone D1: Terminal Core
 
+- Accept ADRs 0011-0015 before freezing public Attach and Session/Task schema.
+- Implement the long-lived terminal attach channel and snapshot handoff.
+- Add a machine-readable protocol schema and CI drift check.
+- Convert the ownership and worker-liveness state matrices into integration
+  tests, including every rejection branch.
 - Add production `SESSION_RESIZE`.
 - Complete VT cursor, modes, alternate-screen, mouse, and paste state.
 - Validate TUI attach with Neovim and htop after detach and Host recovery.
 - Keep journal and frame limits enforced.
 
-Exit: visual detach/attach and resize tests pass on Linux and macOS.
+Exit: channel continuity, visual detach/attach, resize, and protocol-contract
+tests pass on Linux and macOS.
 
 ## Milestone D2: Task and Lease Control
 
 - Enforce request idempotency in durable storage.
 - Complete Task stop/status/history behavior through the stable CLI protocol.
 - Reconcile interrupted migrations and task exits deterministically.
+- Define Lease clock-anomaly handling and storage-retention policy.
 
 Exit: duplicate requests do not create duplicate Tasks; restart preserves
 Task and Lease history.

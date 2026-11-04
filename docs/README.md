@@ -9,9 +9,17 @@
 - [IPC Protocol](ipc-protocol.md): field-level client, Host, and worker protocol.
 - [Extension Architecture](extension-architecture.md): deferred capabilities
   and architecture reservations.
-- [ADR Index](adr/README.md): accepted decisions and consequences.
+- [ADR Index](adr/README.md): accepted and proposed decisions.
 - [ADR 0011](adr/0011-consolidate-control-plane.md): proposed V0 control-plane
   consolidation; not yet implemented.
+- [ADR 0012](adr/0012-terminal-attach-data-plane.md): proposed long-lived
+  binary-framed terminal channel and snapshot handoff.
+- [ADR 0013](adr/0013-core-object-model.md): proposed explicit V0 object
+  cardinalities and lifecycle.
+- [ADR 0014](adr/0014-attachment-ownership-authorization.md): proposed
+  attachment, owner, and detached-hold authorization matrix.
+- [ADR 0015](adr/0015-worker-liveness-reconciliation.md): proposed worker
+  health states and startup reconciliation truth table.
 
 ## Development
 
