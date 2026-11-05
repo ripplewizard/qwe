@@ -2,8 +2,9 @@
 
 Status: Accepted
 Date: 2026-11-04
-Implementation state: Accepted target; not implemented under the consolidated
-supervisor.
+Implementation state: Event-first supervision, persistent-control EOF,
+unreachable health, and the two-second safety scan are implemented. Full
+orphan/conflict matrix coverage remains Stage 3.
 
 ## Context
 

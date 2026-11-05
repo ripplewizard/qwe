@@ -2,7 +2,9 @@
 
 Status: Accepted
 Date: 2026-11-04
-Implementation state: Accepted contract; migration not implemented.
+Implementation state: Stage 1 cutover implemented for Session/Pane/
+TaskInstance 1:1 cardinality, unique persistence, and the single
+`session.create` path.
 
 ## Context
 

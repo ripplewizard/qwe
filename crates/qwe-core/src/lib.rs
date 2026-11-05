@@ -51,6 +51,36 @@ impl Default for TaskId {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PaneId(Uuid);
+
+impl PaneId {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::now_v7())
+    }
+}
+
+impl Default for PaneId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for PaneId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl FromStr for PaneId {
+    type Err = uuid::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(value).map(Self)
+    }
+}
+
 impl fmt::Display for TaskId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
@@ -278,6 +308,7 @@ pub struct SessionRecord {
     pub owner: String,
     pub state: String,
     pub identity: Option<ProcessIdentity>,
+    pub worker_identity: Option<ProcessIdentity>,
     pub updated_at_ms: i64,
 }
 
@@ -291,6 +322,13 @@ pub struct TaskRecord {
     pub exit_signal: Option<String>,
     pub started_at_ms: i64,
     pub ended_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneRecord {
+    pub id: PaneId,
+    pub session_id: String,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

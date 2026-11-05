@@ -13,7 +13,7 @@
   and architecture reservations.
 - [ADR Index](adr/README.md): accepted and proposed decisions.
 - [ADR 0011](adr/0011-consolidate-control-plane.md): accepted V0 control-plane
-  consolidation; Stage 1 migration.
+  consolidation; implemented qwed supervisor.
 - [ADR 0012](adr/0012-terminal-attach-data-plane.md): accepted long-lived
   binary-framed terminal channel and snapshot handoff.
 - [ADR 0013](adr/0013-core-object-model.md): accepted explicit V0 object

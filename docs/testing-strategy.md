@@ -18,6 +18,7 @@ Date: 2026-11-05
 just check-qwe
 just protocol-check
 just stage0-check
+just stage1-check
 just stage1-regression-smoke
 just stage2-check
 just attach-e2e
@@ -42,15 +43,14 @@ No aggregate score may override a failed hard gate.
 
 ## Current Performance Gates
 
-These gates describe the implemented polling topology and remain active until
-the accepted consolidation is migrated in Stage 1.
+These gates describe the consolidated supervisor topology.
 
 - Eight concurrent clients, 64 Attach requests during continuous output.
 - Zero failed requests.
 - P95 at or below 3,000 ms.
 - P99 at or below 5,000 ms.
 - Attach journal at most 1 MiB.
-- Host plus PTY worker RSS below 200 MiB after 100 MiB output.
+- qwed plus PTY worker RSS below 200 MiB after 100 MiB output.
 - Worker loss becomes `lost` within 250 ms without restarting `qwed`.
 - Worker rediscovery rejects stale PID start tokens and mismatched socket paths.
 - Released Lease generation never moves backwards.
@@ -59,8 +59,8 @@ Release-mode and long-duration measurements are required before V0.
 
 ## Stage 2 Attach Gate
 
-`just attach-e2e` starts real Host and qwed processes, creates a real PTY
-worker, and drives the dedicated Attach channel. It checks the handshake,
+`just attach-e2e` starts a real qwed supervisor and PTY worker, then drives the
+dedicated Attach channel. It checks the handshake,
 structured snapshot, exclusive-attach rejection, raw input/output framing,
 stream-offset continuity, resize ordering, immediate detach, reconnect,
 `read_only` rejection, unknown-frame rejection, and version rejection. It also
@@ -76,8 +76,8 @@ sign-off remains open.
 
 ## ADR 0011 Acceptance Gates
 
-These gates apply only after the accepted control-plane consolidation is
-implemented. They are required acceptance criteria, not current results.
+The implementation gates are complete locally; final Linux/macOS evidence is
+recorded after pdsh validation.
 
 - A worker exit delivered through `SIGCHLD` or control-connection EOF becomes
   `lost` with P95 at or below 50 ms.

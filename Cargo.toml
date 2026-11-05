@@ -3,7 +3,7 @@ resolver = "2"
 exclude = ["poc/rust"]
 members = [
     "apps/qwe",
-    "apps/qwe-host",
+    "apps/qwe-worker",
     "apps/qwed",
     "crates/qwe-core",
     "crates/qwe-protocol",

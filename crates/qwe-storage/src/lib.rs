@@ -1,9 +1,11 @@
-use qwe_core::{LeaseRecord, ProcessIdentity, SessionRecord, TaskId, TaskRecord, TaskState};
+use qwe_core::{
+    LeaseRecord, PaneId, PaneRecord, ProcessIdentity, SessionRecord, TaskId, TaskRecord, TaskState,
+};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 5;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum LeaseError {
@@ -70,6 +72,9 @@ impl Store {
                     pid INTEGER,
                     pgid INTEGER,
                     start_token TEXT,
+                    worker_pid INTEGER,
+                    worker_pgid INTEGER,
+                    worker_start_token TEXT,
                     updated_at_ms INTEGER NOT NULL
                 );
                 CREATE TABLE tasks (
@@ -84,7 +89,12 @@ impl Store {
                     started_at_ms INTEGER NOT NULL,
                     ended_at_ms INTEGER
                 );
-                CREATE INDEX tasks_by_session ON tasks(session_id);
+                CREATE UNIQUE INDEX tasks_by_session ON tasks(session_id);
+                CREATE TABLE panes (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL UNIQUE,
+                    updated_at_ms INTEGER NOT NULL
+                );
                 CREATE TABLE leases (
                     session_id TEXT PRIMARY KEY,
                     owner TEXT NOT NULL,
@@ -93,7 +103,7 @@ impl Store {
                     updated_at_ms INTEGER NOT NULL,
                     released_at_ms INTEGER
                 );
-                PRAGMA user_version = 3;
+                PRAGMA user_version = 5;
                 ",
             )?;
             transaction.commit()?;
@@ -133,6 +143,59 @@ impl Store {
                 ",
             )?;
             transaction.commit()?;
+            current = 3;
+        }
+        if current == 3 {
+            let duplicates: i64 = self.connection.query_row(
+                "SELECT COUNT(*) FROM (
+                    SELECT session_id FROM tasks GROUP BY session_id HAVING COUNT(*) > 1
+                )",
+                [],
+                |row| row.get(0),
+            )?;
+            if duplicates > 0 {
+                return Err(StorageError::Invariant(format!(
+                    "schema cutover requires one Task per Session; {duplicates} Sessions have duplicate Tasks"
+                )));
+            }
+            let mut statement = self.connection.prepare("SELECT id FROM sessions")?;
+            let session_ids = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(statement);
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "
+                DROP INDEX IF EXISTS tasks_by_session;
+                CREATE UNIQUE INDEX tasks_by_session ON tasks(session_id);
+                CREATE TABLE panes (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL UNIQUE,
+                    updated_at_ms INTEGER NOT NULL
+                );
+                ",
+            )?;
+            for session_id in session_ids {
+                transaction.execute(
+                    "INSERT INTO panes (id, session_id, updated_at_ms) VALUES (?1, ?2, ?3)",
+                    params![PaneId::new().to_string(), session_id, 0_i64],
+                )?;
+            }
+            transaction.execute_batch("PRAGMA user_version = 4;")?;
+            transaction.commit()?;
+            current = 4;
+        }
+        if current == 4 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "
+                ALTER TABLE sessions ADD COLUMN worker_pid INTEGER;
+                ALTER TABLE sessions ADD COLUMN worker_pgid INTEGER;
+                ALTER TABLE sessions ADD COLUMN worker_start_token TEXT;
+                PRAGMA user_version = 5;
+                ",
+            )?;
+            transaction.commit()?;
         }
         Ok(())
     }
@@ -146,16 +209,23 @@ impl Store {
 
     pub fn upsert_session(&mut self, session: &SessionRecord) -> Result<(), StorageError> {
         let identity = session.identity.as_ref();
+        let worker_identity = session.worker_identity.as_ref();
         self.connection.execute(
             "
-            INSERT INTO sessions (id, owner, state, pid, pgid, start_token, updated_at_ms)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            INSERT INTO sessions (
+                id, owner, state, pid, pgid, start_token,
+                worker_pid, worker_pgid, worker_start_token, updated_at_ms
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             ON CONFLICT(id) DO UPDATE SET
                 owner = excluded.owner,
                 state = excluded.state,
                 pid = excluded.pid,
                 pgid = excluded.pgid,
                 start_token = excluded.start_token,
+                worker_pid = excluded.worker_pid,
+                worker_pgid = excluded.worker_pgid,
+                worker_start_token = excluded.worker_start_token,
                 updated_at_ms = excluded.updated_at_ms
             ",
             params![
@@ -165,6 +235,9 @@ impl Store {
                 identity.map(|value| value.pid),
                 identity.map(|value| value.pgid),
                 identity.map(|value| value.start_token.as_str()),
+                worker_identity.map(|value| value.pid),
+                worker_identity.map(|value| value.pgid),
+                worker_identity.map(|value| value.start_token.as_str()),
                 session.updated_at_ms
             ],
         )?;
@@ -173,7 +246,8 @@ impl Store {
 
     pub fn list_sessions(&self) -> Result<Vec<SessionRecord>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, owner, state, pid, pgid, start_token, updated_at_ms
+            "SELECT id, owner, state, pid, pgid, start_token,
+                    worker_pid, worker_pgid, worker_start_token, updated_at_ms
              FROM sessions ORDER BY id",
         )?;
         let rows = statement.query_map([], |row| {
@@ -188,12 +262,24 @@ impl Store {
                 }),
                 _ => None,
             };
+            let worker_pid = row.get::<_, Option<u32>>(6)?;
+            let worker_pgid = row.get::<_, Option<u32>>(7)?;
+            let worker_start_token = row.get::<_, Option<String>>(8)?;
+            let worker_identity = match (worker_pid, worker_pgid, worker_start_token) {
+                (Some(pid), Some(pgid), Some(start_token)) => Some(ProcessIdentity {
+                    pid,
+                    pgid,
+                    start_token,
+                }),
+                _ => None,
+            };
             Ok(SessionRecord {
                 id: row.get(0)?,
                 owner: row.get(1)?,
                 state: row.get(2)?,
                 identity,
-                updated_at_ms: row.get(6)?,
+                worker_identity,
+                updated_at_ms: row.get(9)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -209,6 +295,7 @@ impl Store {
     pub fn insert_created_session(
         &mut self,
         session: &SessionRecord,
+        pane: &PaneRecord,
         task: &TaskRecord,
     ) -> Result<(), StorageError> {
         if task.session_id != session.id {
@@ -216,12 +303,21 @@ impl Store {
                 "created Task must belong to the created Session".into(),
             ));
         }
+        if pane.session_id != session.id {
+            return Err(StorageError::Invariant(
+                "created Pane must belong to the created Session".into(),
+            ));
+        }
         let identity = session.identity.as_ref();
+        let worker_identity = session.worker_identity.as_ref();
         let transaction = self.connection.transaction()?;
         transaction.execute(
             "
-            INSERT INTO sessions (id, owner, state, pid, pgid, start_token, updated_at_ms)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            INSERT INTO sessions (
+                id, owner, state, pid, pgid, start_token,
+                worker_pid, worker_pgid, worker_start_token, updated_at_ms
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             ",
             params![
                 session.id,
@@ -230,6 +326,9 @@ impl Store {
                 identity.map(|value| value.pid),
                 identity.map(|value| value.pgid),
                 identity.map(|value| value.start_token.as_str()),
+                worker_identity.map(|value| value.pid),
+                worker_identity.map(|value| value.pgid),
+                worker_identity.map(|value| value.start_token.as_str()),
                 session.updated_at_ms
             ],
         )?;
@@ -253,8 +352,39 @@ impl Store {
                 task.ended_at_ms
             ],
         )?;
+        transaction.execute(
+            "INSERT INTO panes (id, session_id, updated_at_ms) VALUES (?1, ?2, ?3)",
+            params![pane.id.to_string(), pane.session_id, pane.updated_at_ms],
+        )?;
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn find_pane_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<PaneRecord>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT id, session_id, updated_at_ms FROM panes WHERE session_id = ?1",
+                [session_id],
+                |row| {
+                    let id: String = row.get(0)?;
+                    Ok(PaneRecord {
+                        id: PaneId::from_str(&id).map_err(|failure| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                0,
+                                rusqlite::types::Type::Text,
+                                Box::new(failure),
+                            )
+                        })?,
+                        session_id: row.get(1)?,
+                        updated_at_ms: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StorageError::from)
     }
 
     pub fn mark_sessions_missing(
@@ -578,6 +708,14 @@ mod tests {
         }
     }
 
+    fn pane(session_id: &str) -> PaneRecord {
+        PaneRecord {
+            id: PaneId::new(),
+            session_id: session_id.into(),
+            updated_at_ms: 10,
+        }
+    }
+
     #[test]
     fn creates_versioned_schema() {
         let store = Store::open_in_memory().unwrap();
@@ -616,16 +754,56 @@ mod tests {
                 pgid: 200,
                 start_token: "boot:200".into(),
             }),
+            worker_identity: None,
             updated_at_ms: 10,
         };
         let mut conflicting_task = task(existing_id, "new");
         conflicting_task.identity.pid = 200;
+        let created_pane = pane("new");
         assert!(
             store
-                .insert_created_session(&session, &conflicting_task)
+                .insert_created_session(&session, &created_pane, &conflicting_task)
                 .is_err()
         );
         assert!(store.find_session("new").unwrap().is_none());
+    }
+
+    #[test]
+    fn created_session_has_one_pane_and_one_task_instance() {
+        let mut store = Store::open_in_memory().unwrap();
+        let session = SessionRecord {
+            id: "one".into(),
+            owner: "local".into(),
+            state: "running".into(),
+            identity: Some(ProcessIdentity {
+                pid: 300,
+                pgid: 300,
+                start_token: "boot:300".into(),
+            }),
+            worker_identity: Some(ProcessIdentity {
+                pid: 290,
+                pgid: 290,
+                start_token: "worker:290".into(),
+            }),
+            updated_at_ms: 10,
+        };
+        let created_pane = pane("one");
+        let created_task = task(TaskId::new(), "one");
+        store
+            .insert_created_session(&session, &created_pane, &created_task)
+            .unwrap();
+        assert_eq!(
+            store.find_pane_for_session("one").unwrap().unwrap().id,
+            created_pane.id
+        );
+        assert_eq!(
+            store.find_task_for_session("one").unwrap().unwrap().id,
+            created_task.id
+        );
+        assert!(
+            store.insert_task(&task(TaskId::new(), "one")).is_err(),
+            "a second TaskInstance for one Session must be rejected"
+        );
     }
 
     #[test]
@@ -716,6 +894,7 @@ mod tests {
                 owner: "local".into(),
                 state: "running".into(),
                 identity: None,
+                worker_identity: None,
                 updated_at_ms: 1,
             })
             .unwrap();
@@ -732,6 +911,7 @@ mod tests {
                 owner: "local".into(),
                 state: "exited".into(),
                 identity: None,
+                worker_identity: None,
                 updated_at_ms: 1,
             })
             .unwrap();

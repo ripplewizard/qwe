@@ -1,7 +1,6 @@
 # Development Readiness
 
-Status: Stage 0 complete; Stage 1 in progress; Stage 2 Attach vertical slice
-in progress
+Status: Stage 1 implementation complete; dual-platform pdsh validation pending
 Date: 2026-11-05
 
 ## Decision
@@ -10,10 +9,9 @@ Rust development may start. Manual POC sign-off remains pending, but it is not
 a dependency for implementation. The project must not describe manual TUI
 quality or final POC audit as complete until review is signed.
 
-ADRs 0011-0015 are accepted. The Attach framing contract and V0 object/state
-contract have a canonical machine-readable schema and drift gate. Current code
-remains on the pre-cutover migration topology. A dedicated long-lived Attach
-path now runs across that topology without changing worker ownership.
+ADRs 0011-0015 are accepted. qwed now directly supervises workers, and the
+pre-cutover Host path has been removed. The V0 runtime has one Pane and one
+TaskInstance per Session, with database uniqueness constraints.
 
 ## Confirmed Inputs
 
@@ -22,10 +20,12 @@ path now runs across that topology without changing worker ownership.
 - All 43 matrix cases have latest results on both platforms.
 - Linux-only and macOS-only verification each cover 129 expected cells.
 - Cross-platform XP01 has no missing language/platform/case cell.
-- Host/worker recovery, SQLite Task/Lease state, reconciliation, and concurrent
-  Attach pass on macOS and Fedora.
-- Host inventory reconciliation runs every 250 ms.
-- Worker rediscovery validates socket path and worker start token.
+- Supervisor/worker recovery, SQLite Task/Lease state, reconciliation, and
+  concurrent Attach pass on macOS and Fedora.
+- Worker exits are observed through `SIGCHLD`/`waitpid`; a two-second fallback
+  scan uses a dedicated persistent health channel and a 500 ms PING deadline.
+- Worker rediscovery validates socket path, SessionId, worker PID, and start
+  token.
 - Lease release preserves a monotonic generation tombstone.
 - `just stage0-check`, `just check-qwe`, `just t12-host-smoke`, and
   `just resilience-smoke` pass on macOS ARM64 and Fedora Linux x86_64. The
@@ -36,16 +36,18 @@ path now runs across that topology without changing worker ownership.
 The current process topology and request/response protocol are implemented, but
 the following accepted contracts are not yet implemented:
 
-- ADR 0011: consolidate qwed and qwe-host. Stage 1 migration.
+- ADR 0011: qwed supervises workers directly, Host epoch/polling are removed,
+  and a process-lifetime `flock(2)` protects the singleton.
 - ADR 0012: the long-lived Attach channel, typed binary frames, snapshot
   continuity, resize, and an interactive CLI loop are implemented. Detached
   holds and persisted reclaim authority remain Stage 3 work.
-- ADR 0013: explicit V0 Session/Task/Pane cardinality and lifecycle. The
-  current code still has implicit 1:1 behavior and a duplicate creation path.
+- ADR 0013: Session 1:1 Pane 1:1 TaskInstance is persisted, `session.create` is
+  the sole creation operation, and `task.start` has been removed.
 - ADR 0014: attachment, owner, and detached-hold authorization matrix. Stage 3
   implementation.
-- ADR 0015: worker health, unresponsive detection, and reconciliation truth
-  table. Stage 1/3 implementation.
+- ADR 0015: event-first supervision, persistent control EOF, unreachable
+  health, and the safety scan are implemented. Complete orphan/conflict state
+  matrix coverage remains Stage 3.
 
 The contract is stable; implementation status is tracked separately. A schema
 entry does not claim that a runtime behavior is complete.
@@ -80,7 +82,8 @@ These are implementation work, not reasons to delay development:
 - Lease wall-clock anomaly handling and default detached-hold TTL are not
   defined.
 - Session/Task history has no capacity or age-retention policy.
-- systemd and launchd ownership of Host and worker processes is not implemented.
+- systemd and launchd ownership of supervisor and worker processes is not
+  implemented.
 - Adversarial unauthorized-client and malformed-frame tests are incomplete.
 - Release-mode soak and larger-concurrency measurements remain pending.
 - API Key Manager, Pane resource limits, and forced teardown remain D3 scope.

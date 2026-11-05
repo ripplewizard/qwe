@@ -437,7 +437,6 @@ pub struct RequestEnvelope {
     pub version: u16,
     pub request_id: String,
     pub idempotency_key: Option<String>,
-    pub host_epoch: Option<u64>,
     pub operation: String,
     pub payload: serde_json::Value,
 }
@@ -606,8 +605,7 @@ mod tests {
             version: PROTOCOL_VERSION,
             request_id: "req-1".into(),
             idempotency_key: Some("key-1".into()),
-            host_epoch: Some(1),
-            operation: "task.start".into(),
+            operation: "session.create".into(),
             payload: serde_json::json!({"name": "demo"}),
         };
         let frame = encode_frame(&request).unwrap();

@@ -2,10 +2,10 @@
 
 Status: Accepted
 Date: 2026-11-04
-Implementation state: Accepted target; not implemented. The current
-`qwed` + `qwe-host` topology remains the migration baseline until the Stage 1
-cutover completes. The attach and authorization contracts in ADRs 0012 and
-0014 are accepted as dependencies.
+Implementation state: Implemented. qwed directly supervises `qwe-worker`
+processes, uses a process-lifetime `flock(2)`, observes lifecycle events, and
+runs the safety scan. Authorization and reclaim work in ADRs 0012 and 0014
+remain staged separately.
 
 ## Context
 
