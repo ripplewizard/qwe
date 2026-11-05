@@ -46,5 +46,10 @@ fi
 
 pkill -TERM -f -- "--worker-socket ${QWE_MANUAL_SOCKET}.runtime/" 2>/dev/null || true
 
+shopt -s nullglob
+for mapping in "$STATE_ROOT"/*.session; do
+  rm -f "$mapping"
+done
+shopt -u nullglob
 rm -f "$STATE_FILE"
 printf 'Review environment stopped. Logs remain in %s\n' "$STATE_ROOT"
