@@ -3,6 +3,14 @@ use std::fmt;
 use std::str::FromStr;
 use uuid::Uuid;
 
+mod authority;
+
+pub use authority::{
+    AttachmentAuthority, AttachmentOperation, AuthorityCredentials, AuthorityError,
+    DEFAULT_DETACHED_HOLD_TTL_MS, DEFAULT_LEASE_TTL_MS, DEFAULT_RECLAIM_GRACE_MS, MAX_LEASE_TTL_MS,
+    ReclaimTokenHash,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(Uuid);
 
@@ -242,6 +250,16 @@ impl AttachmentAuthorityState {
             Self::Active => "active",
             Self::ReclaimGrace => "reclaim_grace",
             Self::Held => "held",
+        }
+    }
+
+    #[must_use]
+    pub fn from_db(value: &str) -> Self {
+        match value {
+            "active" => Self::Active,
+            "reclaim_grace" => Self::ReclaimGrace,
+            "held" => Self::Held,
+            _ => Self::Unattached,
         }
     }
 

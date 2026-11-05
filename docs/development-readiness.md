@@ -1,7 +1,6 @@
 # Development Readiness
 
-Status: Stage 1 hardening complete on Linux and macOS; Stage 2 automated and
-TUI acceptance complete
+Status: Stages 1, 2, and 3 complete for automated acceptance
 Date: 2026-11-05
 
 ## Decision
@@ -33,23 +32,24 @@ TaskInstance per Session, with database uniqueness constraints.
   `just resilience-smoke` pass on macOS ARM64 and Fedora Linux x86_64. The
   macOS Secret Provider/resource probe is intentionally macOS-only.
 
-## Accepted Contracts Awaiting Implementation
+## Accepted Contract Status
 
-The current process topology and request/response protocol are implemented, but
-the following accepted contracts are not yet implemented:
+The current process topology and request/response protocol are implemented.
+Contract status is:
 
-- ADR 0011: qwed supervises workers directly, Host epoch/polling are removed,
-  and a process-lifetime `flock(2)` protects the singleton.
+- ADR 0011: complete. qwed supervises workers directly, Host epoch/polling are
+  removed, and a process-lifetime `flock(2)` protects the singleton.
 - ADR 0012: the long-lived Attach channel, typed binary frames, snapshot
-  continuity, resize, and an interactive CLI loop are implemented. Detached
-  holds and persisted reclaim authority remain Stage 3 work.
+  continuity, resize, and an interactive CLI loop are implemented. Stage 3 adds
+  persisted reclaim authority and detached holds.
 - ADR 0013: Session 1:1 Pane 1:1 TaskInstance is persisted, `session.create` is
   the sole creation operation, and `task.start` has been removed.
-- ADR 0014: attachment, owner, and detached-hold authorization matrix. Stage 3
-  implementation.
+- ADR 0014: complete for automated acceptance on macOS and Fedora. Attach,
+  close/task-stop/input, Lease operations, restart reclaim, and detached holds
+  enforce the authority matrix.
 - ADR 0015: event-first supervision, persistent control EOF, unreachable
-  health, and the safety scan are implemented. Complete orphan/conflict state
-  matrix coverage remains Stage 3.
+  health, the safety scan, and orphan/conflict quarantine reporting are
+  implemented and pass on macOS and Fedora.
 
 The contract is stable; implementation status is tracked separately. A schema
 entry does not claim that a runtime behavior is complete.
@@ -78,12 +78,12 @@ These are implementation work, not reasons to delay development:
 - One-shot `SESSION_ATTACH` remains only as a diagnostic `session snapshot`
   command; its structured `terminal` field now includes cursor, modes,
   alternate-screen state, mouse mode, paste mode, and next stream offset.
-- Idempotency keys are carried by requests but are not yet deduplicated in
-  durable control state.
-- Idempotency response replay and retention semantics are not defined.
-- Lease wall-clock anomaly handling and default detached-hold TTL are not
-  defined.
-- Session/Task history has no capacity or age-retention policy.
+- Mutating control requests are durably idempotent for 24 hours. A pending
+  `SESSION_CREATE` reconstructs its canonical response after restart. Other
+  pending mutations fail closed with `idempotency_indeterminate` instead of
+  risking a duplicate effect.
+- Lease renewal anchoring, maximum TTL, and 30-day/10,000-terminal-Session
+  history pruning are implemented under ADR 0016.
 - systemd and launchd ownership of supervisor and worker processes is not
   implemented.
 - Adversarial unauthorized-client and malformed-frame tests are incomplete.
@@ -95,8 +95,10 @@ These are implementation work, not reasons to delay development:
   platforms. Concurrent independent queues cannot be observed in V0 because
   exclusive Attach rejects a second live client; queue-state isolation remains
   unit-tested.
-- Positive-TTL detached holds and reclaim-token restoration are not implemented
-  until Stage 3.
+- Positive-TTL detached holds, generation-fenced reattach, Lease release
+  tombstones, and supervisor-restart reclaim grace are implemented.
+- `TASK_STOP`, `SESSION_CLOSE`, and `SESSION_INPUT` enforce the authority matrix;
+  `qwe session input` establishes a temporary Active channel automatically.
 - Stage 2 automated Attach and tmux-driven Neovim/htop checks pass on Linux
   x86_64 and macOS ARM64. Independent manual sign-off remains pending.
 
@@ -109,7 +111,7 @@ These are implementation work, not reasons to delay development:
 
 ## Start Gate
 
-Stages 0 and 1 are complete. Stage 2 automated Attach/TUI acceptance is
-complete; independent manual sign-off remains open. Stage 3 may start from a
-short-lived branch based on `dev`. The `poc` branch is read-only historical
-evidence and must not be used as the active development branch.
+Stages 0-3 automated acceptance is complete. Stage 2 independent manual TUI
+sign-off remains a separate non-blocking audit item. The `poc` branch is
+read-only historical evidence and must not be used as the active development
+branch.

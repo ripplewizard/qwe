@@ -1,11 +1,37 @@
 use qwe_core::{
-    LeaseRecord, PaneId, PaneRecord, ProcessIdentity, SessionRecord, TaskId, TaskRecord, TaskState,
+    AttachmentAuthority, AttachmentAuthorityState, LeaseRecord, PaneId, PaneRecord,
+    ProcessIdentity, SessionRecord, TaskId, TaskRecord, TaskState,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 8;
+pub const IDEMPOTENCY_RETENTION_MS: i64 = 24 * 60 * 60 * 1_000;
+pub const HISTORY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
+pub const HISTORY_MAX_TERMINAL_SESSIONS: i64 = 10_000;
+pub const IDEMPOTENCY_PENDING: &str = "pending";
+pub const IDEMPOTENCY_COMPLETE: &str = "complete";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdempotencyRecord {
+    pub key: String,
+    pub operation: String,
+    pub request_fingerprint: String,
+    pub state: String,
+    pub response_json: Option<String>,
+    pub created_at_ms: i64,
+    pub expires_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HistoryPruneReport {
+    pub sessions: u64,
+    pub tasks: u64,
+    pub panes: u64,
+    pub leases: u64,
+    pub attachment_authorities: u64,
+}
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum LeaseError {
@@ -106,7 +132,28 @@ impl Store {
                     updated_at_ms INTEGER NOT NULL,
                     released_at_ms INTEGER
                 );
-                PRAGMA user_version = 6;
+                CREATE TABLE attachment_authorities (
+                    session_id TEXT PRIMARY KEY
+                        REFERENCES sessions(id) ON DELETE RESTRICT,
+                    state TEXT NOT NULL,
+                    owner TEXT,
+                    generation INTEGER NOT NULL,
+                    reclaim_token_hash TEXT,
+                    deadline_ms INTEGER,
+                    updated_at_ms INTEGER NOT NULL
+                );
+                CREATE TABLE idempotency_records (
+                    idempotency_key TEXT PRIMARY KEY,
+                    operation TEXT NOT NULL,
+                    request_fingerprint TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    response_json TEXT,
+                    created_at_ms INTEGER NOT NULL,
+                    expires_at_ms INTEGER NOT NULL
+                );
+                CREATE INDEX idempotency_expiry
+                    ON idempotency_records(expires_at_ms);
+                PRAGMA user_version = 8;
                 ",
             )?;
             transaction.commit()?;
@@ -256,6 +303,67 @@ impl Store {
                 ",
             )?;
             transaction.commit()?;
+            current = 6;
+        }
+        if current == 6 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "
+                CREATE TABLE attachment_authorities (
+                    session_id TEXT PRIMARY KEY
+                        REFERENCES sessions(id) ON DELETE RESTRICT,
+                    state TEXT NOT NULL,
+                    owner TEXT,
+                    generation INTEGER NOT NULL,
+                    reclaim_token_hash TEXT,
+                    deadline_ms INTEGER,
+                    updated_at_ms INTEGER NOT NULL
+                );
+                CREATE TABLE idempotency_records (
+                    idempotency_key TEXT PRIMARY KEY,
+                    operation TEXT NOT NULL,
+                    request_fingerprint TEXT NOT NULL,
+                    response_json TEXT NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    expires_at_ms INTEGER NOT NULL
+                );
+                CREATE INDEX idempotency_expiry
+                    ON idempotency_records(expires_at_ms);
+                PRAGMA user_version = 7;
+                ",
+            )?;
+            transaction.commit()?;
+            current = 7;
+        }
+        if current == 7 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "
+                CREATE TABLE idempotency_records_v8 (
+                    idempotency_key TEXT PRIMARY KEY,
+                    operation TEXT NOT NULL,
+                    request_fingerprint TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    response_json TEXT,
+                    created_at_ms INTEGER NOT NULL,
+                    expires_at_ms INTEGER NOT NULL
+                );
+                INSERT INTO idempotency_records_v8 (
+                    idempotency_key, operation, request_fingerprint, state,
+                    response_json, created_at_ms, expires_at_ms
+                )
+                SELECT idempotency_key, operation, request_fingerprint, 'complete',
+                       response_json, created_at_ms, expires_at_ms
+                FROM idempotency_records;
+                DROP INDEX idempotency_expiry;
+                DROP TABLE idempotency_records;
+                ALTER TABLE idempotency_records_v8 RENAME TO idempotency_records;
+                CREATE INDEX idempotency_expiry
+                    ON idempotency_records(expires_at_ms);
+                PRAGMA user_version = 8;
+                ",
+            )?;
+            transaction.commit()?;
         }
         Ok(())
     }
@@ -350,6 +458,130 @@ impl Store {
             .list_sessions()?
             .into_iter()
             .find(|session| session.id == id))
+    }
+
+    pub fn get_attachment_authority(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<AttachmentAuthority>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT state, owner, generation, reclaim_token_hash, deadline_ms
+                 FROM attachment_authorities WHERE session_id = ?1",
+                [session_id],
+                |row| {
+                    let state = AttachmentAuthorityState::from_db(&row.get::<_, String>(0)?);
+                    let token_hash = row
+                        .get::<_, Option<String>>(3)?
+                        .map(qwe_core::ReclaimTokenHash::from_persisted);
+                    Ok(AttachmentAuthority {
+                        state,
+                        owner: row.get(1)?,
+                        generation: row.get::<_, i64>(2)? as u64,
+                        reclaim_token_hash: token_hash,
+                        deadline_ms: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    pub fn write_attachment_authority(
+        &mut self,
+        session_id: &str,
+        authority: &AttachmentAuthority,
+        now_ms: i64,
+    ) -> Result<(), StorageError> {
+        write_attachment_authority(&self.connection, session_id, authority, now_ms)
+    }
+
+    pub fn enter_reclaim_grace(&mut self, now_ms: i64, grace_ms: i64) -> Result<u64, StorageError> {
+        let changed = self.connection.execute(
+            "UPDATE attachment_authorities
+             SET state = 'reclaim_grace', deadline_ms = ?1, updated_at_ms = ?2
+             WHERE state = 'active'",
+            params![now_ms.saturating_add(grace_ms), now_ms],
+        )?;
+        Ok(changed as u64)
+    }
+
+    pub fn activate_attachment(
+        &mut self,
+        session_id: &str,
+        authority: &AttachmentAuthority,
+        release_hold: Option<(&str, u64)>,
+        now_ms: i64,
+    ) -> Result<(), StorageError> {
+        if authority.state != AttachmentAuthorityState::Active {
+            return Err(StorageError::Invariant(
+                "activated attachment authority must be active".into(),
+            ));
+        }
+        let transaction = self.connection.transaction()?;
+        if let Some((owner, generation)) = release_hold {
+            let lease = transaction
+                .query_row(
+                    "SELECT session_id, owner, generation, deadline_ms,
+                            updated_at_ms, released_at_ms
+                     FROM leases WHERE session_id = ?1",
+                    [session_id],
+                    lease_from_row,
+                )
+                .optional()?
+                .ok_or(LeaseError::NotFound)?;
+            if lease.owner != owner || lease.generation != generation {
+                return Err(LeaseError::NotOwner.into());
+            }
+            if lease.released_at_ms.is_some() || lease.deadline_ms <= now_ms {
+                return Err(LeaseError::Expired.into());
+            }
+            if authority.generation != generation + 1 {
+                return Err(StorageError::Invariant(
+                    "attachment generation must consume one Lease generation".into(),
+                ));
+            }
+            transaction.execute(
+                "UPDATE leases SET owner = '', generation = ?2, deadline_ms = ?3,
+                    updated_at_ms = ?3, released_at_ms = ?3
+                 WHERE session_id = ?1",
+                params![session_id, authority.generation as i64, now_ms],
+            )?;
+        }
+        write_attachment_authority(&transaction, session_id, authority, now_ms)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn persist_attachment_hold(
+        &mut self,
+        session_id: &str,
+        owner: &str,
+        generation: u64,
+        deadline_ms: i64,
+        now_ms: i64,
+    ) -> Result<AttachmentAuthority, StorageError> {
+        let authority = AttachmentAuthority::held(owner, generation, deadline_ms);
+        let transaction = self.connection.transaction()?;
+        write_attachment_authority(&transaction, session_id, &authority, now_ms)?;
+        transaction.execute(
+            "
+            INSERT INTO leases (
+                session_id, owner, generation, deadline_ms, updated_at_ms,
+                released_at_ms
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, NULL)
+            ON CONFLICT(session_id) DO UPDATE SET
+                owner = excluded.owner,
+                generation = excluded.generation,
+                deadline_ms = excluded.deadline_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                released_at_ms = NULL
+            ",
+            params![session_id, owner, generation as i64, deadline_ms, now_ms],
+        )?;
+        transaction.commit()?;
+        Ok(authority)
     }
 
     pub fn insert_created_session(
@@ -586,6 +818,180 @@ impl Store {
             .map_err(StorageError::from)
     }
 
+    pub fn find_idempotency(
+        &self,
+        key: &str,
+        now_ms: i64,
+    ) -> Result<Option<IdempotencyRecord>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT idempotency_key, operation, request_fingerprint,
+                        state, response_json, created_at_ms, expires_at_ms
+                 FROM idempotency_records
+                 WHERE idempotency_key = ?1 AND expires_at_ms > ?2",
+                params![key, now_ms],
+                |row| {
+                    Ok(IdempotencyRecord {
+                        key: row.get(0)?,
+                        operation: row.get(1)?,
+                        request_fingerprint: row.get(2)?,
+                        state: row.get(3)?,
+                        response_json: row.get(4)?,
+                        created_at_ms: row.get(5)?,
+                        expires_at_ms: row.get(6)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    pub fn record_idempotency(
+        &mut self,
+        key: &str,
+        operation: &str,
+        request_fingerprint: &str,
+        response_json: &str,
+        now_ms: i64,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "
+            INSERT INTO idempotency_records (
+                idempotency_key, operation, request_fingerprint,
+                state, response_json, created_at_ms, expires_at_ms
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ",
+            params![
+                key,
+                operation,
+                request_fingerprint,
+                IDEMPOTENCY_COMPLETE,
+                response_json,
+                now_ms,
+                now_ms.saturating_add(IDEMPOTENCY_RETENTION_MS)
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn reserve_idempotency(
+        &mut self,
+        key: &str,
+        operation: &str,
+        request_fingerprint: &str,
+        now_ms: i64,
+    ) -> Result<bool, StorageError> {
+        let inserted = self.connection.execute(
+            "
+            INSERT INTO idempotency_records (
+                idempotency_key, operation, request_fingerprint,
+                state, response_json, created_at_ms, expires_at_ms
+            )
+            VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)
+            ON CONFLICT(idempotency_key) DO NOTHING
+            ",
+            params![
+                key,
+                operation,
+                request_fingerprint,
+                IDEMPOTENCY_PENDING,
+                now_ms,
+                now_ms.saturating_add(IDEMPOTENCY_RETENTION_MS)
+            ],
+        )?;
+        Ok(inserted == 1)
+    }
+
+    pub fn complete_idempotency(
+        &mut self,
+        key: &str,
+        response_json: &str,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "UPDATE idempotency_records
+             SET state = ?2, response_json = ?3
+             WHERE idempotency_key = ?1",
+            params![key, IDEMPOTENCY_COMPLETE, response_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_idempotency(&mut self, key: &str) -> Result<(), StorageError> {
+        self.connection.execute(
+            "DELETE FROM idempotency_records WHERE idempotency_key = ?1",
+            [key],
+        )?;
+        Ok(())
+    }
+
+    pub fn prune_expired_idempotency(&mut self, now_ms: i64) -> Result<u64, StorageError> {
+        let removed = self.connection.execute(
+            "DELETE FROM idempotency_records WHERE expires_at_ms <= ?1",
+            [now_ms],
+        )?;
+        Ok(removed as u64)
+    }
+
+    pub fn prune_terminal_history(
+        &mut self,
+        now_ms: i64,
+        retention_ms: i64,
+        max_terminal_sessions: i64,
+    ) -> Result<HistoryPruneReport, StorageError> {
+        if retention_ms <= 0 || max_terminal_sessions < 0 {
+            return Err(StorageError::Invariant(
+                "history retention and capacity must be non-negative".into(),
+            ));
+        }
+        let cutoff_ms = now_ms.saturating_sub(retention_ms);
+        let mut statement = self.connection.prepare(
+            "
+            SELECT id FROM sessions
+            WHERE state IN ('closed', 'lost')
+              AND updated_at_ms < ?1
+              AND id NOT IN (
+                  SELECT id FROM sessions
+                  WHERE state IN ('closed', 'lost')
+                  ORDER BY updated_at_ms DESC, id DESC
+                  LIMIT ?2
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM attachment_authorities
+                  WHERE attachment_authorities.session_id = sessions.id
+              )
+            ORDER BY updated_at_ms, id
+            ",
+        )?;
+        let session_ids = statement
+            .query_map(params![cutoff_ms, max_terminal_sessions], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        let mut report = HistoryPruneReport::default();
+        let transaction = self.connection.transaction()?;
+        for session_id in session_ids {
+            report.tasks += transaction
+                .execute("DELETE FROM tasks WHERE session_id = ?1", [&session_id])?
+                as u64;
+            report.panes += transaction
+                .execute("DELETE FROM panes WHERE session_id = ?1", [&session_id])?
+                as u64;
+            report.leases += transaction
+                .execute("DELETE FROM leases WHERE session_id = ?1", [&session_id])?
+                as u64;
+            report.attachment_authorities += transaction.execute(
+                "DELETE FROM attachment_authorities WHERE session_id = ?1",
+                [&session_id],
+            )? as u64;
+            report.sessions +=
+                transaction.execute("DELETE FROM sessions WHERE id = ?1", [&session_id])? as u64;
+        }
+        transaction.commit()?;
+        Ok(report)
+    }
+
     pub fn claim_lease(
         &mut self,
         session_id: &str,
@@ -731,6 +1137,50 @@ impl Store {
         )?;
         Ok(())
     }
+}
+
+fn write_attachment_authority(
+    connection: &Connection,
+    session_id: &str,
+    authority: &AttachmentAuthority,
+    now_ms: i64,
+) -> Result<(), StorageError> {
+    if authority.state == AttachmentAuthorityState::Unattached {
+        connection.execute(
+            "DELETE FROM attachment_authorities WHERE session_id = ?1",
+            [session_id],
+        )?;
+        return Ok(());
+    }
+    connection.execute(
+        "
+        INSERT INTO attachment_authorities (
+            session_id, state, owner, generation, reclaim_token_hash,
+            deadline_ms, updated_at_ms
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        ON CONFLICT(session_id) DO UPDATE SET
+            state = excluded.state,
+            owner = excluded.owner,
+            generation = excluded.generation,
+            reclaim_token_hash = excluded.reclaim_token_hash,
+            deadline_ms = excluded.deadline_ms,
+            updated_at_ms = excluded.updated_at_ms
+        ",
+        params![
+            session_id,
+            authority.state.as_str(),
+            authority.owner,
+            authority.generation as i64,
+            authority
+                .reclaim_token_hash
+                .as_ref()
+                .map(qwe_core::ReclaimTokenHash::as_str),
+            authority.deadline_ms,
+            now_ms
+        ],
+    )?;
+    Ok(())
 }
 
 fn task_from_row(row: &Row<'_>) -> rusqlite::Result<TaskRecord> {
@@ -941,6 +1391,126 @@ mod tests {
     }
 
     #[test]
+    fn lease_renewal_does_not_shorten_deadlines_when_the_wall_clock_moves_back() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.upsert_session(&session("clock")).unwrap();
+        let claimed = store.claim_lease("clock", "alice", 1_000, 10_000).unwrap();
+        assert_eq!(claimed.deadline_ms, 11_000);
+
+        let renewed = store.claim_lease("clock", "alice", 1_000, 9_000).unwrap();
+        assert_eq!(renewed.deadline_ms, 11_000);
+        assert_eq!(renewed.updated_at_ms, 9_000);
+
+        let touched = store
+            .touch_lease("clock", "alice", 1, 1_000, 8_500)
+            .unwrap();
+        assert_eq!(touched.deadline_ms, 10_000);
+        assert_eq!(touched.generation, 1);
+    }
+
+    #[test]
+    fn persisted_active_attachment_enters_reclaim_grace() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.upsert_session(&session("authority")).unwrap();
+        let token_hash = qwe_core::ReclaimTokenHash::from_token("reclaim-token");
+        let authority = AttachmentAuthority::active("alice", token_hash.clone());
+        store
+            .write_attachment_authority("authority", &authority, 1_000)
+            .unwrap();
+
+        assert_eq!(
+            store
+                .get_attachment_authority("authority")
+                .unwrap()
+                .unwrap(),
+            authority
+        );
+        assert_eq!(store.enter_reclaim_grace(2_000, 5_000).unwrap(), 1);
+        let recovered = store
+            .get_attachment_authority("authority")
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.state, AttachmentAuthorityState::ReclaimGrace);
+        assert_eq!(recovered.deadline_ms, Some(7_000));
+        assert_eq!(recovered.reclaim_token_hash, Some(token_hash));
+
+        store
+            .write_attachment_authority("authority", &AttachmentAuthority::unattached(), 3_000)
+            .unwrap();
+        assert!(
+            store
+                .get_attachment_authority("authority")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn idempotency_records_replay_until_the_retention_deadline() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .record_idempotency(
+                "key-1",
+                "SESSION_CREATE",
+                "fingerprint",
+                r#"{"result":{"session_id":"s1"}}"#,
+                10_000,
+            )
+            .unwrap();
+        let record = store.find_idempotency("key-1", 10_001).unwrap().unwrap();
+        assert_eq!(record.operation, "SESSION_CREATE");
+        assert_eq!(record.request_fingerprint, "fingerprint");
+        assert_eq!(record.expires_at_ms, 10_000 + IDEMPOTENCY_RETENTION_MS);
+
+        assert!(
+            store
+                .find_idempotency("key-1", record.expires_at_ms)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .prune_expired_idempotency(record.expires_at_ms)
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn idempotency_reservation_survives_until_completion() {
+        let mut store = Store::open_in_memory().unwrap();
+        assert!(
+            store
+                .reserve_idempotency("pending-key", "SESSION_CREATE", "fingerprint", 10_000,)
+                .unwrap()
+        );
+        assert!(
+            !store
+                .reserve_idempotency("pending-key", "SESSION_CREATE", "fingerprint", 10_001,)
+                .unwrap()
+        );
+        let pending = store
+            .find_idempotency("pending-key", 10_002)
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.state, IDEMPOTENCY_PENDING);
+        assert!(pending.response_json.is_none());
+
+        store
+            .complete_idempotency("pending-key", r#"{"Ok":{"session_id":"s1"}}"#)
+            .unwrap();
+        let completed = store
+            .find_idempotency("pending-key", 10_003)
+            .unwrap()
+            .unwrap();
+        assert_eq!(completed.state, IDEMPOTENCY_COMPLETE);
+        assert_eq!(
+            completed.response_json.as_deref(),
+            Some(r#"{"Ok":{"session_id":"s1"}}"#)
+        );
+    }
+
+    #[test]
     fn migrates_version_one_database() {
         let path = std::env::temp_dir().join(format!(
             "qwe-storage-migration-{}-{}.sqlite",
@@ -1019,5 +1589,57 @@ mod tests {
             .unwrap();
         assert_eq!(store.mark_sessions_missing(&[], 2).unwrap(), 1);
         assert_eq!(store.list_sessions().unwrap()[0].state, "lost");
+    }
+
+    #[test]
+    fn history_pruning_requires_both_age_and_terminal_capacity_pressure() {
+        let mut store = Store::open_in_memory().unwrap();
+        for (id, state, updated_at_ms) in [
+            ("old-outside-capacity", "closed", 100),
+            ("newer-retained", "closed", 200),
+            ("newest-retained", "lost", 300),
+            ("running-retained", "running", 50),
+        ] {
+            let mut record = session(id);
+            record.state = state.into();
+            record.updated_at_ms = updated_at_ms;
+            store.upsert_session(&record).unwrap();
+        }
+        let pruned_id = TaskId::new();
+        store
+            .insert_task(&task(pruned_id.clone(), "old-outside-capacity"))
+            .unwrap();
+
+        let report = store.prune_terminal_history(10_000, 1_000, 2).unwrap();
+        assert_eq!(report.sessions, 1);
+        assert_eq!(report.tasks, 1);
+        assert!(
+            store
+                .find_session("old-outside-capacity")
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.find_task(&pruned_id).unwrap().is_none());
+        assert!(store.find_session("newer-retained").unwrap().is_some());
+        assert!(store.find_session("newest-retained").unwrap().is_some());
+        assert!(store.find_session("running-retained").unwrap().is_some());
+    }
+
+    #[test]
+    fn history_pruning_preserves_sessions_with_attachment_authority() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut closed = session("authority-protected");
+        closed.state = "closed".into();
+        closed.updated_at_ms = 1;
+        store.upsert_session(&closed).unwrap();
+        let authority =
+            AttachmentAuthority::active("owner", qwe_core::ReclaimTokenHash::from_token("token"));
+        store
+            .write_attachment_authority("authority-protected", &authority, 2)
+            .unwrap();
+
+        let report = store.prune_terminal_history(10_000, 1_000, 0).unwrap();
+        assert_eq!(report.sessions, 0);
+        assert!(store.find_session("authority-protected").unwrap().is_some());
     }
 }

@@ -26,6 +26,12 @@ just safety-scan-smoke
 just stage2-check
 just attach-e2e
 just tui-attach-smoke
+just stage3-idempotency
+just stage3-attach-authority
+just stage3-control-authority
+just stage3-reconciliation
+just stage3-check
+just stages-1-3-check
 just t12-host-smoke
 just resilience-smoke
 just verify-linux-results
@@ -97,6 +103,32 @@ pass under pdsh on macOS ARM64 and Fedora Linux x86_64.
 
 Reclaim-token and detached-hold acceptance remains part of Stage 3 and is not
 claimed by the Stage 1 gate.
+
+## Stage 3 Gate
+
+`just stage3-check` runs the workspace check, existing Attach and
+recovery gates, durable idempotency replay across qwed restart, and the
+attachment authority probe. The authority probe covers positive-TTL detach,
+wrong owner/generation rejection, Lease touch, Hold-to-Active reattach with a
+release tombstone, qwed SIGKILL during Active Attach, and reclaim by the
+matching token after restart.
+
+`stage3-control-authority` covers Unattached rejection, Held owner+generation
+authorization, Active owner authorization, control-input rejection outside
+Active, close/task-stop behavior, and close-time Lease release.
+
+`stage3-reconciliation` starts real qwed/qwe-worker processes and covers
+healthy and unreachable orphans, closed-session conflicts, persisted identity
+mismatch, duplicate workers for one SessionId, quarantine preservation, and
+rejection of normal control access to unowned runtime entries.
+
+The gate includes two-phase `SESSION_CREATE` recovery, terminal-history
+pruning, and failure of pending non-creation mutations with
+`idempotency_indeterminate`.
+
+`just stages-1-3-check` runs Stage 1 hardening, Stage 2 Attach/TUI, and Stage 3
+through one command. It passes on macOS ARM64 and Fedora Linux x86_64; the
+audit is recorded in [Experiment 0009](experiments/0009-stages-1-3-audit.md).
 
 ## ADR 0012-0015 Contract Matrices
 

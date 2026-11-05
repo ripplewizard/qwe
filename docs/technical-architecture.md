@@ -48,8 +48,10 @@ token. The detailed current protocol and authority boundary are in
 [IPC Protocol](ipc-protocol.md).
 
 Production resize and complete structured VT-mode snapshots are implemented on
-the long-lived Attach path. Detached holds and durable attachment authority
-remain Stage 3 work; see [Development Readiness](development-readiness.md).
+the long-lived Attach path. Stage 3 adds detached holds, durable attachment
+authority, restart reclaim grace, and durable idempotency. Remaining ownership
+and liveness matrix work is tracked in
+[Development Readiness](development-readiness.md).
 
 ## 2. Process Responsibilities
 
@@ -198,6 +200,10 @@ and `TASK_STOP` return lightweight metadata only. `SESSION_ATTACH` is the
 only operation that returns the VT screen and journal tail, preventing status
 polling from serializing large responses ahead of PTY input.
 
+`SESSION_INPUT`, `TASK_STOP`, and `SESSION_CLOSE` require attachment authority.
+The CLI temporarily attaches for scripted input and accepts a logical owner
+plus optional Held generation for teardown.
+
 [ADR 0012](adr/0012-terminal-attach-data-plane.md) is implemented for the V0
 exclusive mode. The long-lived channel handles Attach, input, resize, immediate
 detach, and connection EOF. The `SESSION_ATTACH` request remains only as a
@@ -207,8 +213,14 @@ data plane.
 The worker registers the subscriber before capturing the snapshot. The
 snapshot's `next_stream_offset` is the first offset that may appear in an
 `OUTPUT` frame. A per-attachment queue overflows at 1 MiB and closes only that
-channel with `output_backpressure`. Positive-TTL detached holds and persisted
-reclaim-token authority remain Stage 3.
+channel with `output_backpressure`.
+
+Stage 3 moves attachment authority to qwed. qwed validates `ATTACH_OPEN`,
+persists the active owner and SHA-256 reclaim-token hash, and only then sends
+`ATTACH_ACCEPTED`. It intercepts `DETACH` to create a positive-TTL hold or an
+immediate release. Reattach consumes the current Lease generation and writes a
+release tombstone. Persisted Active authority becomes Reclaim Grace at qwed
+startup; only the matching token can resume the Session during that window.
 
 ## 6. State Ownership
 
@@ -220,6 +232,7 @@ reclaim-token authority remain Stage 3.
 | Task process group | Session worker | Identity mirrored to SQLite |
 | Session/Pane/TaskInstance metadata | `qwed` | SQLite |
 | Lease owner/deadline | `qwed` | SQLite |
+| Attachment authority | `qwed` | SQLite token hash, owner, generation, deadline |
 | Task history | `qwed` | SQLite |
 | Worker control, health, and inventory | `qwed` supervisor | Persistent channels, rebuilt by reconciliation |
 | Configuration | Workspace files | Files |
@@ -257,10 +270,24 @@ The process start token is mandatory. PID alone is never sufficient.
 - Migrations are monotonic and transactional.
 - A newer schema is rejected by older binaries.
 - High-frequency terminal bytes are not written to SQLite per frame.
-- Requests carry idempotency keys, but durable deduplication and response
-  replay are not implemented until Stage 3.
+- Mutating requests require idempotency keys. qwed uses the logical operation
+  and canonical payload as the request fingerprint, replays stored results for
+  24 hours, and rejects key reuse for a different request.
+- Idempotency reserves a pending record before the effect and marks it complete
+  with the replayable response afterward. A pending `SESSION_CREATE` recovers
+  a stable response from persisted objects and worker status after restart.
+- Pending non-creation mutations return `idempotency_indeterminate` rather than
+  re-executing an effect whose outcome cannot be proven.
+- Terminal Session, Pane, and Task history is pruned only when both older than
+  30 days and outside the newest 10,000 terminal Sessions. Sessions with
+  attachment authority are retained.
 - Startup reconciliation marks missing running or exited Sessions as `lost`;
   an exited Task remains `exited`.
+- Startup probes runtime worker sockets before accepting clients. Orphan health
+  is reported, duplicate/identity/closed-session conflicts choose no worker,
+  and conflicting socket families are quarantined without deleting them.
+- `CONTROL_STATUS.reconciliation` exposes structured
+  `orphaned_runtime_entries` and `conflict_runtime_entries`.
 - Lifecycle events identify vanished workers; the safety scan covers missed
   events without treating an unresponsive but live worker as exited.
 - Workers are spawned as qwed children. `SIGCHLD`/`waitpid` is the primary exit
@@ -270,9 +297,9 @@ The process start token is mandatory. PID alone is never sufficient.
 - `CONTROL_STATUS.reconciliation` is computed from current Sessions, Tasks, and
   worker health. `last_scan_ms` reports the latest completed safety scan rather
   than a static startup value.
-- SQLite v6 enforces Session references from Tasks, Panes, and Leases with
-  foreign keys. `CONTROL_STATUS` returns Pane records alongside Sessions and
-  Tasks.
+- SQLite v8 enforces Session references and stores attachment authority plus
+  two-phase idempotency replay records. `CONTROL_STATUS` returns Pane records
+  alongside Sessions and Tasks.
 - Lease release writes a generation tombstone; expiration does not kill Tasks.
 
 ## 10. Resource Model
@@ -313,21 +340,13 @@ exists; otherwise the field is `unsupported`.
 - D3 Pane resource policy covers CPU, memory, and process limits.
 - D3 forced teardown covers Session, Server, and batch Task termination.
 
-## 14. Accepted Contracts Awaiting Implementation
+## 14. Open Decisions
 
-The Stage 0 design gate is closed. The following accepted decisions are now
-implementation work:
-
-1. Enforce the accepted attachment authorization matrix.
-2. Implement reclaim tokens, detached holds, and durable idempotency.
-
-Other decisions still open and must be recorded in ADRs before implementation:
+The Stage 0 design gate and automated Stage 1-3 acceptance are closed. These
+decisions remain open and must be recorded in ADRs before implementation:
 
 1. Whether read-only observers are supported beyond the reserved Attach mode.
 2. Final VT engine after broader compatibility benchmarks.
-3. Lease clock-anomaly behavior and default detached-hold TTL before D2.
-4. Idempotency key scope, response replay, and retention before D2.
-5. Session/Task history retention policy before V0.
-6. Exact idle-timeout defaults for non-terminal Sessions.
+3. Exact idle-timeout defaults for non-terminal Sessions.
 
 These decisions must be recorded as accepted ADRs before their implementation.

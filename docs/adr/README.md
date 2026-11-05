@@ -20,3 +20,4 @@ that links to the replaced decision.
 | [0013](0013-core-object-model.md) | V0 core object model and lifecycle | Accepted |
 | [0014](0014-attachment-ownership-authorization.md) | Attachment ownership and authorization | Accepted |
 | [0015](0015-worker-liveness-reconciliation.md) | Worker liveness and reconciliation | Accepted |
+| [0016](0016-stage-3-retention-and-clock-policy.md) | Stage 3 Lease clock, TTL, and retention | Accepted |

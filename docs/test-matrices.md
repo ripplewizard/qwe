@@ -1,6 +1,7 @@
 # V0 Contract Test Matrices
 
-Status: Stage 1 hardening validated on Linux/macOS; Stage 3 matrix remaining
+Status: Stages 1-3 automated matrices validated on macOS ARM64 and Fedora Linux
+x86_64
 Date: 2026-11-05
 
 These IDs are stable contract identifiers. An implementation test may be
@@ -124,6 +125,25 @@ Detection and startup rows are required in addition to the truth table.
 | OBJ-009 | A TaskInstance belongs to exactly one Session for its full lifetime |
 | OBJ-010 | Lease expiry or release never changes Task or Session lifecycle |
 
+## Durable Idempotency
+
+Idempotency keys are scoped to the logical operation and request payload.
+Successful and deterministic error responses are retained for 24 hours.
+
+| ID | Case |
+|---|---|
+| IDEMP-001 | Repeating a mutating request with the same key and payload returns the original response, including after qwed restart and recovery from a pending `SESSION_CREATE` record, without creating duplicate durable records |
+| IDEMP-002 | Reusing a key for a different operation or payload returns `idempotency_conflict` |
+| IDEMP-003 | A mutating request without an idempotency key returns `invalid_request` |
+| IDEMP-004 | Replay records expire at the retention deadline and expired records are removable |
+
+## History Retention
+
+| ID | Case |
+|---|---|
+| HIST-001 | A terminal Session is pruned only when older than 30 days and outside the newest 10,000 terminal Sessions; running Sessions and records with attachment authority are retained |
+| HIST-002 | Startup maintenance removes eligible terminal Session, Task, and Pane history before qwed accepts clients |
+
 ## Stage 1 Hardening Evidence
 
 The following rows now have real-process coverage:
@@ -140,3 +160,24 @@ The following rows now have real-process coverage:
 - The creation-path row: `task.start` is absent from the public protocol and CLI.
 - The Task-ownership row: foreign-key and unique constraints reject orphan or duplicate
   TaskInstance references.
+
+## Stage 3 Completion Evidence
+
+macOS ARM64 and Fedora Linux x86_64 automated evidence exists for:
+
+- Active Attach persistence, fresh CSPRNG reclaim tokens, and supervisor-restart
+  Reclaim Grace.
+- Positive-TTL detached holds, wrong owner/generation rejection, Lease touch,
+  Hold-to-Active reattach, and release tombstones.
+- Lease claim rejection while Active.
+- Durable idempotency replay in-process and across qwed restart, conflict
+  detection, missing-key rejection, and 24-hour expiry records.
+- Unattached, Held, and Active authorization for control input, task stop, and
+  Session close, including wrong owner/generation rejection.
+- Healthy and unreachable orphans, closed-session conflict, identity mismatch,
+  duplicate workers, and non-destructive quarantine reporting.
+
+The AUTH and LIVE policies are unit-tested across every state pair, with
+real-process probes covering attach, grace, hold, Lease, close/task-stop,
+control input, orphan/conflict, identity mismatch, duplicate workers, and
+exited-worker health. The Stage 1-3 audit passes on both required platforms.
