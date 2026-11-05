@@ -65,6 +65,8 @@
   manual T03/T04/T08/T11 sign-off on macOS and Fedora.
 - [Experiment 0011](experiments/0011-kitty-keyboard-reset.md): terminal
   keyboard-protocol restoration fix and PTY regression gate.
+- [Experiment 0012](experiments/0012-stage-3-closure.md): final Stage 3 exit
+  evidence, reliability observation, and Stage 4 isolation.
 
 ## Reading Order
 

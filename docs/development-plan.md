@@ -227,6 +227,8 @@ Current implementation:
 - `just stages-1-3-check` passes on macOS ARM64 and Fedora Linux x86_64.
 - See [Experiment 0009](experiments/0009-stages-1-3-audit.md) for the Stage 1-3
   audit result and the one fixture regression found and fixed.
+- See [Experiment 0012](experiments/0012-stage-3-closure.md) for the final
+  closure record and reliability observation.
 
 ### Stage 4: Services, Security, and V0 Capabilities
 
