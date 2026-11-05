@@ -47,6 +47,9 @@
   transaction, teardown, identity, and reconciliation fixes on both platforms.
 - [Experiment 0005](experiments/0005-stage-2-attach-channel.md): Stage 2
   Attach channel, structured VT state, resize, detach/reattach, and TUI smoke.
+- [Experiment 0006](experiments/0006-stage-1-control-plane.md): qwed
+  supervisor cutover, event-first worker liveness, 1:1 object model, and pdsh
+  cross-platform validation.
 
 ## Reading Order
 

@@ -104,7 +104,7 @@ Evidence:
 ### Stage 1: Control Plane and Protocol Foundation
 
 Target: 2026-11-09 to 2026-11-13
-Status: Implementation complete; final dual-platform pdsh validation pending.
+Status: Complete; pdsh validation passed on macOS ARM64 and Linux x86_64.
 
 - Implement the qwed supervisor and remove the separate Host runtime path.
 - Add `flock(2)` singleton protection and persistent worker control channels.
@@ -128,8 +128,9 @@ Current implementation:
 - SQLite schema v5 persists Pane identity and unique Session/Task cardinality.
   `session.create` atomically creates Session, Pane, and TaskInstance.
 - `task.start` is removed from both the CLI and public protocol operation set.
-- `just stage1-check`, `attach-e2e`, `tui-attach-smoke`, and `check-qwe` pass
-  locally on macOS ARM64. Linux/macOS pdsh results are recorded after commit.
+- `pdsh -w localhost,istoria` runs `check-qwe`, `stage1-check`,
+  `attach-e2e`, and `tui-attach-smoke` concurrently on macOS ARM64 and Linux
+  x86_64; both hosts pass.
 
 ### Stage 2: Attach and Terminal Core
 

@@ -76,8 +76,8 @@ sign-off remains open.
 
 ## ADR 0011 Acceptance Gates
 
-The implementation gates are complete locally; final Linux/macOS evidence is
-recorded after pdsh validation.
+The implementation gates pass under `pdsh -w localhost,istoria` on macOS ARM64
+and Fedora Linux x86_64.
 
 - A worker exit delivered through `SIGCHLD` or control-connection EOF becomes
   `lost` with P95 at or below 50 ms.

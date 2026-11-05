@@ -1,6 +1,6 @@
 # Development Readiness
 
-Status: Stage 1 implementation complete; dual-platform pdsh validation pending
+Status: Stage 1 complete; Stage 2 automated and TUI acceptance complete
 Date: 2026-11-05
 
 ## Decision
@@ -21,7 +21,8 @@ TaskInstance per Session, with database uniqueness constraints.
 - Linux-only and macOS-only verification each cover 129 expected cells.
 - Cross-platform XP01 has no missing language/platform/case cell.
 - Supervisor/worker recovery, SQLite Task/Lease state, reconciliation, and
-  concurrent Attach pass on macOS and Fedora.
+  concurrent Attach pass on macOS ARM64 and Fedora Linux x86_64 under the
+  consolidated topology.
 - Worker exits are observed through `SIGCHLD`/`waitpid`; a two-second fallback
   scan uses a dedicated persistent health channel and a 500 ms PING deadline.
 - Worker rediscovery validates socket path, SessionId, worker PID, and start
@@ -107,7 +108,7 @@ These are implementation work, not reasons to delay development:
 
 ## Start Gate
 
-Stage 0 is complete. Stage 1 starts from a short-lived branch based on `dev`.
-The `poc` branch is read-only historical evidence and must not be used as the
-active development branch. The executable sequence and current target dates
-are in the [Development Plan](development-plan.md).
+Stages 0 and 1 are complete. Stage 2 automated Attach/TUI acceptance is
+complete; independent manual sign-off remains open. Stage 3 may start from a
+short-lived branch based on `dev`. The `poc` branch is read-only historical
+evidence and must not be used as the active development branch.
