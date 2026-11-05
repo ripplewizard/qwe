@@ -14,6 +14,11 @@ use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const TERMINAL_RESET_SEQUENCE: &[u8] = b"\x1b[0m\x1b[0 q\x1b[?25h\x1b[?1l\x1b>\x1b[?7h\
+      \x1b[?2004l\x1b[?2026l\x1b[?1049l\
+      \x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\
+      \x1b[<1u\x1b[=0u\x1b[>4;0m";
+
 #[derive(Debug, Parser)]
 #[command(version, about = "Quick Window Environment CLI")]
 struct Arguments {
@@ -230,10 +235,7 @@ impl RawTerminal {
 
     fn reset_modes(&self) {
         let mut stdout = std::io::stdout().lock();
-        let _ = stdout.write_all(
-            b"\x1b[0m\x1b[?25h\x1b[?1l\x1b>\x1b[?2004l\x1b[?1049l\
-              \x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l",
-        );
+        let _ = stdout.write_all(TERMINAL_RESET_SEQUENCE);
         let _ = stdout.flush();
     }
 }
@@ -724,5 +726,39 @@ fn main() -> ExitCode {
             eprintln!("{}: {}", error.code, error.message);
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TERMINAL_RESET_SEQUENCE;
+
+    #[test]
+    fn terminal_reset_disables_kitty_and_modified_key_protocols() {
+        assert!(
+            TERMINAL_RESET_SEQUENCE
+                .windows(5)
+                .any(|value| value == b"\x1b[<1u")
+        );
+        assert!(
+            TERMINAL_RESET_SEQUENCE
+                .windows(5)
+                .any(|value| value == b"\x1b[=0u")
+        );
+        assert!(
+            TERMINAL_RESET_SEQUENCE
+                .windows(7)
+                .any(|value| value == b"\x1b[>4;0m")
+        );
+        assert!(
+            TERMINAL_RESET_SEQUENCE
+                .windows(8)
+                .any(|value| value == b"\x1b[?2004l")
+        );
+        assert!(
+            TERMINAL_RESET_SEQUENCE
+                .windows(8)
+                .any(|value| value == b"\x1b[?1049l")
+        );
     }
 }

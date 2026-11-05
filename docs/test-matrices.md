@@ -109,6 +109,7 @@ Detection and startup rows are required in addition to the truth table.
 | ATTACH-012 | Each attachment has an independent bounded 1 MiB output queue |
 | ATTACH-013 | `SNAPSHOT` precedes every `OUTPUT` frame from its recorded next offset |
 | ATTACH-014 | Every `OUTPUT` frame is at most 64 KiB |
+| ATTACH-015 | CLI detach resets Kitty keyboard, modified-key, bracketed-paste, alternate-screen, cursor, synchronized-output, and mouse modes |
 
 ## Core Object Model
 
