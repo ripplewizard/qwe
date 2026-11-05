@@ -101,6 +101,9 @@ These are implementation work, not reasons to delay development:
   `qwe session input` establishes a temporary Active channel automatically.
 - Stage 2 automated Attach/TUI checks and independent manual
   T03/T04/T08/T11 review pass on Linux x86_64 and macOS ARM64.
+- Terminal detach now resets Kitty keyboard, modified-key, synchronized-output,
+  paste, alternate-screen, cursor, and mouse modes; `ATTACH-015` passes on both
+  platforms.
 
 ## Non-Blocking Audit Items
 

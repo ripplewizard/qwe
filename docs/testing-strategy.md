@@ -25,6 +25,7 @@ just worker-loss-latency
 just safety-scan-smoke
 just stage2-check
 just attach-e2e
+just terminal-reset-smoke
 just tui-attach-smoke
 just stage3-idempotency
 just stage3-attach-authority
@@ -83,6 +84,10 @@ through tmux on both platforms, detaches them, reattaches, checks the restored
 screen, and exits them through the attached input channel. Independent manual
 T03/T04/T08/T11 sign-off passed on both required platforms; see
 [Experiment 0010](experiments/0010-stage-2-manual-tui-signoff.md).
+
+`just terminal-reset-smoke` verifies that CLI detach disables Kitty keyboard,
+modified-key, synchronized-output, bracketed-paste, alternate-screen, cursor,
+and mouse modes before returning control to the local shell.
 
 ## ADR 0011 Acceptance Gates
 

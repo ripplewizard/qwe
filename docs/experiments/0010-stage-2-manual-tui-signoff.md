@@ -47,16 +47,17 @@ Observed behavior included:
 Evidence was retained locally by the reviewer. Raw terminal recordings and
 screenshots are intentionally not committed.
 
-## Known Terminal Defect
+## Terminal Defect Follow-up
 
 iTerm2 exposed a separate compatibility defect: Neovim can enable the Kitty
 keyboard protocol, but the CLI does not yet explicitly reset that protocol on
 detach. iTerm2 then emits key-release sequences such as `CSI 93;5;3u` into the
 local shell.
 
-The same T08 flow passes in Terminal.app, and the required Fedora/macOS manual
-matrix therefore passes. The iTerm2 terminal-state restoration issue remains
-an explicit follow-up and must not be reported as fixed.
+The same T08 flow passed in Terminal.app, and the required Fedora/macOS manual
+matrix therefore passed. The keyboard-protocol reset was subsequently fixed
+and covered by `ATTACH-015`; see
+[Experiment 0011](0011-kitty-keyboard-reset.md).
 
 ## Sign-off
 

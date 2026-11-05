@@ -63,6 +63,8 @@
   audit of Stages 1-3 and the cross-platform defects fixed by it.
 - [Experiment 0010](experiments/0010-stage-2-manual-tui-signoff.md): independent
   manual T03/T04/T08/T11 sign-off on macOS and Fedora.
+- [Experiment 0011](experiments/0011-kitty-keyboard-reset.md): terminal
+  keyboard-protocol restoration fix and PTY regression gate.
 
 ## Reading Order
 

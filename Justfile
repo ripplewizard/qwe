@@ -673,6 +673,41 @@ attach-e2e:
 stage2-check:
     just --justfile "{{ justfile() }}" stage0-check
     just --justfile "{{ justfile() }}" attach-e2e
+    just --justfile "{{ justfile() }}" terminal-reset-smoke
+
+terminal-reset-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker
+    client_socket="/tmp/qwe-terminal-reset-$$.sock"
+    runtime_dir="${client_socket}.runtime"
+    qwed_pid=""
+    cleanup_terminal_reset() {
+      if [ -n "$qwed_pid" ]; then
+        kill -TERM "$qwed_pid" 2>/dev/null || true
+        wait "$qwed_pid" 2>/dev/null || true
+      fi
+      pkill -TERM -f -- "--worker-socket ${runtime_dir}/" 2>/dev/null || true
+      rm -rf -- "$runtime_dir"
+      rm -f "$client_socket" "${client_socket}.attach" \
+        "${client_socket}.sqlite" "${client_socket}.sqlite-shm" \
+        "${client_socket}.sqlite-wal"
+    }
+    trap cleanup_terminal_reset EXIT
+
+    target/debug/qwed --socket "$client_socket" &
+    qwed_pid=$!
+    for _ in $(seq 1 200); do
+      target/debug/qwe --socket "$client_socket" ping >/dev/null 2>&1 && break
+      sleep 0.02
+    done
+    target/debug/qwe --socket "$client_socket" ping >/dev/null
+    target/debug/qwe --socket "$client_socket" session create reset-probe sh \
+      >/dev/null
+    python3 "{{ fixtures }}/terminal_reset_probe.py" \
+      --cli target/debug/qwe \
+      --socket "$client_socket" \
+      --session-id reset-probe
 
 stage3-idempotency:
     #!/usr/bin/env bash

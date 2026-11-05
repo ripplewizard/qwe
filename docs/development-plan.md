@@ -35,13 +35,12 @@ Implemented with current repository evidence:
 
 Not ready for V0:
 
-- Close/task-stop authorization and the remaining ownership/liveness matrix
-  branches are incomplete.
-- Idempotency uses a durable pending/complete record. `SESSION_CREATE` recovers
-  its response after a crash; other pending mutating requests fail closed with
-  `idempotency_indeterminate` for the retention window.
-- Service ownership, credentials, resource limits, and forced teardown are
-  incomplete.
+- Durable service ownership, credential injection, Pane resource policy, and
+  forced teardown remain Stage 4 work.
+- Release-mode soak, larger-concurrency measurements, and final installation
+  acceptance remain Stage 5 work.
+- Historical cross-language POC manual disposition remains separate from the
+  completed production Rust Stage 2 sign-off.
 
 ## Critical Path
 
