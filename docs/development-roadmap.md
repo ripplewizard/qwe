@@ -16,10 +16,9 @@ Exit: clean build, lint, unit tests, T12 smoke, and resilience smoke pass.
 
 ## Milestone D1: Terminal Core
 
-Status: Automated acceptance passing. The long-lived Attach channel, resize,
-structured VT state, slow-client backpressure, and Linux/macOS Neovim/htop
-detach/reattach smoke are implemented. Independent manual sign-off remains
-open.
+Status: Complete. The long-lived Attach channel, resize, structured VT state,
+slow-client backpressure, Linux/macOS Neovim/htop detach/reattach smoke, and
+independent manual T03/T04/T08/T11 review pass.
 
 - Implement the accepted ADRs 0011-0015 contracts without reopening their
   decisions.

@@ -67,6 +67,7 @@ The Stage 1 regression also verifies:
 - Complete orphan/conflict reconciliation matrix coverage remains Stage 3.
 - Attachment authorization, reclaim tokens, detached holds, and durable
   idempotency remain Stage 3.
-- Independent manual Neovim/htop sign-off remains open even though automated
-  TUI smoke passes on both platforms.
+- The production Rust TUI path later received independent manual sign-off in
+  [Experiment 0010](0010-stage-2-manual-tui-signoff.md). Historical
+  cross-language POC manual disposition remains separate.
 - Raw terminal captures and runtime SQLite databases remain local.

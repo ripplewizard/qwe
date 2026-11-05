@@ -99,19 +99,20 @@ These are implementation work, not reasons to delay development:
   tombstones, and supervisor-restart reclaim grace are implemented.
 - `TASK_STOP`, `SESSION_CLOSE`, and `SESSION_INPUT` enforce the authority matrix;
   `qwe session input` establishes a temporary Active channel automatically.
-- Stage 2 automated Attach and tmux-driven Neovim/htop checks pass on Linux
-  x86_64 and macOS ARM64. Independent manual sign-off remains pending.
+- Stage 2 automated Attach/TUI checks and independent manual
+  T03/T04/T08/T11 review pass on Linux x86_64 and macOS ARM64.
 
 ## Non-Blocking Audit Items
 
-- Independent T03/T04/T08/T11 sign-off.
+- Historical POC T03/T04/T08/T11 evidence disposition remains open.
+  Experiment 0010 signs the production Rust Stage 2 path, not the old
+  cross-language POC results.
 - T12 remains a negative historical POC result.
 - Raw terminal captures and SQLite evidence stay local because repository
   policy prohibits committing them.
 
 ## Start Gate
 
-Stages 0-3 automated acceptance is complete. Stage 2 independent manual TUI
-sign-off remains a separate non-blocking audit item. The `poc` branch is
-read-only historical evidence and must not be used as the active development
-branch.
+Stages 0-3 automated acceptance and Stage 2 independent manual TUI sign-off are
+complete. The `poc` branch is read-only historical evidence and must not be
+used as the active development branch.

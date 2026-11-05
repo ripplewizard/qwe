@@ -150,8 +150,8 @@ Hardening:
 ### Stage 2: Attach and Terminal Core
 
 Target: 2026-11-16 to 2026-11-27
-Status: Automated acceptance passing on Linux x86_64 and macOS ARM64;
-independent manual sign-off pending.
+Status: Automated and independent manual acceptance passed on Linux x86_64 and
+macOS ARM64.
 
 - Implement the long-lived Attach endpoint and `ATTACH_OPEN` handshake.
 - Implement raw input/output framing, snapshot-to-live continuity, ACK, and
@@ -181,8 +181,9 @@ Current implementation:
 - Stage 3 adds positive-TTL detached holds, durable reclaim-token restoration,
   generation-fenced reattach, and Lease release tombstones.
 - `just tui-attach-smoke` passes a tmux-driven Neovim/htop detach and reattach
-  check on both Linux x86_64 and macOS ARM64. Independent manual sign-off
-  remains open.
+  check on both Linux x86_64 and macOS ARM64.
+- Independent manual T03/T04/T08/T11 review passed on both platforms; see
+  [Experiment 0010](experiments/0010-stage-2-manual-tui-signoff.md).
 
 ### Stage 3: Ownership, Recovery, and Task/Lease
 

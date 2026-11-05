@@ -1,7 +1,6 @@
 # Experiment 0005: Stage 2 Attach Channel
 
-Status: Automated acceptance passing on Linux and macOS; independent manual
-sign-off pending
+Status: Automated and independent manual acceptance passed on Linux and macOS
 Date: 2026-11-05
 Platform: Linux x86_64 and macOS ARM64
 
@@ -37,6 +36,8 @@ Control requests and snapshot diagnostics remain independent of this channel.
   reconnect with a fresh snapshot.
 - Interactive CLI raw mode, input forwarding, terminal-size polling, snapshot
   rendering, `Ctrl-]` detach, and terminal restoration.
+- Independent manual T03/T04/T08/T11 review passed on macOS and Fedora; see
+  [Experiment 0010](0010-stage-2-manual-tui-signoff.md).
 - `read_only` returns `unsupported_mode`; positive-TTL holds are deferred and
   also report `unsupported_mode`.
 
@@ -64,9 +65,8 @@ Session.
 ## Deliberate Limits
 
 - The supervisor consolidation and object-model cutover remain Stage 1 work.
-- Workers still enforce a single Active attachment in memory. Durable control
-  authority, permission-matrix coverage, and `ReclaimGrace` remain Stage 3.
-- A generated reclaim token is returned to satisfy the accepted frame shape,
-  but it is not persisted or accepted for recovery yet.
-- Independent manual Neovim/htop sign-off has not run.
+- These results describe the Stage 2 cutover; later Stage 3 work adds durable
+  authority, reclaim grace, and detached holds.
+- iTerm2 retains a separate known Kitty-keyboard-protocol restoration defect;
+  Terminal.app and Fedora passed the manual matrix.
 - Raw terminal captures and runtime databases remain outside the repository.

@@ -57,7 +57,7 @@ local as required by repository policy.
 ## Disposition
 
 - Stage 1 automated gates: pass on both platforms.
-- Stage 2 automated Attach and TUI gates: pass on both platforms. Independent
-  manual TUI sign-off remains a non-blocking audit item.
+- Stage 2 automated Attach/TUI gates and independent manual T03/T04/T08/T11
+  review: pass on both platforms.
 - Stage 3 authorization, recovery, Task/Lease, idempotency, and retention
   gates: pass on both platforms.

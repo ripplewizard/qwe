@@ -81,7 +81,8 @@ slow client, drives output past the 1 MiB queue, verifies
 the worker. `just tui-attach-smoke` drives real `nvim` and `htop` processes
 through tmux on both platforms, detaches them, reattaches, checks the restored
 screen, and exits them through the attached input channel. Independent manual
-sign-off remains open.
+T03/T04/T08/T11 sign-off passed on both required platforms; see
+[Experiment 0010](experiments/0010-stage-2-manual-tui-signoff.md).
 
 ## ADR 0011 Acceptance Gates
 

@@ -61,6 +61,8 @@
   and terminal-history retention.
 - [Experiment 0009](experiments/0009-stages-1-3-audit.md): final macOS/Fedora
   audit of Stages 1-3 and the cross-platform defects fixed by it.
+- [Experiment 0010](experiments/0010-stage-2-manual-tui-signoff.md): independent
+  manual T03/T04/T08/T11 sign-off on macOS and Fedora.
 
 ## Reading Order
 
