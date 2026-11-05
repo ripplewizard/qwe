@@ -2,8 +2,9 @@
 
 Status: Accepted
 Date: 2026-11-04
-Implementation state: Stage 2 channel implemented; detached-hold and reclaim
-authority remain Stage 3.
+Implementation state: Stage 2 channel implemented. Stage 3 now persists active
+authority, detached holds, Lease release tombstones, and supervisor-restart
+reclaim grace; full control-operation authorization remains in progress.
 
 ## Context
 

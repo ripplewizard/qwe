@@ -2,9 +2,10 @@
 
 Status: Accepted
 Date: 2026-11-04
-Implementation state: Event-first supervision, persistent-control EOF,
-unreachable health, and the two-second safety scan are implemented. Full
-orphan/conflict matrix coverage remains Stage 3.
+Implementation state: Complete for automated acceptance. Event-first
+supervision, persistent-control EOF, unreachable health, the two-second safety
+scan, and startup orphan/conflict dispositions pass on macOS ARM64 and Fedora
+Linux x86_64.
 
 ## Context
 

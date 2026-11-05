@@ -22,6 +22,8 @@
   attachment, owner, and detached-hold authorization matrix.
 - [ADR 0015](adr/0015-worker-liveness-reconciliation.md): accepted worker
   health states and startup reconciliation truth table.
+- [ADR 0016](adr/0016-stage-3-retention-and-clock-policy.md): accepted Lease
+  clock/TTL and retention policy.
 
 ## Development
 
@@ -30,9 +32,11 @@
 - [Readiness](development-readiness.md): known gaps and start gate.
 - [Roadmap](development-roadmap.md): implementation milestones.
 - [Testing Strategy](testing-strategy.md): layers, commands, and acceptance.
-- [Test Matrices](test-matrices.md): stable authorization, liveness, Attach, and
-  object-model case IDs.
+- [Test Matrices](test-matrices.md): stable authorization, liveness, Attach,
+  object-model, and idempotency case IDs.
 - [Workflow](development-workflow.md): branch, commit, and evidence rules.
+- [Stage 2 Manual TUI Review](../scripts/manual-stage2-tui/README.md):
+  reproducible Fedora/macOS scripts and checklists for T03/T04/T08/T11.
 
 ## Evidence
 
@@ -52,6 +56,11 @@
   cross-platform validation.
 - [Experiment 0007](experiments/0007-stage-1-hardening.md): live reconciliation,
   P95/dropped-event liveness tests, SQLite foreign keys, and Pane visibility.
+- [Experiment 0008](experiments/0008-stage-3-ownership-idempotency.md): Stage 3
+  attachment authority, restart reclaim, detached holds, durable idempotency,
+  and terminal-history retention.
+- [Experiment 0009](experiments/0009-stages-1-3-audit.md): final macOS/Fedora
+  audit of Stages 1-3 and the cross-platform defects fixed by it.
 
 ## Reading Order
 

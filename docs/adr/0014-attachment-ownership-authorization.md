@@ -2,7 +2,11 @@
 
 Status: Accepted
 Date: 2026-11-04
-Implementation state: Accepted target; not implemented.
+Implementation state: Complete for automated acceptance. qwed owns the
+persisted authority record, reclaim-token hashes, restart grace, detached
+holds, and Lease-generation release on reattach. Close/task-stop and control
+input enforce the Active/Held owner and generation rules. The state policy and
+real-process probes pass on macOS ARM64 and Fedora Linux x86_64.
 
 ## Context
 

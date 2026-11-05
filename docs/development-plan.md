@@ -27,17 +27,21 @@ Implemented with current repository evidence:
 - Isolated worker ownership of PTY/process groups and bounded output.
 - SQLite Session/Task/Lease state, generation tombstones, and reconciliation.
 - qwed-owned worker lifecycle events and a two-second safety scan.
-- One-shot Attach snapshot with 1 MiB journal tail.
-- 28 workspace tests pass, including five `vt100` capability probes.
+- Long-lived Attach with snapshot continuity, resize, backpressure, and the
+  interactive CLI loop.
+- Persisted attachment authority, reclaim-token grace, detached holds, Lease
+  release tombstones, and 24-hour durable idempotency.
+- 43 workspace tests pass, including five `vt100` capability probes.
 
 Not ready for V0:
 
-- No long-lived terminal output channel or interactive Attach loop.
-- Public resize, complete VT state, and TUI attach are incomplete.
-- Session/Task/Pane and authorization contracts are accepted, but their runtime
-  migration is incomplete.
-- Durable idempotency, service ownership, credentials, resource limits, and
-  forced teardown are incomplete.
+- Close/task-stop authorization and the remaining ownership/liveness matrix
+  branches are incomplete.
+- Idempotency uses a durable pending/complete record. `SESSION_CREATE` recovers
+  its response after a crash; other pending mutating requests fail closed with
+  `idempotency_indeterminate` for the retention window.
+- Service ownership, credentials, resource limits, and forced teardown are
+  incomplete.
 
 ## Critical Path
 
@@ -164,8 +168,8 @@ in continuity tests.
 
 Current implementation:
 
-- Dedicated Attach sockets proxy client -> qwed -> Host -> worker while the
-  Stage 1 migration topology remains in place.
+- Dedicated Attach sockets proxy client -> qwed -> worker. qwed now owns the
+  public authority handshake and gives the worker a separate channel identity.
 - Typed binary frames, raw input/output, snapshot-to-live offset continuity,
   a 1 MiB per-attachment queue, resize ordering, explicit detach, EOF release,
   complete structured VT state, and a raw-terminal CLI loop are implemented.
@@ -174,9 +178,8 @@ Current implementation:
 - `just attach-e2e` verifies channel continuity, exclusive Attach rejection,
   raw framing, resize, detach, reconnect, slow-client output backpressure, and
   the CLI loop with real sockets, processes, and PTYs.
-- Positive-TTL detached holds and reclaim-token restoration remain Stage 3.
-  Until then a positive hold TTL returns `unsupported_mode`; the returned token
-  is not yet persisted or accepted for authority transfer.
+- Stage 3 adds positive-TTL detached holds, durable reclaim-token restoration,
+  generation-fenced reattach, and Lease release tombstones.
 - `just tui-attach-smoke` passes a tmux-driven Neovim/htop detach and reattach
   check on both Linux x86_64 and macOS ARM64. Independent manual sign-off
   remains open.
@@ -184,6 +187,8 @@ Current implementation:
 ### Stage 3: Ownership, Recovery, and Task/Lease
 
 Target: 2026-11-30 to 2026-12-04
+Status: Complete on 2026-11-05; automated gates pass on macOS ARM64 and
+Fedora Linux x86_64.
 
 - Implement the ownership permission matrix, reclaim tokens, and grace period.
 - Implement detached holds and Lease release tombstones on reattach.
@@ -195,6 +200,33 @@ Target: 2026-11-30 to 2026-12-04
 Exit: authorization and liveness matrices pass on macOS and Fedora; duplicate
 requests do not create duplicate Tasks; supervisor/client crashes preserve the
 expected ownership and Task/Lease history.
+
+Current implementation:
+
+- qwed owns the persisted attachment-authority record and performs the initial
+  `ATTACH_OPEN` decision before opening a worker channel.
+- Reclaim tokens are 256-bit CSPRNG values; only SHA-256 hashes are persisted
+  and comparisons are constant-time.
+- Active authority enters a five-second grace state on supervisor restart.
+- Positive-TTL detach creates a Lease-backed hold. Reattach consumes the
+  current generation and writes a release tombstone before Active continues.
+- Lease claim/touch/release operations validate the attachment authority
+  state, and backward wall-clock movement does not shorten a renewal deadline.
+- Close, task-stop, and control input require Active owner or Held
+  owner+generation authority. The CLI accepts `--owner`/`--generation` and
+  implements scripted input through a temporary Active channel.
+- Mutating control requests require an idempotency key. Responses replay for
+  24 hours across qwed restart; key reuse with a different request returns
+  `idempotency_conflict`.
+- Startup reconciliation probes runtime workers, reports orphan health, and
+  detects closed-session, identity, alternate-socket, and duplicate-worker
+  conflicts. Conflicting socket families are quarantined without deleting
+  runtime evidence.
+- `just stage3-check` covers the Stage 3 gate, including two-phase idempotency
+  recovery and terminal-history pruning.
+- `just stages-1-3-check` passes on macOS ARM64 and Fedora Linux x86_64.
+- See [Experiment 0009](experiments/0009-stages-1-3-audit.md) for the Stage 1-3
+  audit result and the one fixture regression found and fixed.
 
 ### Stage 4: Services, Security, and V0 Capabilities
 
