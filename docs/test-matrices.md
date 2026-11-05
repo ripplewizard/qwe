@@ -1,7 +1,7 @@
 # V0 Contract Test Matrices
 
-Status: Planned
-Date: 2026-11-04
+Status: Stage 1 hardening validated on Linux/macOS; Stage 3 matrix remaining
+Date: 2026-11-05
 
 These IDs are stable contract identifiers. An implementation test may be
 named after an ID only after it exercises the complete row with real sockets,
@@ -123,3 +123,20 @@ Detection and startup rows are required in addition to the truth table.
 | OBJ-008 | No terminal Session or Task state can transition back to `running` |
 | OBJ-009 | A TaskInstance belongs to exactly one Session for its full lifetime |
 | OBJ-010 | Lease expiry or release never changes Task or Session lifecycle |
+
+## Stage 1 Hardening Evidence
+
+The following rows now have real-process coverage:
+
+- The missing-worker row: a missing worker process becomes lost.
+- The worker-loss latency row: 20 real worker kills are summarized by P95 through
+  `just worker-loss-latency`.
+- The safety-scan row: an adopted non-child worker is found through
+  `just safety-scan-smoke`.
+- The unreachable-isolation row: one `SIGSTOP` worker does not block qwed or a
+  healthy Session.
+- The Pane-cardinality row: `CONTROL_STATUS` returns exactly one persisted Pane for the tested
+  Session.
+- The creation-path row: `task.start` is absent from the public protocol and CLI.
+- The Task-ownership row: foreign-key and unique constraints reject orphan or duplicate
+  TaskInstance references.

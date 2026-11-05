@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum LeaseError {
@@ -79,7 +79,8 @@ impl Store {
                 );
                 CREATE TABLE tasks (
                     id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL
+                        REFERENCES sessions(id) ON DELETE RESTRICT,
                     pid INTEGER NOT NULL,
                     pgid INTEGER NOT NULL,
                     start_token TEXT NOT NULL,
@@ -92,18 +93,20 @@ impl Store {
                 CREATE UNIQUE INDEX tasks_by_session ON tasks(session_id);
                 CREATE TABLE panes (
                     id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL UNIQUE,
+                    session_id TEXT NOT NULL UNIQUE
+                        REFERENCES sessions(id) ON DELETE RESTRICT,
                     updated_at_ms INTEGER NOT NULL
                 );
                 CREATE TABLE leases (
-                    session_id TEXT PRIMARY KEY,
+                    session_id TEXT PRIMARY KEY
+                        REFERENCES sessions(id) ON DELETE RESTRICT,
                     owner TEXT NOT NULL,
                     generation INTEGER NOT NULL,
                     deadline_ms INTEGER NOT NULL,
                     updated_at_ms INTEGER NOT NULL,
                     released_at_ms INTEGER
                 );
-                PRAGMA user_version = 5;
+                PRAGMA user_version = 6;
                 ",
             )?;
             transaction.commit()?;
@@ -193,6 +196,63 @@ impl Store {
                 ALTER TABLE sessions ADD COLUMN worker_pgid INTEGER;
                 ALTER TABLE sessions ADD COLUMN worker_start_token TEXT;
                 PRAGMA user_version = 5;
+                ",
+            )?;
+            transaction.commit()?;
+            current = 5;
+        }
+        if current == 5 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "
+                CREATE TABLE tasks_v6 (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL
+                        REFERENCES sessions(id) ON DELETE RESTRICT,
+                    pid INTEGER NOT NULL,
+                    pgid INTEGER NOT NULL,
+                    start_token TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    exit_code INTEGER,
+                    exit_signal TEXT,
+                    started_at_ms INTEGER NOT NULL,
+                    ended_at_ms INTEGER
+                );
+                INSERT INTO tasks_v6
+                    SELECT id, session_id, pid, pgid, start_token, state,
+                           exit_code, exit_signal, started_at_ms, ended_at_ms
+                    FROM tasks;
+                DROP INDEX tasks_by_session;
+                DROP TABLE tasks;
+                ALTER TABLE tasks_v6 RENAME TO tasks;
+                CREATE UNIQUE INDEX tasks_by_session ON tasks(session_id);
+
+                CREATE TABLE panes_v6 (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL UNIQUE
+                        REFERENCES sessions(id) ON DELETE RESTRICT,
+                    updated_at_ms INTEGER NOT NULL
+                );
+                INSERT INTO panes_v6 SELECT id, session_id, updated_at_ms FROM panes;
+                DROP TABLE panes;
+                ALTER TABLE panes_v6 RENAME TO panes;
+
+                CREATE TABLE leases_v6 (
+                    session_id TEXT PRIMARY KEY
+                        REFERENCES sessions(id) ON DELETE RESTRICT,
+                    owner TEXT NOT NULL,
+                    generation INTEGER NOT NULL,
+                    deadline_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    released_at_ms INTEGER
+                );
+                INSERT INTO leases_v6
+                    SELECT session_id, owner, generation, deadline_ms,
+                           updated_at_ms, released_at_ms
+                    FROM leases;
+                DROP TABLE leases;
+                ALTER TABLE leases_v6 RENAME TO leases;
+                PRAGMA user_version = 6;
                 ",
             )?;
             transaction.commit()?;
@@ -385,6 +445,27 @@ impl Store {
             )
             .optional()
             .map_err(StorageError::from)
+    }
+
+    pub fn list_panes(&self) -> Result<Vec<PaneRecord>, StorageError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, session_id, updated_at_ms FROM panes ORDER BY session_id")?;
+        let rows = statement.query_map([], |row| {
+            let id: String = row.get(0)?;
+            Ok(PaneRecord {
+                id: PaneId::from_str(&id).map_err(|failure| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(failure),
+                    )
+                })?,
+                session_id: row.get(1)?,
+                updated_at_ms: row.get(2)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn mark_sessions_missing(
@@ -716,6 +797,17 @@ mod tests {
         }
     }
 
+    fn session(id: &str) -> SessionRecord {
+        SessionRecord {
+            id: id.into(),
+            owner: "local".into(),
+            state: "running".into(),
+            identity: None,
+            worker_identity: None,
+            updated_at_ms: 1,
+        }
+    }
+
     #[test]
     fn creates_versioned_schema() {
         let store = Store::open_in_memory().unwrap();
@@ -726,6 +818,7 @@ mod tests {
     fn persists_and_updates_tasks() {
         let mut store = Store::open_in_memory().unwrap();
         let id = TaskId::new();
+        store.upsert_session(&session("session-1")).unwrap();
         store.insert_task(&task(id.clone(), "session-1")).unwrap();
         let stored = store.find_task(&id).unwrap().unwrap();
         assert_eq!(stored.identity.pid, 100);
@@ -742,6 +835,7 @@ mod tests {
     fn created_session_and_task_commit_atomically() {
         let mut store = Store::open_in_memory().unwrap();
         let existing_id = TaskId::new();
+        store.upsert_session(&session("existing")).unwrap();
         store
             .insert_task(&task(existing_id.clone(), "existing"))
             .unwrap();
@@ -804,11 +898,18 @@ mod tests {
             store.insert_task(&task(TaskId::new(), "one")).is_err(),
             "a second TaskInstance for one Session must be rejected"
         );
+        assert!(
+            store
+                .insert_task(&task(TaskId::new(), "missing-session"))
+                .is_err(),
+            "TaskInstance must reference an existing Session"
+        );
     }
 
     #[test]
     fn lease_claim_touch_release_and_takeover() {
         let mut store = Store::open_in_memory().unwrap();
+        store.upsert_session(&session("s1")).unwrap();
         let claimed = store.claim_lease("s1", "alice", 100, 1_000).unwrap();
         assert_eq!(claimed.generation, 1);
         assert_eq!(
@@ -872,6 +973,7 @@ mod tests {
         }
         let mut store = Store::open(path.to_str().unwrap()).unwrap();
         assert_eq!(store.schema_version(), SCHEMA_VERSION);
+        store.upsert_session(&session("migrated")).unwrap();
         assert_eq!(
             store
                 .claim_lease("migrated", "owner", 100, 1_000)

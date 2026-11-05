@@ -889,6 +889,11 @@ stage1-regression-smoke:
     loss_ms="$(( (end_ns - start_ns) / 1000000 ))"
     printf 'regression: event-first worker loss=%s ms\n' "$loss_ms"
     [ "$loss_ms" -le 250 ]
+    jq -e \
+      '.reconciliation.last_scan_ms > 0 and
+       .reconciliation.lost_sessions >= 1 and
+       .reconciliation.lost_tasks >= 1' \
+      "$run_root/identity-reuse-status.json" >/dev/null
     set +e
     target/debug/qwe --socket "$client_socket" session create identity-reuse sh \
       >"$run_root/identity-reuse-retry.out" 2>"$run_root/identity-reuse-retry.err"
@@ -906,6 +911,15 @@ stage1-regression-smoke:
 
     [ "$(sqlite3 "$store_path" \
       "SELECT COUNT(*) FROM panes WHERE session_id='identity-reuse';")" -eq 1 ]
+    target/debug/qwe --socket "$client_socket" status \
+      >"$run_root/object-control.json"
+    jq -e \
+      '([.panes[] | select(.session_id == "identity-reuse")] | length == 1)' \
+      "$run_root/object-control.json" >/dev/null
+    [ "$(sqlite3 "$store_path" \
+      "SELECT (SELECT COUNT(*) FROM pragma_foreign_key_list('tasks')) +
+              (SELECT COUNT(*) FROM pragma_foreign_key_list('panes')) +
+              (SELECT COUNT(*) FROM pragma_foreign_key_list('leases'));")" -ge 3 ]
     set +e
     sqlite3 "$store_path" \
       "INSERT INTO tasks SELECT lower(hex(randomblob(16))), session_id, pid, pgid,
@@ -1017,6 +1031,112 @@ stage1-check:
     just --justfile "{{ justfile() }}" stage1-regression-smoke
     just --justfile "{{ justfile() }}" t12-host-smoke
     just --justfile "{{ justfile() }}" resilience-smoke
+
+worker-loss-latency:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker
+    run_root="$(mktemp -d "/tmp/qwe-worker-latency.XXXXXX")"
+    client_socket="$run_root/client.sock"
+    qwed_pid=""
+    cleanup_latency() {
+      if [ -n "$qwed_pid" ]; then
+        kill -TERM "$qwed_pid" 2>/dev/null || true
+        wait "$qwed_pid" 2>/dev/null || true
+      fi
+      pkill -TERM -f -- "--worker-socket ${client_socket}.runtime/" 2>/dev/null || true
+      rm -rf -- "${client_socket}.runtime"
+      rm -f "$client_socket" "${client_socket}.attach" \
+        "${client_socket}.sqlite" "${client_socket}.sqlite-shm" \
+        "${client_socket}.sqlite-wal"
+    }
+    trap cleanup_latency EXIT
+    target/debug/qwed --socket "$client_socket" &
+    qwed_pid=$!
+    for _ in $(seq 1 200); do
+      target/debug/qwe --socket "$client_socket" ping >/dev/null 2>&1 && break
+      sleep 0.02
+    done
+    python3 "{{ fixtures }}/worker_loss_latency.py" \
+      --socket "$client_socket" --samples 20 --max-p95-ms 50
+
+safety-scan-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker
+    run_root="$(mktemp -d "/tmp/qwe-safety-scan.XXXXXX")"
+    client_socket="$run_root/client.sock"
+    first_qwed_pid=""
+    second_qwed_pid=""
+    worker_pid=""
+    cleanup_scan() {
+      if [ -n "$second_qwed_pid" ]; then
+        kill -TERM "$second_qwed_pid" 2>/dev/null || true
+        wait "$second_qwed_pid" 2>/dev/null || true
+      fi
+      if [ -n "$first_qwed_pid" ]; then
+        kill -TERM "$first_qwed_pid" 2>/dev/null || true
+        wait "$first_qwed_pid" 2>/dev/null || true
+      fi
+      if [ -n "$worker_pid" ]; then
+        kill -KILL "$worker_pid" 2>/dev/null || true
+      fi
+      pkill -TERM -f -- "--worker-socket ${client_socket}.runtime/" 2>/dev/null || true
+      rm -rf -- "${client_socket}.runtime"
+      rm -f "$client_socket" "${client_socket}.attach" \
+        "${client_socket}.sqlite" "${client_socket}.sqlite-shm" \
+        "${client_socket}.sqlite-wal"
+    }
+    trap cleanup_scan EXIT
+
+    target/debug/qwed --socket "$client_socket" &
+    first_qwed_pid=$!
+    for _ in $(seq 1 200); do
+      target/debug/qwe --socket "$client_socket" ping >/dev/null 2>&1 && break
+      sleep 0.02
+    done
+    created="$(target/debug/qwe --socket "$client_socket" session create scan-adopt sh)"
+    worker_pid="$(printf '%s' "$created" | jq -r '.worker_pid')"
+    kill -KILL "$first_qwed_pid"
+    wait "$first_qwed_pid" 2>/dev/null || true
+    first_qwed_pid=""
+    kill -0 "$worker_pid"
+
+    target/debug/qwed --socket "$client_socket" &
+    second_qwed_pid=$!
+    for _ in $(seq 1 200); do
+      target/debug/qwe --socket "$client_socket" ping >/dev/null 2>&1 && break
+      sleep 0.02
+    done
+    worker_parent="$(ps -o ppid= -p "$worker_pid" | tr -d ' ')"
+    [ "$worker_parent" != "$second_qwed_pid" ]
+
+    start_ns="$(python3 -c 'import time; print(time.time_ns())')"
+    kill -KILL "$worker_pid"
+    worker_pid=""
+    found=0
+    for _ in $(seq 1 500); do
+      report="$(target/debug/qwe --socket "$client_socket" status)"
+      if printf '%s' "$report" | jq -e \
+        '.reconciliation.last_scan_ms > 0 and
+         ([.sessions[] | select(.id == "scan-adopt" and .state == "lost")] | length == 1)' \
+        >/dev/null; then
+        found=1
+        break
+      fi
+      sleep 0.005
+    done
+    [ "$found" -eq 1 ]
+    end_ns="$(python3 -c 'import time; print(time.time_ns())')"
+    elapsed_ms="$(( (end_ns - start_ns) / 1000000 ))"
+    [ "$elapsed_ms" -le 2500 ]
+    printf '{"case":"LIVE-013","worker_parent":"%s","detected_ms":%s}\n' \
+      "$worker_parent" "$elapsed_ms"
+
+stage1-hardening-check:
+    just --justfile "{{ justfile() }}" stage1-check
+    just --justfile "{{ justfile() }}" worker-loss-latency
+    just --justfile "{{ justfile() }}" safety-scan-smoke
 
 t12-host-smoke:
     #!/usr/bin/env bash

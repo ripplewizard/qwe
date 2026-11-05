@@ -19,7 +19,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicI32, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicI32, AtomicI64, Ordering as AtomicOrdering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -46,7 +46,8 @@ struct Context {
     runtime_dir: PathBuf,
     store: Mutex<Store>,
     workers: Mutex<HashMap<String, Arc<WorkerHandle>>>,
-    reconciliation: Mutex<Value>,
+    reconciliation_incidents: Mutex<ReconciliationIncidents>,
+    last_scan_ms: AtomicI64,
     worker_events: Sender<WorkerEvent>,
     creation_lock: Mutex<()>,
     _runtime_lock: File,
@@ -70,13 +71,14 @@ enum SupervisorEvent {
 
 #[derive(Default)]
 struct Reconciliation {
-    live_sessions: usize,
-    unreachable_sessions: usize,
     orphaned_sessions: usize,
     conflict_sessions: usize,
-    lost_sessions: u64,
-    exited_tasks: u64,
-    lost_tasks: u64,
+}
+
+#[derive(Default, Clone, Copy)]
+struct ReconciliationIncidents {
+    orphaned_sessions: usize,
+    conflict_sessions: usize,
 }
 
 fn error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
@@ -979,10 +981,8 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
                 .is_some_and(qwe_runtime::process_matches)
             {
                 remember_unreachable(context, &session);
-                report.unreachable_sessions += 1;
             } else {
                 mark_worker_lost(context, &session.id)?;
-                report.lost_sessions += 1;
             }
             continue;
         }
@@ -996,7 +996,6 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
                             session.id, failure
                         );
                         remember_unreachable(context, &session);
-                        report.unreachable_sessions += 1;
                         continue;
                     }
                 };
@@ -1026,7 +1025,6 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner())
                             .insert(session.id.clone(), Arc::new(handle));
-                        report.live_sessions += 1;
                     }
                     Err(failure) => {
                         quarantine_worker(context, &session.id);
@@ -1046,10 +1044,8 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
                     .is_some_and(qwe_runtime::process_matches)
                 {
                     remember_unreachable(context, &session);
-                    report.unreachable_sessions += 1;
                 } else {
                     mark_worker_lost(context, &session.id)?;
-                    report.lost_sessions += 1;
                 }
             }
         }
@@ -1151,22 +1147,7 @@ fn safety_scan(context: &Context) {
             }
         }
     }
-}
-
-fn publish_reconciliation(context: &Context, report: &Reconciliation) {
-    *context
-        .reconciliation
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = json!({
-        "live_sessions": report.live_sessions,
-        "unreachable_sessions": report.unreachable_sessions,
-        "orphaned_sessions": report.orphaned_sessions,
-        "conflict_sessions": report.conflict_sessions,
-        "lost_sessions": report.lost_sessions,
-        "exited_tasks": report.exited_tasks,
-        "lost_tasks": report.lost_tasks,
-        "last_scan": "startup"
-    });
+    context.last_scan_ms.store(now_ms(), AtomicOrdering::SeqCst);
 }
 
 fn control_status(context: &Context) -> Result<Value, ProtocolErrorBody> {
@@ -1174,6 +1155,9 @@ fn control_status(context: &Context) -> Result<Value, ProtocolErrorBody> {
         .store
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let sessions = store.list_sessions().map_err(storage_error)?;
+    let panes = store.list_panes().map_err(storage_error)?;
+    let tasks = store.list_tasks().map_err(storage_error)?;
     let workers = context
         .workers
         .lock()
@@ -1181,17 +1165,35 @@ fn control_status(context: &Context) -> Result<Value, ProtocolErrorBody> {
         .iter()
         .map(|(id, handle)| worker_json(id, handle))
         .collect::<Vec<_>>();
+    let healthy_workers = workers
+        .iter()
+        .filter(|worker| worker["health"].as_str() == Some("healthy"))
+        .count();
+    let unreachable_workers = workers
+        .iter()
+        .filter(|worker| worker["health"].as_str() == Some("unreachable"))
+        .count();
+    let incidents = *context
+        .reconciliation_incidents
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     Ok(json!({
         "daemon": "ok",
         "protocol": PROTOCOL_VERSION,
-        "reconciliation": context
-            .reconciliation
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone(),
+        "reconciliation": {
+            "live_sessions": healthy_workers,
+            "unreachable_sessions": unreachable_workers,
+            "orphaned_sessions": incidents.orphaned_sessions,
+            "conflict_sessions": incidents.conflict_sessions,
+            "lost_sessions": sessions.iter().filter(|session| session.state == "lost").count(),
+            "exited_tasks": tasks.iter().filter(|task| task.state == TaskState::Exited).count(),
+            "lost_tasks": tasks.iter().filter(|task| task.state == TaskState::Lost).count(),
+            "last_scan_ms": context.last_scan_ms.load(AtomicOrdering::SeqCst)
+        },
         "workers": workers,
-        "sessions": store.list_sessions().map_err(storage_error)?,
-        "tasks": store.list_tasks().map_err(storage_error)?
+        "panes": panes,
+        "sessions": sessions,
+        "tasks": tasks
     }))
 }
 
@@ -1539,13 +1541,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime_dir,
         store: Mutex::new(store),
         workers: Mutex::new(HashMap::new()),
-        reconciliation: Mutex::new(json!({})),
+        reconciliation_incidents: Mutex::new(ReconciliationIncidents::default()),
+        last_scan_ms: AtomicI64::new(0),
         worker_events: worker_event_tx,
         creation_lock: Mutex::new(()),
         _runtime_lock: runtime_lock,
     });
     let report = startup_reconcile(&context)?;
-    publish_reconciliation(&context, &report);
+    *context
+        .reconciliation_incidents
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = ReconciliationIncidents {
+        orphaned_sessions: report.orphaned_sessions,
+        conflict_sessions: report.conflict_sessions,
+    };
+    context.last_scan_ms.store(now_ms(), AtomicOrdering::SeqCst);
 
     let attach_path = public_attach_socket(&args.socket);
     let _ = fs::remove_file(&args.socket);

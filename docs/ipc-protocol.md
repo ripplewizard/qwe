@@ -100,6 +100,11 @@ Session, Pane, and TaskInstance. The response includes `session_id`, `pane_id`,
 and `task_id`. `TASK_START` is absent from the public protocol, and the CLI
 `task start` command was removed during the Stage 1 clean cutover.
 
+`CONTROL_STATUS` computes reconciliation from current durable and worker state.
+It returns `sessions`, `panes`, `tasks`, `workers`, and a `reconciliation`
+object containing current lost/unreachable and task terminal counts plus
+`last_scan_ms`.
+
 ## 6. Lease State Machine
 
 Leases use UTC wall-clock milliseconds and these states:
