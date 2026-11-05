@@ -1,4 +1,5 @@
 use clap::Parser;
+use qwe_core::DEFAULT_LEASE_TTL_MS;
 use qwe_protocol::{
     ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope,
     ResponseEnvelope, attach, read_frame, verify_same_uid, write_frame,
@@ -18,6 +19,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 struct Arguments {
     #[arg(long, global = true, default_value = "/tmp/qwe-client.sock")]
     socket: String,
+    #[arg(long, global = true, default_value = "local")]
+    owner: String,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -67,6 +70,8 @@ enum SessionCommand {
     },
     Close {
         id: String,
+        #[arg(long)]
+        generation: Option<u64>,
     },
 }
 
@@ -75,14 +80,14 @@ enum LeaseCommand {
     Claim {
         session_id: String,
         owner: String,
-        #[arg(long, default_value_t = 30_000)]
+        #[arg(long, default_value_t = DEFAULT_LEASE_TTL_MS)]
         ttl_ms: i64,
     },
     Touch {
         session_id: String,
         owner: String,
         generation: u64,
-        #[arg(long, default_value_t = 30_000)]
+        #[arg(long, default_value_t = DEFAULT_LEASE_TTL_MS)]
         ttl_ms: i64,
     },
     Release {
@@ -93,7 +98,7 @@ enum LeaseCommand {
     Takeover {
         session_id: String,
         owner: String,
-        #[arg(long, default_value_t = 30_000)]
+        #[arg(long, default_value_t = DEFAULT_LEASE_TTL_MS)]
         ttl_ms: i64,
     },
     Status {
@@ -103,8 +108,14 @@ enum LeaseCommand {
 
 #[derive(Debug, Parser)]
 enum TaskCommand {
-    Status { task_id: String },
-    Stop { task_id: String },
+    Status {
+        task_id: String,
+    },
+    Stop {
+        task_id: String,
+        #[arg(long)]
+        generation: Option<u64>,
+    },
     History,
 }
 
@@ -399,7 +410,62 @@ fn spawn_resize_poll(
     })
 }
 
-fn run_attach(control_socket: &str, session_id: &str) -> Result<Value, ProtocolErrorBody> {
+fn run_control_input(
+    control_socket: &str,
+    session_id: &str,
+    owner: &str,
+    data: &str,
+) -> Result<Value, ProtocolErrorBody> {
+    let attach_path = attach_socket(control_socket);
+    let mut stream = UnixStream::connect(&attach_path)
+        .map_err(|failure| attach_error("transport", format!("{attach_path}: {failure}")))?;
+    verify_same_uid(&stream)
+        .map_err(|failure| attach_error("unauthorized_peer", failure.to_string()))?;
+    let open = attach::AttachOpen::versioned(session_id, owner, 24, 80);
+    attach::write_json_frame(&mut stream, attach::FrameType::AttachOpen, &open)
+        .map_err(|failure| attach_error("transport", failure.to_string()))?;
+    loop {
+        let frame = attach::read_frame(&mut stream)
+            .map_err(|failure| attach_error("transport", failure.to_string()))?;
+        match frame.frame_type {
+            attach::FrameType::AttachAccepted => {}
+            attach::FrameType::Snapshot => break,
+            attach::FrameType::Error => {
+                let failure = attach::decode_json::<attach::AttachError>(&frame.payload).map_err(
+                    |failure| attach_error("worker_protocol_error", failure.to_string()),
+                )?;
+                return Err(attach_error(&failure.code, failure.message));
+            }
+            _ => {
+                return Err(attach_error(
+                    "worker_protocol_error",
+                    format!(
+                        "expected ATTACH_ACCEPTED and SNAPSHOT, received {}",
+                        frame.frame_type.name()
+                    ),
+                ));
+            }
+        }
+    }
+    let result = call(
+        control_socket,
+        "SESSION_INPUT",
+        json!({"session_id": session_id, "owner": owner, "data": data}),
+    );
+    let detach = attach::Detach {
+        protocol_version: ATTACH_PROTOCOL_VERSION,
+        hold_ttl_ms: 0,
+    };
+    let _ = attach::write_json_frame(&mut stream, attach::FrameType::Detach, &detach);
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+    result
+}
+
+fn run_attach(
+    control_socket: &str,
+    session_id: &str,
+    owner: &str,
+) -> Result<Value, ProtocolErrorBody> {
     let attach_path = attach_socket(control_socket);
     let mut reader = UnixStream::connect(&attach_path)
         .map_err(|failure| attach_error("transport", format!("{attach_path}: {failure}")))?;
@@ -407,7 +473,6 @@ fn run_attach(control_socket: &str, session_id: &str) -> Result<Value, ProtocolE
         .map_err(|failure| attach_error("unauthorized_peer", failure.to_string()))?;
     let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let (rows, columns) = terminal_size();
-    let owner = format!("cli-{}", std::process::id());
     let open = attach::AttachOpen::versioned(session_id, owner, rows, columns);
     attach::write_json_frame(&mut reader, attach::FrameType::AttachOpen, &open)
         .map_err(|failure| attach_error("transport", failure.to_string()))?;
@@ -550,26 +615,28 @@ fn main() -> ExitCode {
                 "SESSION_STATUS",
                 json!({"session_id": id}),
             ),
-            SessionCommand::Attach { id } => run_attach(&arguments.socket, &id),
+            SessionCommand::Attach { id } => run_attach(&arguments.socket, &id, &arguments.owner),
             SessionCommand::Snapshot { id } => call(
                 &arguments.socket,
                 "SESSION_ATTACH",
                 json!({"session_id": id}),
             ),
-            SessionCommand::Input { id, data } => call(
-                &arguments.socket,
-                "SESSION_INPUT",
-                json!({"session_id": id, "data": data}),
-            ),
+            SessionCommand::Input { id, data } => {
+                run_control_input(&arguments.socket, &id, &arguments.owner, &data)
+            }
             SessionCommand::Detach { id } => call(
                 &arguments.socket,
                 "SESSION_DETACH",
                 json!({"session_id": id}),
             ),
-            SessionCommand::Close { id } => call(
+            SessionCommand::Close { id, generation } => call(
                 &arguments.socket,
                 "SESSION_CLOSE",
-                json!({"session_id": id}),
+                json!({
+                    "session_id": id,
+                    "owner": arguments.owner,
+                    "generation": generation
+                }),
             ),
         },
         Some(Command::Lease { command }) => match command {
@@ -631,9 +698,18 @@ fn main() -> ExitCode {
                 "TASK_STATUS",
                 json!({"task_id": task_id}),
             ),
-            TaskCommand::Stop { task_id } => {
-                call(&arguments.socket, "TASK_STOP", json!({"task_id": task_id}))
-            }
+            TaskCommand::Stop {
+                task_id,
+                generation,
+            } => call(
+                &arguments.socket,
+                "TASK_STOP",
+                json!({
+                    "task_id": task_id,
+                    "owner": arguments.owner,
+                    "generation": generation
+                }),
+            ),
             TaskCommand::History => call(&arguments.socket, "TASK_HISTORY", json!({})),
         },
     };

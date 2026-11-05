@@ -445,11 +445,16 @@
             "already_attached",
             "not_attached",
             "not_owner",
+            "invalid_reclaim_token",
+            "reclaim_expired",
             "session_lost",
             "worker_unreachable",
             "output_backpressure",
             "frame_too_large",
-            "worker_protocol_error"
+            "worker_protocol_error",
+            "invalid_request",
+            "persistence_failure",
+            "internal"
           ]
         },
         "message": {
@@ -630,6 +635,12 @@
     "OBJ-007",
     "OBJ-008",
     "OBJ-009",
-    "OBJ-010"
+    "OBJ-010",
+    "IDEMP-001",
+    "IDEMP-002",
+    "IDEMP-003",
+    "IDEMP-004",
+    "HIST-001",
+    "HIST-002"
   ]
 }

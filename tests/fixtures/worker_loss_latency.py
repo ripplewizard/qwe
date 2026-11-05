@@ -32,7 +32,7 @@ def request(socket_path, operation, payload, sequence):
     envelope = {
         "version": PROTOCOL_VERSION,
         "request_id": f"latency-{sequence}",
-        "idempotency_key": None,
+        "idempotency_key": f"latency-key-{os.getpid()}-{sequence}",
         "operation": operation,
         "payload": payload,
     }

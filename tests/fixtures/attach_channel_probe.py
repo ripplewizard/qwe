@@ -33,6 +33,26 @@ def send_payload(stream, frame_type, payload):
     stream.sendall(payload)
 
 
+def send_control(path, operation, payload={}, key=None):
+    request = {
+        "version": PROTOCOL_VERSION,
+        "request_id": f"attach-probe-{time.monotonic_ns()}",
+        "idempotency_key": key,
+        "operation": operation,
+        "payload": payload,
+    }
+    encoded = json.dumps(request, separators=(",", ":")).encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+        stream.settimeout(5)
+        stream.connect(path)
+        stream.sendall(struct.pack(">I", len(encoded)))
+        stream.sendall(encoded)
+        length = struct.unpack(">I", receive_exact(stream, 4))[0]
+        response = json.loads(receive_exact(stream, length))
+    result = response["result"]
+    return result.get("Ok", result.get("Err"))
+
+
 def receive_exact(stream, count):
     chunks = []
     remaining = count
@@ -50,8 +70,15 @@ def receive_frame(stream):
     return frame_type, receive_exact(stream, length)
 
 
-def open_frame(session_id, owner, mode="exclusive", version=PROTOCOL_VERSION):
-    return {
+def open_frame(
+    session_id,
+    owner,
+    mode="exclusive",
+    version=PROTOCOL_VERSION,
+    reclaim_token=None,
+    lease_generation=None,
+):
+    frame = {
         "protocol_version": version,
         "session_id": session_id,
         "owner": owner,
@@ -59,6 +86,11 @@ def open_frame(session_id, owner, mode="exclusive", version=PROTOCOL_VERSION):
         "columns": 80,
         "mode": mode,
     }
+    if reclaim_token is not None:
+        frame["reclaim_token"] = reclaim_token
+    if lease_generation is not None:
+        frame["lease_generation"] = lease_generation
+    return frame
 
 
 def connect(path, receive_buffer=None):
@@ -116,7 +148,7 @@ def main():
     assert frame_type == ATTACH_ACCEPTED, f"expected ATTACH_ACCEPTED, received {frame_type}"
     accepted = json.loads(payload)
     assert accepted["session_id"] == args.session_id
-    assert len(accepted["reclaim_token"]) == 32
+    assert len(accepted["reclaim_token"]) == 64
 
     frame_type, payload = receive_frame(stream)
     assert frame_type == SNAPSHOT, f"expected SNAPSHOT, received {frame_type}"
@@ -135,6 +167,14 @@ def main():
         "next_stream_offset",
     }
     assert required_state.issubset(snapshot), snapshot
+
+    active_claim = send_control(
+        args.socket,
+        "LEASE_CLAIM",
+        {"session_id": args.session_id, "owner": "other-owner", "ttl_ms": 30000},
+        key="active-lease-claim",
+    )
+    assert active_claim["code"] == "already_attached", active_claim
 
     second = connect(attach_path)
     send_json(second, ATTACH_OPEN, open_frame(args.session_id, "second-client"))
@@ -200,6 +240,95 @@ def main():
     expect_eof(detach)
     detach.close()
 
+    held_owner = "hold-probe"
+    holding = connect(attach_path)
+    send_json(holding, ATTACH_OPEN, open_frame(args.session_id, held_owner))
+    frame_type, _ = receive_frame(holding)
+    assert frame_type == ATTACH_ACCEPTED
+    frame_type, _ = receive_frame(holding)
+    assert frame_type == SNAPSHOT
+    send_json(
+        holding,
+        DETACH,
+        {"protocol_version": PROTOCOL_VERSION, "hold_ttl_ms": 20000},
+    )
+    expect_eof(holding)
+    holding.close()
+
+    held_lease = send_control(
+        args.socket,
+        "LEASE_STATUS",
+        {"session_id": args.session_id},
+    )
+    assert held_lease["owner"] == held_owner, held_lease
+    assert held_lease["generation"] == 1, held_lease
+    assert held_lease["state"] == "active", held_lease
+    touched_lease = send_control(
+        args.socket,
+        "LEASE_TOUCH",
+        {
+            "session_id": args.session_id,
+            "owner": held_owner,
+            "generation": 1,
+            "ttl_ms": 30000,
+        },
+        key="touch-detached-hold",
+    )
+    assert touched_lease["generation"] == 1, touched_lease
+    assert touched_lease["deadline_ms"] >= held_lease["deadline_ms"], touched_lease
+
+    wrong_owner = connect(attach_path)
+    send_json(
+        wrong_owner,
+        ATTACH_OPEN,
+        open_frame(args.session_id, "other-owner", lease_generation=1),
+    )
+    expect_error(wrong_owner, "not_owner")
+
+    wrong_generation = connect(attach_path)
+    send_json(
+        wrong_generation,
+        ATTACH_OPEN,
+        open_frame(args.session_id, held_owner, lease_generation=0),
+    )
+    expect_error(wrong_generation, "not_owner")
+
+    reclaimed = connect(attach_path)
+    send_json(
+        reclaimed,
+        ATTACH_OPEN,
+        open_frame(args.session_id, held_owner, lease_generation=1),
+    )
+    frame_type, payload = receive_frame(reclaimed)
+    assert frame_type == ATTACH_ACCEPTED
+    reclaimed_accepted = json.loads(payload)
+    assert reclaimed_accepted["generation"] == 2, reclaimed_accepted
+    frame_type, _ = receive_frame(reclaimed)
+    assert frame_type == SNAPSHOT
+    send_payload(reclaimed, INPUT, b"printf 'HOLD_REATTACH\\n'\r")
+    deadline = time.monotonic() + 5
+    held_output = bytearray()
+    while b"HOLD_REATTACH" not in held_output and time.monotonic() < deadline:
+        frame_type, payload = receive_frame(reclaimed)
+        if frame_type == OUTPUT:
+            held_output.extend(payload[8:])
+    assert b"HOLD_REATTACH" in held_output
+    released_lease = send_control(
+        args.socket,
+        "LEASE_STATUS",
+        {"session_id": args.session_id},
+    )
+    assert released_lease["generation"] == 2, released_lease
+    assert released_lease["state"] == "released", released_lease
+    assert released_lease["released_at_ms"] is not None, released_lease
+    send_json(
+        reclaimed,
+        DETACH,
+        {"protocol_version": PROTOCOL_VERSION, "hold_ttl_ms": 0},
+    )
+    expect_eof(reclaimed)
+    reclaimed.close()
+
     slow = connect(attach_path, receive_buffer=4096)
     slow.settimeout(10)
     send_json(slow, ATTACH_OPEN, open_frame(args.session_id, "slow-client"))
@@ -228,6 +357,7 @@ def main():
         json.dumps(
             {
                 "channel": "pass",
+                "detached_hold": "pass",
                 "backpressure": "pass",
                 "output_bytes": len(raw_output),
                 "final_stream_offset": expected_offset,

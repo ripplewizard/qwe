@@ -674,6 +674,85 @@ stage2-check:
     just --justfile "{{ justfile() }}" stage0-check
     just --justfile "{{ justfile() }}" attach-e2e
 
+stage3-idempotency:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwed -p qwe-worker
+    run_root="$(mktemp -d "/tmp/qwe-stage3-idempotency.XXXXXX")"
+    client_socket="$run_root/client.sock"
+    cleanup_idempotency() {
+      pkill -TERM -f -- "--worker-socket ${client_socket}.runtime/" 2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_idempotency EXIT
+    python3 "{{ fixtures }}/idempotency_probe.py" \
+      --qwed target/debug/qwed --socket "$client_socket"
+
+stage3-attach-authority:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwed -p qwe-worker
+    run_root="$(mktemp -d "/tmp/qwe-stage3-authority.XXXXXX")"
+    client_socket="$run_root/client.sock"
+    cleanup_authority() {
+      pkill -TERM -f -- "--worker-socket ${client_socket}.runtime/" 2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_authority EXIT
+    python3 "{{ fixtures }}/attach_reclaim_probe.py" \
+      --qwed target/debug/qwed --socket "$client_socket"
+
+stage3-control-authority:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwed -p qwe-worker
+    run_root="$(mktemp -d "/tmp/qwe-stage3-control.XXXXXX")"
+    client_socket="$run_root/client.sock"
+    cleanup_control_authority() {
+      pkill -TERM -f -- "--worker-socket ${client_socket}.runtime/" 2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_control_authority EXIT
+    python3 "{{ fixtures }}/control_authority_probe.py" \
+      --qwed target/debug/qwed --socket "$client_socket"
+
+stage3-reconciliation:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwed -p qwe-worker
+    run_root="$(mktemp -d "/tmp/qwe-stage3-reconciliation.XXXXXX")"
+    client_socket="$run_root/client.sock"
+    store_path="$run_root/store.sqlite"
+    cleanup_reconciliation() {
+      pkill -TERM -f -- "--worker-socket ${client_socket}.runtime/" 2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_reconciliation EXIT
+    python3 "{{ fixtures }}/reconciliation_probe.py" \
+      --qwed target/debug/qwed \
+      --worker target/debug/qwe-worker \
+      --socket "$client_socket" \
+      --store "$store_path"
+
+stage3-check:
+    just --justfile "{{ justfile() }}" check-qwe
+    just --justfile "{{ justfile() }}" attach-e2e
+    just --justfile "{{ justfile() }}" stage3-idempotency
+    just --justfile "{{ justfile() }}" stage3-attach-authority
+    just --justfile "{{ justfile() }}" stage3-control-authority
+    just --justfile "{{ justfile() }}" stage3-reconciliation
+    just --justfile "{{ justfile() }}" t12-host-smoke
+    just --justfile "{{ justfile() }}" resilience-smoke
+
+stage3-foundation-check:
+    just --justfile "{{ justfile() }}" stage3-check
+
+stages-1-3-check:
+    just --justfile "{{ justfile() }}" stage1-hardening-check
+    just --justfile "{{ justfile() }}" stage2-check
+    just --justfile "{{ justfile() }}" tui-attach-smoke
+    just --justfile "{{ justfile() }}" stage3-check
+
 tui-attach-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -761,10 +840,8 @@ stage1-regression-smoke:
     close_pgid=""
 
     cleanup_regression() {
-      target/debug/qwe --socket "$client_socket" session close task-stop-case \
-        >/dev/null 2>&1 || true
-      target/debug/qwe --socket "$client_socket" session close close-ignore \
-        >/dev/null 2>&1 || true
+      pkill -TERM -f -- "--worker-socket ${client_socket}.runtime/" \
+        2>/dev/null || true
       if [ -n "$close_pgid" ]; then
         kill -KILL -- "-$close_pgid" 2>/dev/null || true
       fi
@@ -833,8 +910,16 @@ stage1-regression-smoke:
     jq -e \
       '([.workers[] | select(.session_id == "isolate-one" and .health == "healthy")] | length == 1)' \
       "$run_root/recovered-control.json" >/dev/null
-    target/debug/qwe --socket "$client_socket" session close isolate-one >/dev/null
-    target/debug/qwe --socket "$client_socket" session close isolate-two >/dev/null
+    target/debug/qwe --socket "$client_socket" lease claim \
+      isolate-one isolate-one-owner --ttl-ms 60000 |
+      jq -e '.generation == 1' >/dev/null
+    target/debug/qwe --socket "$client_socket" lease claim \
+      isolate-two isolate-two-owner --ttl-ms 60000 |
+      jq -e '.generation == 1' >/dev/null
+    target/debug/qwe --socket "$client_socket" session close isolate-one \
+      --owner isolate-one-owner --generation 1 >/dev/null
+    target/debug/qwe --socket "$client_socket" session close isolate-two \
+      --owner isolate-two-owner --generation 1 >/dev/null
     printf 'regression: unreachable worker isolation PASS\n'
 
     # A SQLite task failure must not leave a live or persisted Session.
@@ -975,7 +1060,14 @@ stage1-regression-smoke:
         "$run_root/task-stop-before.json" >/dev/null && break
       sleep 0.02
     done
+    task_stop_generation="$(
+      target/debug/qwe --socket "$client_socket" lease claim \
+        task-stop-case task-stop-owner --ttl-ms 60000 |
+        jq -r '.generation'
+    )"
+    [ "$task_stop_generation" = 1 ]
     target/debug/qwe --socket "$client_socket" task stop "$task_id" \
+      --owner task-stop-owner --generation "$task_stop_generation" \
       >"$run_root/task-stop.json"
       target/debug/qwe --socket "$client_socket" session snapshot task-stop-case \
       >"$run_root/task-stop-after.json"
@@ -1008,7 +1100,14 @@ stage1-regression-smoke:
     target/debug/qwe --socket "$client_socket" session input close-ignore \
       $'while :; do sleep 1; done\r' >/dev/null
     sleep 0.3
+    close_generation="$(
+      target/debug/qwe --socket "$client_socket" lease claim \
+        close-ignore close-ignore-owner --ttl-ms 60000 |
+        jq -r '.generation'
+    )"
+    [ "$close_generation" = 1 ]
     target/debug/qwe --socket "$client_socket" session close close-ignore \
+      --owner close-ignore-owner --generation "$close_generation" \
       >"$run_root/close.json"
     jq -e '.state == "closed"' "$run_root/close.json" >/dev/null
     if kill -0 -- "-$close_pgid" 2>/dev/null; then
@@ -1024,7 +1123,8 @@ stage1-regression-smoke:
       "$run_root/close-control.json" >/dev/null
     printf 'regression: close process-group verification PASS\n'
 
-    target/debug/qwe --socket "$client_socket" session close task-stop-case >/dev/null
+    target/debug/qwe --socket "$client_socket" session close task-stop-case \
+      --owner task-stop-owner --generation "$task_stop_generation" >/dev/null
     printf 'Stage 1 three-gate regression PASS\n'
 
 stage1-check:
@@ -1246,7 +1346,11 @@ t12-host-smoke:
     worker_rss="$(ps -o rss= -p "$worker_pid" | tr -d ' ')"
     total_rss="$((supervisor_rss + worker_rss))"
     [ "$total_rss" -lt 204800 ]
-    target/debug/qwe --socket "$client_socket" session close "$session_id" >/dev/null
+    target/debug/qwe --socket "$client_socket" lease claim \
+      "$session_id" t12-close-owner --ttl-ms 60000 |
+      jq -e '.generation == 1' >/dev/null
+    target/debug/qwe --socket "$client_socket" session close "$session_id" \
+      --owner t12-close-owner --generation 1 >/dev/null
     printf 'T12 supervisor ownership PASS (bounded attach, total_rss=%s KiB)\n' "$total_rss"
 
 resilience-smoke:
@@ -1333,6 +1437,18 @@ resilience-smoke:
        ([.sessions[] | select(.id == $id and .state == "running")] | length == 1) and
        ([.tasks[] | select(.session_id == $id and .state == "running")] | length == 1)' \
       >/dev/null
+    target/debug/qwe --socket "$client_socket" lease touch \
+      "$session_id" owner-a 1 --ttl-ms 60000 |
+      jq -e '.generation == 1 and .owner == "owner-a"' >/dev/null
+    target/debug/qwe --socket "$client_socket" lease release \
+      "$session_id" owner-a 1 |
+      jq -e '.generation == 2 and .state == "released"' >/dev/null
+    target/debug/qwe --socket "$client_socket" lease claim \
+      "$session_id" owner-b --ttl-ms 60000 |
+      jq -e '.generation == 3 and .owner == "owner-b"' >/dev/null
+    target/debug/qwe --socket "$client_socket" lease release \
+      "$session_id" owner-b 3 |
+      jq -e '.generation == 4 and .state == "released"' >/dev/null
     target/debug/qwe --socket "$client_socket" session input "$session_id" \
       $'printf "QWE_RESILIENCE_AFTER\\n"\r' >/dev/null
     attached_after=""
@@ -1344,15 +1460,6 @@ resilience-smoke:
     done
     printf '%s' "$attached_after" | jq -e \
       '.screen | contains("QWE_RESILIENCE_AFTER")' >/dev/null
-    target/debug/qwe --socket "$client_socket" lease touch \
-      "$session_id" owner-a 1 --ttl-ms 60000 |
-      jq -e '.generation == 1 and .owner == "owner-a"' >/dev/null
-    target/debug/qwe --socket "$client_socket" lease release \
-      "$session_id" owner-a 1 |
-      jq -e '.generation == 2 and .state == "released"' >/dev/null
-    target/debug/qwe --socket "$client_socket" lease claim \
-      "$session_id" owner-b --ttl-ms 60000 |
-      jq -e '.generation == 3 and .owner == "owner-b"' >/dev/null
 
     printf -v continuous_command 'exec python3 %q\r' \
       "{{ fixtures }}/continuous_output.py"
@@ -1380,7 +1487,11 @@ resilience-smoke:
     done
     printf '%s' "$output_status" | jq -e '.running == false and .exit_code == 0' >/dev/null
 
-    stopped="$(target/debug/qwe --socket "$client_socket" task stop "$task_id")"
+    target/debug/qwe --socket "$client_socket" lease claim \
+      "$session_id" stop-owner --ttl-ms 60000 |
+      jq -e '.generation == 5 and .owner == "stop-owner"' >/dev/null
+    stopped="$(target/debug/qwe --socket "$client_socket" task stop "$task_id" \
+      --owner stop-owner --generation 5)"
     printf '%s' "$stopped" | jq -e '.state == "stopped"' >/dev/null
     target/debug/qwe --socket "$client_socket" task history |
       jq -e --arg id "$task_id" \
