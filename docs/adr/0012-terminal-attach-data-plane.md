@@ -2,7 +2,8 @@
 
 Status: Accepted
 Date: 2026-11-04
-Implementation state: Accepted target; not implemented.
+Implementation state: Stage 2 channel implemented; detached-hold and reclaim
+authority remain Stage 3.
 
 ## Context
 

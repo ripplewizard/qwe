@@ -7,10 +7,12 @@ rust-version.workspace = true
 
 [dependencies]
 clap.workspace = true
+getrandom.workspace = true
 libc.workspace = true
 portable-pty.workspace = true
 qwe-core = { path = "../../crates/qwe-core" }
 qwe-protocol = { path = "../../crates/qwe-protocol" }
 qwe-runtime = { path = "../../crates/qwe-runtime" }
+serde.workspace = true
 serde_json.workspace = true
 vt100.workspace = true

@@ -9,8 +9,11 @@ pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const ATTACH_PROTOCOL_VERSION: u16 = 1;
 pub const MAX_ATTACH_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
 pub const MAX_ATTACH_OUTPUT_BYTES: usize = 64 * 1024;
+pub const ATTACH_OUTPUT_QUEUE_BYTES: usize = 1024 * 1024;
 
 pub mod attach {
+    use std::io::{Read, Write};
+
     use serde::{Deserialize, Serialize};
     use thiserror::Error;
 
@@ -167,6 +170,113 @@ pub mod attach {
             size: usize,
             maximum: usize,
         },
+        #[error("OUTPUT payload is {size} bytes; at least 8 offset bytes are required")]
+        TruncatedOutput { size: usize },
+    }
+
+    #[derive(Debug, Error)]
+    pub enum AttachIoError {
+        #[error(transparent)]
+        Io(#[from] std::io::Error),
+        #[error(transparent)]
+        Codec(#[from] AttachCodecError),
+        #[error(transparent)]
+        Json(#[from] serde_json::Error),
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ReceivedFrame {
+        pub frame_type: FrameType,
+        pub payload: Vec<u8>,
+    }
+
+    pub fn write_payload_frame<W: Write>(
+        writer: &mut W,
+        frame_type: FrameType,
+        payload: &[u8],
+    ) -> Result<(), AttachIoError> {
+        let maximum = if frame_type == FrameType::Output {
+            MAX_ATTACH_OUTPUT_BYTES
+        } else {
+            MAX_ATTACH_FRAME_PAYLOAD_BYTES
+        };
+        if payload.len() > maximum {
+            return Err(AttachCodecError::PayloadTooLarge {
+                frame_type,
+                size: payload.len(),
+                maximum,
+            }
+            .into());
+        }
+        writer.write_all(
+            &FrameHeader {
+                frame_type,
+                payload_length: payload.len(),
+            }
+            .encode()?,
+        )?;
+        writer.write_all(payload)?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    pub fn write_json_frame<W: Write, T: Serialize>(
+        writer: &mut W,
+        frame_type: FrameType,
+        value: &T,
+    ) -> Result<(), AttachIoError> {
+        write_payload_frame(writer, frame_type, &serde_json::to_vec(value)?)
+    }
+
+    pub fn write_output_frame<W: Write>(
+        writer: &mut W,
+        stream_offset: u64,
+        data: &[u8],
+    ) -> Result<(), AttachIoError> {
+        let maximum_data = MAX_ATTACH_OUTPUT_BYTES.saturating_sub(size_of::<u64>());
+        if data.len() > maximum_data {
+            return Err(AttachCodecError::PayloadTooLarge {
+                frame_type: FrameType::Output,
+                size: data.len() + size_of::<u64>(),
+                maximum: MAX_ATTACH_OUTPUT_BYTES,
+            }
+            .into());
+        }
+        let mut payload = Vec::with_capacity(size_of::<u64>() + data.len());
+        payload.extend_from_slice(&stream_offset.to_be_bytes());
+        payload.extend_from_slice(data);
+        write_payload_frame(writer, FrameType::Output, &payload)
+    }
+
+    pub fn read_frame<R: Read>(reader: &mut R) -> Result<ReceivedFrame, AttachIoError> {
+        let mut encoded_header = [0_u8; 5];
+        reader.read_exact(&mut encoded_header)?;
+        let header = FrameHeader::decode(encoded_header)?;
+        let mut payload = vec![0_u8; header.payload_length];
+        reader.read_exact(&mut payload)?;
+        Ok(ReceivedFrame {
+            frame_type: header.frame_type,
+            payload,
+        })
+    }
+
+    pub fn decode_json<T: for<'de> Deserialize<'de>>(
+        payload: &[u8],
+    ) -> Result<T, serde_json::Error> {
+        serde_json::from_slice(payload)
+    }
+
+    pub fn decode_output(payload: &[u8]) -> Result<(u64, &[u8]), AttachCodecError> {
+        if payload.len() < size_of::<u64>() {
+            return Err(AttachCodecError::TruncatedOutput {
+                size: payload.len(),
+            });
+        }
+        let (offset, data) = payload.split_at(size_of::<u64>());
+        Ok((
+            u64::from_be_bytes(offset.try_into().expect("split at fixed offset size")),
+            data,
+        ))
     }
 
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -258,6 +368,67 @@ pub mod attach {
         pub mouse_protocol_mode: MouseProtocolMode,
         pub mouse_protocol_encoding: MouseProtocolEncoding,
         pub screen_text: String,
+        pub next_stream_offset: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct AttachAccepted {
+        pub protocol_version: u16,
+        pub session_id: String,
+        pub owner: String,
+        pub generation: u64,
+        pub reclaim_token: String,
+        pub rows: u16,
+        pub columns: u16,
+        pub stream_offset: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct Resize {
+        pub protocol_version: u16,
+        pub rows: u16,
+        pub columns: u16,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct Ack {
+        pub protocol_version: u16,
+        pub stream_offset: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct Detach {
+        pub protocol_version: u16,
+        pub hold_ttl_ms: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct Resized {
+        pub protocol_version: u16,
+        pub rows: u16,
+        pub columns: u16,
+        pub stream_offset: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct ProcessExited {
+        pub protocol_version: u16,
+        pub exit_code: Option<u8>,
+        pub exit_signal: Option<String>,
+        pub stream_offset: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct OwnershipRevoked {
+        pub protocol_version: u16,
+        pub reason: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct AttachError {
+        pub protocol_version: u16,
+        pub code: String,
+        pub message: String,
     }
 }
 
@@ -518,5 +689,54 @@ mod tests {
             schema["$defs"]["OutputMetadata"]["properties"]["maximum_output_bytes"]["const"],
             MAX_ATTACH_OUTPUT_BYTES
         );
+    }
+
+    #[test]
+    fn attach_output_preserves_raw_bytes_and_stream_offset() {
+        let mut frame = Vec::new();
+        let raw = b"\x1b[31mraw\x00bytes\x1b[0m";
+        attach::write_output_frame(&mut frame, 42, raw).unwrap();
+
+        let received = attach::read_frame(&mut frame.as_slice()).unwrap();
+        assert_eq!(received.frame_type, attach::FrameType::Output);
+        let (offset, payload) = attach::decode_output(&received.payload).unwrap();
+        assert_eq!(offset, 42);
+        assert_eq!(payload, raw);
+    }
+
+    #[test]
+    fn attach_json_frames_round_trip() {
+        let resize = attach::Resize {
+            protocol_version: ATTACH_PROTOCOL_VERSION,
+            rows: 40,
+            columns: 120,
+        };
+        let mut frame = Vec::new();
+        attach::write_json_frame(&mut frame, attach::FrameType::Resize, &resize).unwrap();
+
+        let received = attach::read_frame(&mut frame.as_slice()).unwrap();
+        assert_eq!(received.frame_type, attach::FrameType::Resize);
+        assert_eq!(
+            attach::decode_json::<attach::Resize>(&received.payload).unwrap(),
+            resize
+        );
+    }
+
+    #[test]
+    fn attach_output_rejects_missing_offset_and_oversized_data() {
+        assert_eq!(
+            attach::decode_output(b"short"),
+            Err(attach::AttachCodecError::TruncatedOutput { size: 5 })
+        );
+        assert!(matches!(
+            attach::write_output_frame(
+                &mut Vec::new(),
+                0,
+                &vec![b'x'; MAX_ATTACH_OUTPUT_BYTES + 1]
+            ),
+            Err(attach::AttachIoError::Codec(
+                attach::AttachCodecError::PayloadTooLarge { .. }
+            ))
+        ));
     }
 }

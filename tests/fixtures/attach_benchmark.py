@@ -28,7 +28,7 @@ def main():
         "--socket",
         args.socket,
         "session",
-        "attach",
+        "snapshot",
         args.session_id,
     ]
 

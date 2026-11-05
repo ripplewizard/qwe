@@ -1,7 +1,7 @@
 # QWE Technical Architecture
 
 Status: Implementation Active
-Updated: 2026-11-04
+Updated: 2026-11-05
 
 ## 1. Process Model
 
@@ -24,6 +24,17 @@ qwed supervisor ------------ SQLite WAL
 The supervisor is replaceable. Session workers are the only owners of live
 terminal and process resources. A client never owns a PTY or process group.
 
+The Stage 2 Attach data plane is implemented across the current migration
+topology:
+
+```text
+Client -> qwed Attach socket -> Host Attach socket -> worker Attach socket
+```
+
+These are dedicated, owner-only sockets separate from request/response control
+IPC. The worker remains the authority for live output, input, resize, and VT
+state.
+
 This ownership boundary is exercised by `just t12-host-smoke`.
 
 [ADR 0011](adr/0011-consolidate-control-plane.md) accepts one qwed supervisor
@@ -38,8 +49,9 @@ rediscovery validates the expected socket path, Session ID, PID, and start
 token. The detailed current protocol and authority boundary are in
 [IPC Protocol](ipc-protocol.md).
 
-Production resize and complete VT-mode snapshots remain in progress; see
-[Development Readiness](development-readiness.md).
+Production resize and complete structured VT-mode snapshots are implemented on
+the long-lived Attach path. Detached holds and durable attachment authority
+remain Stage 3 work; see [Development Readiness](development-readiness.md).
 
 ## 2. Process Responsibilities
 
@@ -48,6 +60,8 @@ Production resize and complete VT-mode snapshots remain in progress; see
 - Validates user input.
 - Calls `qwed` through local IPC.
 - Renders JSON, terminal output, or TUI state.
+- Drives the long-lived Attach channel with raw terminal mode, terminal-size
+  polling, and `Ctrl-]` detach.
 - Never accesses SQLite directly.
 
 ### qwed
@@ -57,6 +71,8 @@ Production resize and complete VT-mode snapshots remain in progress; see
 - Stores metadata, topology, and task history in SQLite.
 - Reconciles persisted state against worker inventory before accepting clients.
 - Starts workers, observes lifecycle events, and runs the bounded safety scan.
+- Authenticates and proxies the dedicated Attach socket while the Stage 1
+  consolidation remains in progress.
 - Does not own PTYs or process groups.
 
 ### qwe-host
@@ -64,12 +80,15 @@ Production resize and complete VT-mode snapshots remain in progress; see
 - Temporary migration component that manages isolated session workers until the
   Stage 1 supervisor cutover.
 - Owns Host epoch registration and the current 250 ms inventory path.
+- Proxies the dedicated Attach socket to the addressed worker.
 - Is removed from the V0 process model after migration.
 
 ### Session worker
 
 - Calls `setsid` and owns one PTY, process group, VT state, and bounded journal.
 - Serves status, Attach, input, and close over an owner-only Unix socket.
+- Serves long-lived typed Attach frames over a second owner-only socket with
+  worker-owned stream offsets and bounded per-attachment output queues.
 - Survives `qwed` and Host crashes; worker failure loses only that Session.
 
 ## 3. Crate Graph
@@ -150,7 +169,7 @@ stable test IDs are defined by the
 [canonical protocol schema](../protocol/schema/qwe-v1.schema.json).
 
 The current migration Host protocol is internal and versioned separately from
-client IPC. The implemented field-level contract is
+client IPC. Its request/response field contract is
 [IPC Protocol](ipc-protocol.md):
 
 ```text
@@ -174,9 +193,9 @@ SESSION_CLOSE
 
 It does not replay an unbounded historical PTY stream.
 
-The journal is one bounded buffer per Session worker. Each concurrent Attach
-gets a private snapshot; a slow client does not hold the PTY reader or another
-client's response writer. The journal tail may begin mid-escape-sequence and is
+The journal is one bounded buffer per Session worker. Each Attach gets a
+private 1 MiB output queue; a slow client does not hold the PTY reader or
+another client's writer. The journal tail may begin mid-escape-sequence and is
 therefore diagnostic data, while the VT screen snapshot is authoritative.
 
 In the V0 implementation, `SESSION_STATUS`, `SESSION_CREATE`, `SESSION_INPUT`,
@@ -184,13 +203,17 @@ and `TASK_STOP` return lightweight metadata only. `SESSION_ATTACH` is the
 only operation that returns the VT screen and journal tail, preventing status
 polling from serializing large responses ahead of PTY input.
 
-The current `session detach` CLI command returns `unsupported_operation` until
-the Stage 2 channel provides an actual attachment-state transition.
+[ADR 0012](adr/0012-terminal-attach-data-plane.md) is accepted. The Stage 2
+long-lived channel now handles Attach, input, resize, immediate detach, and
+connection EOF. The old `SESSION_ATTACH` request remains only as a diagnostic
+snapshot exposed by `qwe session snapshot`; it is not the interactive data
+plane.
 
-[ADR 0012](adr/0012-terminal-attach-data-plane.md) is accepted. Stage 2 replaces
-one-shot Attach, input, resize, and detach calls with the long-lived channel.
-The current request/response table remains the migration contract until that
-implementation lands.
+The worker registers the subscriber before capturing the snapshot. The
+snapshot's `next_stream_offset` is the first offset that may appear in an
+`OUTPUT` frame. A per-attachment queue overflows at 1 MiB and closes only that
+channel with `output_backpressure`. Positive-TTL detached holds and persisted
+reclaim-token authority remain Stage 3.
 
 ## 6. State Ownership
 
