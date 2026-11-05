@@ -28,20 +28,34 @@ qwe_command() {
 }
 
 ensure_session() {
-  local session_id="$1"
+  local case_id="$1"
   local program="$2"
   shift 2
 
-  if qwe_command session status "$session_id" >/dev/null 2>&1; then
-    printf 'Reusing existing Session: %s\n' "$session_id"
-    return
+  local mapping="$STATE_ROOT/$case_id.session"
+  if [[ -f "$mapping" ]]; then
+    local active_id
+    active_id="$(<"$mapping")"
+    if [[ -n "$active_id" ]] &&
+       qwe_command status |
+         jq -e --arg id "$active_id" \
+           'any(.sessions[]; .id == $id and .state == "running")' \
+           >/dev/null; then
+      printf '%s\n' "$active_id"
+      return
+    fi
+    rm -f "$mapping"
   fi
 
+  local session_id
+  session_id="$case_id-$(date -u +%Y%m%dT%H%M%SZ)-$$"
   if (($#)); then
-    qwe_command session create "$session_id" "$program" -- "$@"
+    qwe_command session create "$session_id" "$program" -- "$@" >&2
   else
-    qwe_command session create "$session_id" "$program"
+    qwe_command session create "$session_id" "$program" >&2
   fi
+  printf '%s\n' "$session_id" >"$mapping"
+  printf '%s\n' "$session_id"
 }
 
 attach_session() {

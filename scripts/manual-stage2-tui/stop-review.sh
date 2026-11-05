@@ -14,7 +14,16 @@ fi
 source "$STATE_FILE"
 
 cleanup_owner="manual-reviewer-cleanup"
-for session_id in manual-t03 manual-t04 manual-t08 manual-t11; do
+session_ids=()
+shopt -s nullglob
+for mapping in "$STATE_ROOT"/*.session; do
+  session_ids+=("$(<"$mapping")")
+done
+shopt -u nullglob
+session_ids+=(manual-t03 manual-t04 manual-t08 manual-t11)
+
+for session_id in "${session_ids[@]}"; do
+  [[ -n "$session_id" ]] || continue
   if ! "$QWE_MANUAL_QWE_BIN" --socket "$QWE_MANUAL_SOCKET" \
       session status "$session_id" >/dev/null 2>&1; then
     continue

@@ -6,9 +6,10 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 load_state
 
-ensure_session manual-t03 nvim -u NONE "$QWE_MANUAL_FIXTURE" >/dev/null
+session_id="$(ensure_session manual-t03 nvim -u NONE "$QWE_MANUAL_FIXTURE")"
 
 printf '%s\n' \
+  "Session: $session_id" \
   'T03 checklist:' \
   '  - Confirm full-screen Neovim rendering and the 200-line file.' \
   '  - Use gg/G, Ctrl-d/Ctrl-u, :set number, :syntax on.' \
@@ -19,4 +20,4 @@ printf '%s\n' \
   '  - Re-run this script to reattach; then quit with :q!.' \
   ''
 
-attach_session manual-t03
+attach_session "$session_id"

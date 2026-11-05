@@ -11,7 +11,7 @@ die() {
   exit 1
 }
 
-for command in cargo nvim htop; do
+for command in cargo jq nvim htop; do
   command -v "$command" >/dev/null 2>&1 || die "missing command: $command"
 done
 

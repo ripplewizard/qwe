@@ -6,9 +6,10 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 load_state
 
-ensure_session manual-t11 bash >/dev/null
+session_id="$(ensure_session manual-t11 bash)"
 
 printf '%s\n' \
+  "Session: $session_id" \
   'T11 checklist:' \
   '  Run in the attached Bash session:' \
   '    sleep 300' \
@@ -24,4 +25,4 @@ printf '%s\n' \
   '  Finish with: kill %1; jobs' \
   ''
 
-attach_session manual-t11
+attach_session "$session_id"

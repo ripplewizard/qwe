@@ -6,9 +6,10 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 load_state
 
-ensure_session manual-t08 nvim -u NONE "$QWE_MANUAL_FIXTURE" >/dev/null
+session_id="$(ensure_session manual-t08 nvim -u NONE "$QWE_MANUAL_FIXTURE")"
 
 printf '%s\n' \
+  "Session: $session_id" \
   'T08 checklist:' \
   '  1. In Neovim Normal mode, run:' \
   '       :lua vim.defer_fn(function() vim.api.nvim_echo({{"QWE_T08_DETACHED_OUTPUT","ErrorMsg"}}, true, {}) end, 5000)' \
@@ -21,4 +22,4 @@ printf '%s\n' \
   '  8. Quit with :q!.' \
   ''
 
-attach_session manual-t08
+attach_session "$session_id"

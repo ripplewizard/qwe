@@ -6,9 +6,10 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 load_state
 
-ensure_session manual-t04 htop >/dev/null
+session_id="$(ensure_session manual-t04 htop)"
 
 printf '%s\n' \
+  "Session: $session_id" \
   'T04 checklist:' \
   '  - Confirm CPU, memory, Tasks, and process rows are complete.' \
   '  - Confirm values refresh continuously.' \
@@ -18,4 +19,4 @@ printf '%s\n' \
   '  - Confirm input works, press q, and verify the Session exits.' \
   ''
 
-attach_session manual-t04
+attach_session "$session_id"
