@@ -10,20 +10,19 @@ use qwe_runtime::{
     BoundedJournal, CursorStyle as RuntimeCursorStyle,
     MouseProtocolEncoding as RuntimeMouseProtocolEncoding,
     MouseProtocolMode as RuntimeMouseProtocolMode, TerminalScreen, TerminalSnapshot,
-    process_identity, process_matches,
+    process_identity,
 };
-use serde_json::{Value, from_value, json};
+use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 const JOURNAL_LIMIT: usize = 16 * 1024 * 1024;
 const ATTACH_TAIL_BYTES: usize = 1024 * 1024;
@@ -35,14 +34,10 @@ const ATTACH_WRITE_STALL: Duration = Duration::from_secs(5);
 
 #[derive(Parser)]
 struct Args {
-    #[arg(long)]
-    socket: Option<String>,
-    #[arg(long)]
-    runtime_dir: Option<PathBuf>,
     #[arg(long, hide = true)]
-    worker_socket: Option<PathBuf>,
+    worker_socket: PathBuf,
     #[arg(long, hide = true)]
-    worker_session_id: Option<String>,
+    worker_session_id: String,
     #[arg(long, hide = true, default_value = "sh")]
     worker_program: String,
     #[arg(long = "worker-arg", hide = true, allow_hyphen_values = true)]
@@ -101,32 +96,6 @@ struct AttachmentRegistration {
     snapshot: attach::TerminalSnapshot,
 }
 
-struct WorkerHandle {
-    socket: PathBuf,
-    worker_pid: u32,
-    worker_identity: ProcessIdentity,
-}
-
-struct Host {
-    sessions: HashMap<String, WorkerHandle>,
-    runtime_dir: PathBuf,
-    epoch_file: PathBuf,
-    next_epoch: u64,
-    active_epoch: u64,
-}
-
-enum HostAction {
-    Done(Result<Value, ProtocolErrorBody>),
-    Forward {
-        session_id: String,
-        socket: PathBuf,
-        worker_pid: u32,
-        operation: String,
-        payload: Value,
-        remove_session: Option<String>,
-    },
-}
-
 fn error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
     ProtocolErrorBody {
         code: code.into(),
@@ -134,36 +103,11 @@ fn error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
     }
 }
 
-fn request_id(prefix: &str) -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    format!("{prefix}-{}-{nanos}", std::process::id())
-}
-
-fn attach_socket(path: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.attach", path.display()))
-}
-
 fn reclaim_token() -> Result<String, std::io::Error> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes)
         .map_err(|failure| std::io::Error::other(format!("random source failed: {failure}")))?;
     Ok(hex_encode(&bytes))
-}
-
-fn session_id(request: &RequestEnvelope) -> String {
-    request
-        .payload
-        .get("session_id")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
-fn worker_socket(runtime_dir: &Path, session_id: &str) -> PathBuf {
-    runtime_dir.join(format!("{}.sock", hex_encode(session_id.as_bytes())))
 }
 
 fn worker_attach_socket(runtime_dir: &Path, session_id: &str) -> PathBuf {
@@ -328,240 +272,6 @@ fn protocol_snapshot(
     }
 }
 
-fn call_socket(socket: &Path, operation: &str, payload: Value) -> Result<Value, ProtocolErrorBody> {
-    let mut stream = UnixStream::connect(socket).map_err(|failure| {
-        error(
-            "worker_unavailable",
-            format!("{}: {failure}", socket.display()),
-        )
-    })?;
-    verify_same_uid(&stream).map_err(|failure| error("unauthorized_peer", failure.to_string()))?;
-    let request = RequestEnvelope {
-        version: PROTOCOL_VERSION,
-        request_id: request_id("qwe-host"),
-        idempotency_key: None,
-        host_epoch: None,
-        operation: operation.into(),
-        payload,
-    };
-    write_frame(&mut stream, &request)
-        .map_err(|failure| error("transport", failure.to_string()))?;
-    let response: ResponseEnvelope =
-        read_frame(&mut stream).map_err(|failure| error("transport", failure.to_string()))?;
-    response.result
-}
-
-fn handle_from_hello(runtime_dir: &Path, socket: &Path, value: &Value) -> Option<WorkerHandle> {
-    let session_id = value.get("session_id")?.as_str()?;
-    if socket != worker_socket(runtime_dir, session_id) {
-        return None;
-    }
-    let worker_pid = value.get("worker_pid")?.as_u64()? as u32;
-    let worker_identity: ProcessIdentity =
-        from_value(value.get("worker_identity")?.clone()).ok()?;
-    if worker_identity.pid != worker_pid || !process_matches(&worker_identity) {
-        return None;
-    }
-    Some(WorkerHandle {
-        socket: socket.to_path_buf(),
-        worker_pid,
-        worker_identity,
-    })
-}
-
-impl Host {
-    fn recover(runtime_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-        fs::create_dir_all(&runtime_dir)?;
-        fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(0o700))?;
-        let epoch_file = runtime_dir.join("epoch");
-        let next_epoch = match fs::read_to_string(&epoch_file) {
-            Ok(value) => value
-                .trim()
-                .parse::<u64>()
-                .map_err(|failure| format!("invalid host epoch file: {failure}"))?,
-            Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => 0,
-            Err(failure) => return Err(Box::new(failure)),
-        };
-        let mut sessions = HashMap::new();
-        for entry in fs::read_dir(&runtime_dir)? {
-            let path = entry?.path();
-            if path.extension().and_then(|value| value.to_str()) != Some("sock") {
-                continue;
-            }
-            match call_socket(&path, "WORKER_HELLO", json!({})) {
-                Ok(value) => {
-                    if let Some(handle) = handle_from_hello(&runtime_dir, &path, &value) {
-                        let id = value["session_id"].as_str().unwrap_or_default().to_string();
-                        sessions.insert(id, handle);
-                    } else {
-                        let _ = fs::remove_file(path);
-                    }
-                }
-                Err(_) => {
-                    let _ = fs::remove_file(path);
-                }
-            }
-        }
-        Ok(Self {
-            sessions,
-            runtime_dir,
-            epoch_file,
-            next_epoch,
-            active_epoch: 0,
-        })
-    }
-
-    fn persist_epoch(&self, epoch: u64) -> Result<(), ProtocolErrorBody> {
-        let temporary = self.epoch_file.with_extension("tmp");
-        fs::write(&temporary, format!("{epoch}\n"))
-            .and_then(|()| fs::File::open(&temporary)?.sync_all())
-            .and_then(|()| fs::rename(&temporary, &self.epoch_file))
-            .map_err(|failure| error("persistence_failure", failure.to_string()))
-    }
-
-    fn create(&mut self, session_id: &str, payload: &Value) -> Result<Value, ProtocolErrorBody> {
-        if self.sessions.contains_key(session_id) {
-            return Err(error("already_exists", "session already exists"));
-        }
-        let socket = worker_socket(&self.runtime_dir, session_id);
-        let _ = fs::remove_file(&socket);
-        let program = payload
-            .get("program")
-            .and_then(Value::as_str)
-            .unwrap_or("sh");
-        let arguments: Vec<String> = payload
-            .get("args")
-            .and_then(Value::as_array)
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default();
-        let executable =
-            std::env::current_exe().map_err(|failure| error("internal", failure.to_string()))?;
-        let mut command = Command::new(executable);
-        command
-            .arg("--worker-socket")
-            .arg(&socket)
-            .arg("--worker-session-id")
-            .arg(session_id)
-            .arg("--worker-program")
-            .arg(program)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        for argument in arguments {
-            command.arg("--worker-arg").arg(argument);
-        }
-        let mut worker = command
-            .spawn()
-            .map_err(|failure| error("internal", failure.to_string()))?;
-        let result = (|| {
-            for _ in 0..200 {
-                if let Ok(value) = call_socket(&socket, "WORKER_HELLO", json!({})) {
-                    let status =
-                        call_socket(&socket, "SESSION_STATUS", json!({"session_id": session_id}))?;
-                    let handle =
-                        handle_from_hello(&self.runtime_dir, &socket, &value).ok_or_else(|| {
-                            error("worker_start_failed", "worker identity validation failed")
-                        })?;
-                    self.sessions.insert(session_id.to_string(), handle);
-                    return Ok(status);
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(error(
-                "worker_start_failed",
-                "session worker did not become ready",
-            ))
-        })();
-        if result.is_err() {
-            let _ = worker.kill();
-            let _ = worker.wait();
-            let _ = fs::remove_file(socket);
-            let _ = fs::remove_file(worker_attach_socket(&self.runtime_dir, session_id));
-        }
-        result
-    }
-
-    fn list(&mut self) -> Result<Value, ProtocolErrorBody> {
-        let mut sessions = Vec::new();
-        let mut stale = Vec::new();
-        for (id, handle) in &self.sessions {
-            if !process_matches(&handle.worker_identity) {
-                stale.push(id.clone());
-                continue;
-            }
-            match call_socket(&handle.socket, "SESSION_STATUS", json!({"session_id": id})) {
-                Ok(status) => sessions.push(status),
-                Err(_) => stale.push(id.clone()),
-            }
-        }
-        for id in stale {
-            self.sessions.remove(&id);
-        }
-        Ok(json!({
-            "epoch": self.active_epoch,
-            "sessions": sessions
-        }))
-    }
-
-    fn dispatch(&mut self, request: &RequestEnvelope) -> HostAction {
-        if request.operation == "HOST_REGISTER" {
-            let next_epoch = self.next_epoch + 1;
-            if let Err(failure) = self.persist_epoch(next_epoch) {
-                return HostAction::Done(Err(failure));
-            }
-            self.next_epoch = next_epoch;
-            self.active_epoch = next_epoch;
-            return HostAction::Done(Ok(json!({
-                "epoch": self.active_epoch,
-                "protocol": PROTOCOL_VERSION,
-                "recovered_sessions": self.sessions.len()
-            })));
-        }
-        if request.host_epoch != Some(self.active_epoch) {
-            return HostAction::Done(Err(error(
-                "stale_epoch",
-                format!("expected host epoch {}", self.active_epoch),
-            )));
-        }
-        match request.operation.as_str() {
-            "PING" => HostAction::Done(Ok(json!({
-                "host": "ok",
-                "protocol": PROTOCOL_VERSION
-            }))),
-            "HOST_LIST" => HostAction::Done(self.list()),
-            "SESSION_CREATE" => {
-                let id = session_id(request);
-                HostAction::Done(self.create(&id, &request.payload))
-            }
-            "SESSION_STATUS" | "SESSION_ATTACH" | "SESSION_INPUT" | "TASK_STOP"
-            | "SESSION_CLOSE" => {
-                let id = session_id(request);
-                let Some(handle) = self.sessions.get(&id) else {
-                    return HostAction::Done(Err(error(
-                        "terminal_lost",
-                        "session is not owned by a live worker",
-                    )));
-                };
-                HostAction::Forward {
-                    session_id: id.clone(),
-                    socket: handle.socket.clone(),
-                    worker_pid: handle.worker_pid,
-                    operation: request.operation.clone(),
-                    payload: request.payload.clone(),
-                    remove_session: (request.operation == "SESSION_CLOSE").then_some(id),
-                }
-            }
-            _ => HostAction::Done(Err(error("unsupported_operation", &request.operation))),
-        }
-    }
-}
-
 impl WorkerSession {
     fn create(
         program: &str,
@@ -679,6 +389,32 @@ impl WorkerSession {
             "exit_signal": exit_signal,
             "truncated_from": stream.journal.truncated_from(),
             "total_written": stream.journal.total_written()
+        })
+    }
+
+    fn ping(&self, session_id: &str) -> Value {
+        let running = self.running.load(Ordering::SeqCst);
+        let exit_code = *self
+            .exit_code
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let exit_signal = self
+            .exit_signal
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        json!({
+            "session_id": session_id,
+            "worker_pid": std::process::id(),
+            "worker_identity": self.worker_identity,
+            "pid": self.pid,
+            "pgid": self.identity.pgid,
+            "start_token": self.identity.start_token,
+            "process_identity": self.identity,
+            "running": running,
+            "state": if running { "running" } else { "exited" },
+            "exit_code": exit_code,
+            "exit_signal": exit_signal
         })
     }
 
@@ -1264,6 +1000,7 @@ fn worker_handle(
     payload: &Value,
 ) -> Result<Value, ProtocolErrorBody> {
     match operation {
+        "PING" => Ok(session.ping(session_id)),
         "WORKER_HELLO" | "SESSION_STATUS" => Ok(session.status(session_id)),
         "SESSION_ATTACH" => Ok(session.snapshot(session_id)),
         "SESSION_INPUT" => session.input(session_id, payload),
@@ -1273,32 +1010,61 @@ fn worker_handle(
     }
 }
 
-fn serve_worker(mut stream: UnixStream, session: &Arc<WorkerSession>, session_id: &str) {
+fn serve_worker(stream: UnixStream, session: &Arc<WorkerSession>, session_id: &str) {
     if verify_same_uid(&stream).is_err() {
         return;
     }
-    let result = (|| {
-        let request: RequestEnvelope = read_frame(&mut stream)?;
-        validate_version(request.version).map_err(|failure| {
-            qwe_protocol::IoFrameError::Decode(qwe_protocol::DecodeError::Framing(failure))
-        })?;
-        let response = ResponseEnvelope {
-            version: PROTOCOL_VERSION,
-            request_id: request.request_id,
-            result: worker_handle(session, &request.operation, session_id, &request.payload),
+    let mut reader = match stream.try_clone() {
+        Ok(reader) => reader,
+        Err(_) => return,
+    };
+    let writer = Arc::new(Mutex::new(stream));
+    loop {
+        let request: RequestEnvelope = match read_frame(&mut reader) {
+            Ok(request) => request,
+            Err(qwe_protocol::IoFrameError::Io(failure))
+                if matches!(
+                    failure.kind(),
+                    std::io::ErrorKind::UnexpectedEof
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::BrokenPipe
+                ) =>
+            {
+                return;
+            }
+            Err(failure) => {
+                eprintln!("worker control protocol error: {failure}");
+                return;
+            }
         };
-        write_frame(&mut stream, &response)
-    })();
-    if let Err(failure) = result {
-        eprintln!("worker protocol error: {failure}");
+        if let Err(failure) = validate_version(request.version) {
+            eprintln!("worker control protocol error: {failure}");
+            return;
+        }
+        let session = Arc::clone(session);
+        let session_id = session_id.to_string();
+        let writer = Arc::clone(&writer);
+        thread::spawn(move || {
+            let response = ResponseEnvelope {
+                version: PROTOCOL_VERSION,
+                request_id: request.request_id,
+                result: worker_handle(&session, &request.operation, &session_id, &request.payload),
+            };
+            if let Err(failure) = write_frame(
+                &mut *writer
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                &response,
+            ) {
+                eprintln!("worker control response error: {failure}");
+            }
+        });
     }
 }
 
 fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
-    let socket = args.worker_socket.ok_or("missing --worker-socket")?;
-    let session_id = args
-        .worker_session_id
-        .ok_or("missing --worker-session-id")?;
+    let socket = args.worker_socket;
+    let session_id = args.worker_session_id;
     if UnixStream::connect(&socket).is_ok() {
         return Err(format!("session worker already running at {}", socket.display()).into());
     }
@@ -1340,251 +1106,8 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn proxy_bidirectional(mut left: UnixStream, mut right: UnixStream) -> std::io::Result<()> {
-    let mut left_reader = left.try_clone()?;
-    let mut right_writer = right.try_clone()?;
-    let forward = thread::spawn(move || {
-        let result = std::io::copy(&mut left_reader, &mut right_writer);
-        let _ = right_writer.shutdown(std::net::Shutdown::Write);
-        result
-    });
-    let reverse = std::io::copy(&mut right, &mut left);
-    let _ = left.shutdown(std::net::Shutdown::Both);
-    let _ = forward.join();
-    reverse.map(|_| ())
-}
-
-fn forward_attach_open(
-    stream: &mut UnixStream,
-    frame_type: attach::FrameType,
-    payload: &[u8],
-) -> Result<(), attach::AttachIoError> {
-    attach::write_payload_frame(stream, frame_type, payload)
-}
-
-fn serve_host_attachment(
-    mut client: UnixStream,
-    host: &Arc<Mutex<Host>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if verify_same_uid(&client).is_err() {
-        return Ok(());
-    }
-    let frame = match attach::read_frame(&mut client) {
-        Ok(frame) => frame,
-        Err(failure) => {
-            let _ = attach::write_json_frame(
-                &mut client,
-                attach::FrameType::Error,
-                &attach_error("unknown_frame_type", failure.to_string()),
-            );
-            return Ok(());
-        }
-    };
-    if frame.frame_type != attach::FrameType::AttachOpen {
-        let _ = attach::write_json_frame(
-            &mut client,
-            attach::FrameType::Error,
-            &attach_error(
-                "unknown_frame_type",
-                "the first attach frame must be ATTACH_OPEN",
-            ),
-        );
-        return Ok(());
-    }
-    let open = match attach::decode_json::<attach::AttachOpen>(&frame.payload) {
-        Ok(open) => open,
-        Err(failure) => {
-            let _ = attach::write_json_frame(
-                &mut client,
-                attach::FrameType::Error,
-                &attach_error("worker_protocol_error", failure.to_string()),
-            );
-            return Ok(());
-        }
-    };
-    if open.protocol_version != ATTACH_PROTOCOL_VERSION {
-        let _ = attach::write_json_frame(
-            &mut client,
-            attach::FrameType::Error,
-            &attach_error(
-                "incompatible_version",
-                format!(
-                    "attach protocol {} is incompatible with {}",
-                    open.protocol_version, ATTACH_PROTOCOL_VERSION
-                ),
-            ),
-        );
-        return Ok(());
-    }
-    let worker_socket = host
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .sessions
-        .get(&open.session_id)
-        .map(|handle| handle.socket.clone());
-    let Some(worker_socket) = worker_socket else {
-        let _ = attach::write_json_frame(
-            &mut client,
-            attach::FrameType::Error,
-            &attach_error("session_lost", "session is not owned by a live worker"),
-        );
-        return Ok(());
-    };
-    let worker_attach = worker_attach_socket(
-        worker_socket
-            .parent()
-            .expect("worker socket always has a runtime parent"),
-        &open.session_id,
-    );
-    let mut worker = match UnixStream::connect(&worker_attach) {
-        Ok(worker) => worker,
-        Err(failure) => {
-            let _ = attach::write_json_frame(
-                &mut client,
-                attach::FrameType::Error,
-                &attach_error(
-                    "worker_unreachable",
-                    format!("{}: {failure}", worker_attach.display()),
-                ),
-            );
-            return Ok(());
-        }
-    };
-    verify_same_uid(&worker)
-        .map_err(|failure| format!("worker peer verification failed: {failure}"))?;
-    if let Err(failure) = forward_attach_open(&mut worker, frame.frame_type, &frame.payload) {
-        let _ = attach::write_json_frame(
-            &mut client,
-            attach::FrameType::Error,
-            &attach_error("worker_protocol_error", failure.to_string()),
-        );
-        return Ok(());
-    }
-    proxy_bidirectional(client, worker)?;
-    Ok(())
-}
-
-fn serve_host(
-    mut stream: UnixStream,
-    host: &Arc<Mutex<Host>>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if verify_same_uid(&stream).is_err() {
-        return Ok(());
-    }
-    let request: RequestEnvelope = read_frame(&mut stream)?;
-    validate_version(request.version).map_err(|failure| {
-        qwe_protocol::IoFrameError::Decode(qwe_protocol::DecodeError::Framing(failure))
-    })?;
-    let action = host
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .dispatch(&request);
-    let result = match action {
-        HostAction::Done(result) => result,
-        HostAction::Forward {
-            session_id,
-            socket,
-            worker_pid,
-            operation,
-            payload,
-            remove_session,
-        } => {
-            let mut result = call_socket(&socket, &operation, payload);
-            if matches!(
-                result.as_ref().err().map(|failure| failure.code.as_str()),
-                Some("worker_unavailable" | "transport")
-            ) {
-                host.lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .sessions
-                    .remove(&session_id);
-                let _ = fs::remove_file(&socket);
-                result = Err(error(
-                    "terminal_lost",
-                    "session worker disappeared during request",
-                ));
-            }
-            if let Some(session_id) = remove_session {
-                if result.is_ok() {
-                    host.lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .sessions
-                        .remove(&session_id);
-                    let _ = fs::remove_file(worker_attach_socket(
-                        socket
-                            .parent()
-                            .expect("worker socket always has a runtime parent"),
-                        &session_id,
-                    ));
-                    unsafe {
-                        libc::kill(worker_pid as libc::pid_t, libc::SIGTERM);
-                    }
-                    let _ = fs::remove_file(&socket);
-                }
-            }
-            result
-        }
-    };
-    let response = ResponseEnvelope {
-        version: PROTOCOL_VERSION,
-        request_id: request.request_id,
-        result,
-    };
-    write_frame(&mut stream, &response)?;
-    Ok(())
-}
-
-fn run_host(args: Args) -> Result<(), Box<dyn std::error::Error>> {
-    let socket = args.socket.ok_or("missing --socket")?;
-    let attach_path = attach_socket(Path::new(&socket));
-    let runtime_dir = args
-        .runtime_dir
-        .unwrap_or_else(|| PathBuf::from(format!("{socket}.runtime")));
-    if UnixStream::connect(&socket).is_ok() {
-        return Err(format!("qwe-host is already running at {socket}").into());
-    }
-    let _ = fs::remove_file(&socket);
-    let _ = fs::remove_file(&attach_path);
-    let session_result = unsafe { libc::setsid() };
-    if session_result < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
-        return Err(std::io::Error::last_os_error().into());
-    }
-    let listener = UnixListener::bind(&socket)?;
-    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
-    let host = Arc::new(Mutex::new(Host::recover(runtime_dir)?));
-    let control_host = Arc::clone(&host);
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let host = Arc::clone(&control_host);
-            thread::spawn(move || {
-                if let Err(failure) = serve_host(stream?, &host) {
-                    eprintln!("host protocol error: {failure}");
-                }
-                Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
-            });
-        }
-    });
-    let attach_listener = UnixListener::bind(&attach_path)?;
-    fs::set_permissions(&attach_path, fs::Permissions::from_mode(0o600))?;
-    for stream in attach_listener.incoming() {
-        let host = Arc::clone(&host);
-        thread::spawn(move || {
-            if let Err(failure) = serve_host_attachment(stream?, &host) {
-                eprintln!("host attach error: {failure}");
-            }
-            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
-        });
-    }
-    Ok(())
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
-    if args.worker_socket.is_some() {
-        run_worker(args)
-    } else {
-        run_host(args)
-    }
+    run_worker(Args::parse())
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -1600,83 +1123,6 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn newer_registration_fences_old_epoch() {
-        let runtime_dir = std::env::temp_dir().join(format!(
-            "qwe-host-test-{}-{}",
-            std::process::id(),
-            request_id("epoch")
-        ));
-        fs::create_dir_all(&runtime_dir).unwrap();
-        let mut host = Host {
-            sessions: HashMap::new(),
-            epoch_file: runtime_dir.join("epoch"),
-            runtime_dir: runtime_dir.clone(),
-            next_epoch: 0,
-            active_epoch: 0,
-        };
-        let first = match host.dispatch(&RequestEnvelope {
-            version: PROTOCOL_VERSION,
-            request_id: "one".into(),
-            idempotency_key: None,
-            host_epoch: None,
-            operation: "HOST_REGISTER".into(),
-            payload: json!({}),
-        }) {
-            HostAction::Done(Ok(value)) => value["epoch"].as_u64().unwrap(),
-            _ => panic!("unexpected registration response"),
-        };
-        let second = match host.dispatch(&RequestEnvelope {
-            version: PROTOCOL_VERSION,
-            request_id: "two".into(),
-            idempotency_key: None,
-            host_epoch: None,
-            operation: "HOST_REGISTER".into(),
-            payload: json!({}),
-        }) {
-            HostAction::Done(Ok(value)) => value["epoch"].as_u64().unwrap(),
-            _ => panic!("unexpected registration response"),
-        };
-        assert!(second > first);
-        assert!(matches!(
-            host.dispatch(&RequestEnvelope {
-                version: PROTOCOL_VERSION,
-                request_id: "stale".into(),
-                idempotency_key: None,
-                host_epoch: Some(first),
-                operation: "HOST_LIST".into(),
-                payload: json!({}),
-            }),
-            HostAction::Done(Err(error)) if error.code == "stale_epoch"
-        ));
-        let _ = fs::remove_dir_all(runtime_dir);
-    }
-
-    #[test]
-    fn worker_hello_requires_expected_socket_and_start_token() {
-        let runtime_dir = std::env::temp_dir().join(format!(
-            "qwe-worker-identity-{}-{}",
-            std::process::id(),
-            request_id("identity")
-        ));
-        fs::create_dir_all(&runtime_dir).unwrap();
-        let session_id = "identity-session";
-        let socket = worker_socket(&runtime_dir, session_id);
-        let identity = process_identity(std::process::id()).unwrap();
-        let hello = json!({
-            "session_id": session_id,
-            "worker_pid": identity.pid,
-            "worker_identity": identity
-        });
-        assert!(handle_from_hello(&runtime_dir, &socket, &hello).is_some());
-        assert!(handle_from_hello(&runtime_dir, &runtime_dir.join("wrong.sock"), &hello).is_none());
-        let mut invalid = hello;
-        invalid["worker_identity"]["start_token"] = json!("stale");
-        assert!(handle_from_hello(&runtime_dir, &socket, &invalid).is_none());
-        let _ = fs::remove_dir_all(runtime_dir);
-    }
-
     #[test]
     fn attachment_queue_overflow_is_isolated_per_attachment() {
         let slow = AttachmentQueue::new(4);

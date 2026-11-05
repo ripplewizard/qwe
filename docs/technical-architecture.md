@@ -24,11 +24,10 @@ qwed supervisor ------------ SQLite WAL
 The supervisor is replaceable. Session workers are the only owners of live
 terminal and process resources. A client never owns a PTY or process group.
 
-The Stage 2 Attach data plane is implemented across the current migration
-topology:
+The Attach data plane is:
 
 ```text
-Client -> qwed Attach socket -> Host Attach socket -> worker Attach socket
+Client -> qwed Attach socket -> worker Attach socket
 ```
 
 These are dedicated, owner-only sockets separate from request/response control
@@ -37,11 +36,10 @@ state.
 
 This ownership boundary is exercised by `just t12-host-smoke`.
 
-[ADR 0011](adr/0011-consolidate-control-plane.md) accepts one qwed supervisor
-for V0. The current code still uses the migration topology
-`qwed -> qwe-host -> session worker`, including Host epoch recovery and 250 ms
-inventory polling. The Stage 1 cutover moves worker inventory and lifecycle
-events into qwed without changing the worker isolation boundary.
+[ADR 0011](adr/0011-consolidate-control-plane.md) is implemented. qwed is the
+single control-plane supervisor and directly starts, controls, and recovers
+workers. A `flock(2)` runtime lock provides process-lifetime single-instance
+protection. Host epoch registration and inventory polling have been removed.
 
 Current production implementation includes durable session workers, SQLite
 Task/Lease state, startup reconciliation, and concurrent Attach. Worker
@@ -70,26 +68,24 @@ remain Stage 3 work; see [Development Readiness](development-readiness.md).
 - Authorizes clients and manages leases.
 - Stores metadata, topology, and task history in SQLite.
 - Reconciles persisted state against worker inventory before accepting clients.
-- Starts workers, observes lifecycle events, and runs the bounded safety scan.
-- Authenticates and proxies the dedicated Attach socket while the Stage 1
-  consolidation remains in progress.
+- Starts and re-adopts workers, observes `SIGCHLD`/`waitpid` events and
+  persistent control EOF, and runs the bounded safety scan.
+- Authenticates and proxies the dedicated Attach socket directly to workers.
 - Does not own PTYs or process groups.
 
-### qwe-host
+### qwe-worker
 
-- Temporary migration component that manages isolated session workers until the
-  Stage 1 supervisor cutover.
-- Owns Host epoch registration and the current 250 ms inventory path.
-- Proxies the dedicated Attach socket to the addressed worker.
-- Is removed from the V0 process model after migration.
+- One process per Session; owns the PTY, process group, VT state, and journal.
+- Serves a persistent request/response control channel and a typed Attach
+  channel over owner-only Unix sockets.
+- Survives qwed crashes; qwed re-adopts it by socket path, SessionId, worker PID,
+  and start token.
 
 ### Session worker
 
-- Calls `setsid` and owns one PTY, process group, VT state, and bounded journal.
-- Serves status, Attach, input, and close over an owner-only Unix socket.
-- Serves long-lived typed Attach frames over a second owner-only socket with
-  worker-owned stream offsets and bounded per-attachment output queues.
-- Survives `qwed` and Host crashes; worker failure loses only that Session.
+The `qwe-worker` process is the Session worker. It calls `setsid`, owns one PTY,
+process group, VT state, and bounded journal, and never transfers those
+resources to qwed.
 
 ## 3. Crate Graph
 
@@ -101,9 +97,10 @@ qwe (CLI)
 qwed
   -> qwe-core
   -> qwe-protocol
+  -> qwe-runtime
   -> qwe-storage
 
-qwe-host
+qwe-worker
   -> qwe-core
   -> qwe-protocol
   -> qwe-runtime
@@ -138,7 +135,6 @@ session.input
 session.resize
 session.status
 session.close
-task.start
 task.status
 task.stop
 task.history
@@ -161,22 +157,21 @@ truncated_history
 persistence_failure
 ```
 
-## 5. Attach Protocol and Migration Host Protocol
+## 5. Attach and Worker Control Protocols
 
 The accepted V0 Attach endpoint is a dedicated, owner-only Unix socket with
 typed binary framing. Its frame numbers, payload limits, payload schemas, and
 stable test IDs are defined by the
 [canonical protocol schema](../protocol/schema/qwe-v1.schema.json).
 
-The current migration Host protocol is internal and versioned separately from
-client IPC. Its request/response field contract is
+The internal worker control protocol is persistent and versioned separately
+from client IPC. Its request/response field contract is
 [IPC Protocol](ipc-protocol.md):
 
 ```text
-HOST_REGISTER
-HOST_LIST
 PING
-SESSION_CREATE
+WORKER_HELLO
+SESSION_STATUS
 SESSION_ATTACH
 SESSION_INPUT
 TASK_STOP
@@ -203,11 +198,11 @@ and `TASK_STOP` return lightweight metadata only. `SESSION_ATTACH` is the
 only operation that returns the VT screen and journal tail, preventing status
 polling from serializing large responses ahead of PTY input.
 
-[ADR 0012](adr/0012-terminal-attach-data-plane.md) is accepted. The Stage 2
-long-lived channel now handles Attach, input, resize, immediate detach, and
-connection EOF. The old `SESSION_ATTACH` request remains only as a diagnostic
-snapshot exposed by `qwe session snapshot`; it is not the interactive data
-plane.
+[ADR 0012](adr/0012-terminal-attach-data-plane.md) is implemented for the V0
+exclusive mode. The long-lived channel handles Attach, input, resize, immediate
+detach, and connection EOF. The `SESSION_ATTACH` request remains only as a
+diagnostic snapshot exposed by `qwe session snapshot`; it is not the interactive
+data plane.
 
 The worker registers the subscriber before capturing the snapshot. The
 snapshot's `next_stream_offset` is the first offset that may appear in an
@@ -223,10 +218,10 @@ reclaim-token authority remain Stage 3.
 | VT screen and cursor | Session worker | No |
 | Recent terminal bytes | Session worker | No |
 | Task process group | Session worker | Identity mirrored to SQLite |
-| Session metadata | `qwed` | SQLite |
+| Session/Pane/TaskInstance metadata | `qwed` | SQLite |
 | Lease owner/deadline | `qwed` | SQLite |
 | Task history | `qwed` | SQLite |
-| Worker health/inventory | `qwed` supervisor | Runtime, rebuilt by reconciliation |
+| Worker control, health, and inventory | `qwed` supervisor | Persistent channels, rebuilt by reconciliation |
 | Configuration | Workspace files | Files |
 
 ## 7. Recovery Semantics
@@ -240,11 +235,9 @@ reclaim-token authority remain Stage 3.
 | Session worker SIGKILL | That Session is lost; return `terminal_lost` |
 | OS reboot | No V0 recovery |
 
-The current migration topology additionally recovers `qwe-host` by scanning the
-runtime directory and reconnecting workers. The accepted target removes Host
-from this path while retaining socket discovery, identity validation, and
-worker-owned PTY state. Recovery never reconstructs a terminal by replaying an
-unbounded byte stream.
+On restart, qwed scans its runtime directory and reconnects workers after
+validating the expected socket path, SessionId, worker PID, and start token.
+Recovery never reconstructs a terminal by replaying an unbounded byte stream.
 
 ## 8. Task Identity
 
@@ -270,8 +263,10 @@ The process start token is mandatory. PID alone is never sufficient.
   an exited Task remains `exited`.
 - Lifecycle events identify vanished workers; the safety scan covers missed
   events without treating an unresponsive but live worker as exited.
-- The current migration topology retains the 250 ms inventory poll until the
-  Stage 1 cutover.
+- Workers are spawned as qwed children. `SIGCHLD`/`waitpid` is the primary exit
+  path; persistent control EOF marks health unreachable.
+- A two-second safety scan probes workers with a 500 ms deadline, without
+  holding a global supervisor lock across worker calls.
 - Lease release writes a generation tombstone; expiration does not kill Tasks.
 
 ## 10. Resource Model
@@ -317,11 +312,8 @@ exists; otherwise the field is `unsupported`.
 The Stage 0 design gate is closed. The following accepted decisions are now
 implementation work:
 
-1. Consolidate qwed and qwe-host in Stage 1.
-2. Implement the long-lived Attach channel in Stage 2.
-3. Migrate storage and API behavior to the accepted 1:1 object model.
-4. Enforce the accepted attachment authorization matrix.
-5. Implement event-first worker liveness and reconciliation.
+1. Enforce the accepted attachment authorization matrix.
+2. Implement reclaim tokens, detached holds, and durable idempotency.
 
 Other decisions still open and must be recorded in ADRs before implementation:
 

@@ -20,15 +20,13 @@ history rather than versioned filenames.
 | D053 | Each Session remains in an independent worker process that owns its PTY, process group, VT state, and bounded journal. |
 
 ADRs [0011](adr/0011-consolidate-control-plane.md) through
-[0015](adr/0015-worker-liveness-reconciliation.md) are accepted. The current
-code still uses `qwed` + `qwe-host` and the 250 ms inventory poll; that split
-topology is the migration state, not the V0 contract.
+[0015](adr/0015-worker-liveness-reconciliation.md) are accepted. qwed is the
+single supervisor and directly owns persistent worker control and health.
 
-The accepted terminal channel, object model, authorization matrix, and
-worker-health contract are defined by those ADRs and represented in the
+The terminal channel, object model, authorization matrix, and worker-health
+contract are defined by those ADRs and represented in the
 [canonical protocol schema](../protocol/schema/qwe-v1.schema.json). The current
-one-shot Host operations remain documented in [IPC Protocol](ipc-protocol.md)
-until the Stage 1 migration.
+client and worker operations are documented in [IPC Protocol](ipc-protocol.md).
 
 ## 3. Lease Semantics
 
@@ -86,9 +84,9 @@ separate gap-aware framing contract with VT state checkpoints.
 | Supervisor unavailable | Clients receive an explicit transport error |
 | OS reboot | Out of V0 scope |
 
-The current migration topology still observes Host death and worker death
-through Host inventory polling every 250 ms. Stage 1 replaces that path with the
-accepted event-first behavior above.
+Worker exits are observed through `SIGCHLD`/`waitpid`; control-channel EOF marks
+health unreachable immediately, and a two-second safety scan covers missed
+events.
 
 ## 8. Development Gates
 

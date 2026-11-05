@@ -103,19 +103,8 @@ enum LeaseCommand {
 
 #[derive(Debug, Parser)]
 enum TaskCommand {
-    Start {
-        id: String,
-        #[arg(default_value = "sh")]
-        program: String,
-        #[arg(trailing_var_arg = true)]
-        args: Vec<String>,
-    },
-    Status {
-        task_id: String,
-    },
-    Stop {
-        task_id: String,
-    },
+    Status { task_id: String },
+    Stop { task_id: String },
     History,
 }
 
@@ -143,7 +132,6 @@ fn call(socket: &str, operation: &str, payload: Value) -> Result<Value, Protocol
             | "SESSION_INPUT"
             | "SESSION_DETACH"
             | "SESSION_CLOSE"
-            | "TASK_START"
             | "TASK_STOP"
             | "LEASE_CLAIM"
             | "LEASE_TOUCH"
@@ -154,7 +142,6 @@ fn call(socket: &str, operation: &str, payload: Value) -> Result<Value, Protocol
         version: PROTOCOL_VERSION,
         idempotency_key: mutating.then(|| id.clone()),
         request_id: id,
-        host_epoch: None,
         operation: operation.into(),
         payload,
     };
@@ -639,11 +626,6 @@ fn main() -> ExitCode {
             ),
         },
         Some(Command::Task { command }) => match command {
-            TaskCommand::Start { id, program, args } => call(
-                &arguments.socket,
-                "TASK_START",
-                json!({"session_id": id, "program": program, "args": args}),
-            ),
             TaskCommand::Status { task_id } => call(
                 &arguments.socket,
                 "TASK_STATUS",

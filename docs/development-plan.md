@@ -22,10 +22,11 @@ de-risking are complete.
 
 Implemented with current repository evidence:
 
-- Rust workspace with CLI, qwed, Host, worker runtime, protocol, and SQLite.
+- Rust workspace with CLI, qwed supervisor, worker runtime, protocol, and
+  SQLite.
 - Isolated worker ownership of PTY/process groups and bounded output.
 - SQLite Session/Task/Lease state, generation tombstones, and reconciliation.
-- qwed-to-Host epoch fencing and 250 ms inventory polling.
+- qwed-owned worker lifecycle events and a two-second safety scan.
 - One-shot Attach snapshot with 1 MiB journal tail.
 - 28 workspace tests pass, including five `vt100` capability probes.
 
@@ -103,7 +104,7 @@ Evidence:
 ### Stage 1: Control Plane and Protocol Foundation
 
 Target: 2026-11-09 to 2026-11-13
-Status: In progress; pre-cutover lifecycle regressions are fixed.
+Status: Complete; pdsh validation passed on macOS ARM64 and Linux x86_64.
 
 - Implement the qwed supervisor and remove the separate Host runtime path.
 - Add `flock(2)` singleton protection and persistent worker control channels.
@@ -114,6 +115,22 @@ Status: In progress; pre-cutover lifecycle regressions are fixed.
 
 Exit: `just t12-host-smoke` and `just resilience-smoke` pass on macOS and Fedora
 under the consolidated topology; protocol-unit and schema-drift checks pass.
+
+Current implementation:
+
+- qwed directly spawns and re-adopts `qwe-worker` processes; `qwe-host`, Host
+  epoch registration, and 250 ms inventory polling are removed.
+- A process-lifetime `flock(2)` runtime lock replaces socket-probe singleton
+  behavior.
+- Normal control and health probes use separate persistent worker connections.
+  `SIGCHLD`/`waitpid`, control EOF, and a two-second safety scan update worker
+  health without holding a global supervisor lock.
+- SQLite schema v5 persists Pane identity and unique Session/Task cardinality.
+  `session.create` atomically creates Session, Pane, and TaskInstance.
+- `task.start` is removed from both the CLI and public protocol operation set.
+- `pdsh -w localhost,istoria` runs `check-qwe`, `stage1-check`,
+  `attach-e2e`, and `tui-attach-smoke` concurrently on macOS ARM64 and Linux
+  x86_64; both hosts pass.
 
 ### Stage 2: Attach and Terminal Core
 

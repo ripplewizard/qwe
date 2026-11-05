@@ -7,11 +7,11 @@ Platform: Linux x86_64 and macOS ARM64
 
 ## Scope
 
-This experiment adds the first end-to-end Stage 2 data plane without changing
-the Stage 1 migration topology. The path is:
+This experiment adds the end-to-end Stage 2 data plane. After the Stage 1
+cutover the path is:
 
 ```text
-qwe CLI -> qwed Attach socket -> Host Attach socket -> worker Attach socket
+qwe CLI -> qwed Attach socket -> worker Attach socket
 ```
 
 Control requests and snapshot diagnostics remain independent of this channel.

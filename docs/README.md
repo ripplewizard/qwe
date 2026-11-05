@@ -13,7 +13,7 @@
   and architecture reservations.
 - [ADR Index](adr/README.md): accepted and proposed decisions.
 - [ADR 0011](adr/0011-consolidate-control-plane.md): accepted V0 control-plane
-  consolidation; Stage 1 migration.
+  consolidation; implemented qwed supervisor.
 - [ADR 0012](adr/0012-terminal-attach-data-plane.md): accepted long-lived
   binary-framed terminal channel and snapshot handoff.
 - [ADR 0013](adr/0013-core-object-model.md): accepted explicit V0 object
@@ -47,6 +47,9 @@
   transaction, teardown, identity, and reconciliation fixes on both platforms.
 - [Experiment 0005](experiments/0005-stage-2-attach-channel.md): Stage 2
   Attach channel, structured VT state, resize, detach/reattach, and TUI smoke.
+- [Experiment 0006](experiments/0006-stage-1-control-plane.md): qwed
+  supervisor cutover, event-first worker liveness, 1:1 object model, and pdsh
+  cross-platform validation.
 
 ## Reading Order
 

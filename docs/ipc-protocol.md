@@ -1,28 +1,24 @@
 # QWE IPC Protocol
 
-Status: Current migration contract; Stage 2 Attach implemented
+Status: Consolidated supervisor and Stage 2 Attach implemented
 Date: 2026-11-05
 
 This document describes the currently implemented request/response protocol.
 The accepted V0 Attach frames and state contracts are canonical in
 [`protocol/schema/qwe-v1.schema.json`](../protocol/schema/qwe-v1.schema.json).
-ADRs [0011](adr/0011-consolidate-control-plane.md),
-[0012](adr/0012-terminal-attach-data-plane.md), and
-[0013](adr/0013-core-object-model.md) define the Stage 1-3 replacements for
-this migration contract.
+ADR [0011](adr/0011-consolidate-control-plane.md) defines the supervisor and
+persistent worker-control model. ADRs
+[0012](adr/0012-terminal-attach-data-plane.md) and
+[0013](adr/0013-core-object-model.md) define the Attach and object contracts.
 
 ## 1. Authority Boundaries
 
 - `qwed` is the sole authority for SQLite Sessions, Tasks, and Leases.
-- In the current migration topology, `qwe-host` owns live worker inventory and
-  Host epoch fencing.
-- The accepted V0 target moves worker inventory and health authority into
-  `qwed`; Stage 1 removes `qwe-host`.
-- Session workers own PTYs and report resource state through the current
-  qwed-to-Host path.
+- `qwed` owns live worker inventory, control channels, and health state.
+- `qwe-worker` processes own PTYs, process groups, VT state, and journals.
 - Clients never connect directly to worker control sockets.
-- Clients connect to a dedicated Attach socket. qwed and Host proxy that
-  connection to the worker Attach socket without transferring PTY ownership.
+- Clients connect to qwed's dedicated Attach socket. qwed proxies the channel
+  to the worker Attach socket without transferring PTY ownership.
 
 ## 2. Transport
 
@@ -37,88 +33,45 @@ Request fields:
   "version": 1,
   "request_id": "unique-id",
   "idempotency_key": "optional",
-  "host_epoch": 7,
   "operation": "SESSION_STATUS",
   "payload": {}
 }
 ```
 
-## 3. qwed to qwe-host
+## 3. Supervisor Lifecycle
 
-This section documents the temporary migration protocol. It is not a
-compatibility requirement for the accepted Stage 1 clean cutover.
+`qwed` holds a `flock(2)` runtime lock for its full process lifetime. The lock
+file is fixed; PID-file contents are not used for singleton authority.
 
-`HOST_REGISTER` requests a new monotonic fencing epoch:
+Workers started by qwed are direct children. Their exits are observed through
+`SIGCHLD` and `waitpid`. Every worker has two persistent control connections:
+one for normal operations and one for health probes. EOF on a control
+connection marks health `unreachable` immediately.
 
-```json
-{
-  "epoch": 7,
-  "protocol": 1,
-  "recovered_sessions": 2
-}
-```
-
-`HOST_LIST` returns the live worker inventory:
-
-```json
-{
-  "epoch": 7,
-  "sessions": [
-    {
-      "session_id": "build",
-      "worker_pid": 123,
-      "worker_identity": {
-        "pid": 123,
-        "pgid": 123,
-        "start_token": "boot:ticks"
-      },
-      "process_identity": {
-        "pid": 124,
-        "pgid": 124,
-        "start_token": "boot:ticks"
-      },
-      "running": true
-    }
-  ]
-}
-```
-
-Supported operations:
-
-```text
-PING
-HOST_LIST
-SESSION_CREATE
-SESSION_STATUS
-SESSION_ATTACH
-SESSION_INPUT
-TASK_STOP
-SESSION_CLOSE
-```
-
-Only `HOST_REGISTER` omits `host_epoch`. The Host rejects stale epochs.
+A safety scan runs every two seconds and uses the dedicated health connection
+with a 500 ms PING deadline. Process absence or start-token mismatch marks the
+Session/Task `lost`; a live but unresponsive worker remains `unreachable`.
+Calls to one worker are isolated and never hold a global supervisor lock.
 
 ## 4. Runtime Reconciliation
 
-This is the current migration behavior. Stage 1 replaces Host polling with the
-accepted event-first supervisor and safety scan.
-
-`qwed` reconciles Host inventory every 250 ms while running. Host inventory
-checks every worker; an unavailable worker is removed and reported as
-`terminal_lost`. Reconciliation marks missing running or exited Sessions as
-`lost`; an exited Task remains `exited`.
-
-Host restart scans its private runtime directory. A worker is accepted only
-when:
+qwed scans its runtime directory before accepting clients. A worker is accepted
+only when:
 
 - The socket path matches the expected session-derived path.
 - `session_id` matches.
-- Worker PID and PID start token match the live process identity.
+- Worker PID and PID start token match the persisted worker identity.
+
+Unknown runtime workers are reported as orphans and are not adopted. Identity
+conflicts are quarantined without resurrecting a closed or mismatched Session.
 
 ## 5. Session Worker Protocol
 
-Worker operations are `WORKER_HELLO`, `SESSION_STATUS`, `SESSION_ATTACH`,
-`SESSION_INPUT`, `TASK_STOP`, and `SESSION_CLOSE`.
+Worker operations are `PING`, `WORKER_HELLO`, `SESSION_STATUS`,
+`SESSION_ATTACH`, `SESSION_INPUT`, `TASK_STOP`, and `SESSION_CLOSE`. The
+request/response channel is persistent and supports concurrent in-flight
+requests keyed by `request_id`. `PING` is a lightweight probe and does not
+capture the terminal journal.
 
 The legacy control operation behind `session detach` still returns
 `unsupported_operation`; interactive detach is now the `DETACH` frame on the
@@ -130,8 +83,8 @@ bounded screen snapshot, and at most the newest 1 MiB journal tail. The journal
 tail is opaque raw bytes; the screen snapshot is authoritative.
 
 Interactive Attach uses a separate owner-only socket and the accepted typed
-binary frame contract. qwed, Host, and the worker each expose an Attach path;
-the first `ATTACH_OPEN` selects the Session. The worker registers the
+binary frame contract. qwed proxies directly to the worker Attach socket; the
+first `ATTACH_OPEN` selects the Session. The worker registers the
 subscriber before capturing `SNAPSHOT`, so `OUTPUT` starts at
 `next_stream_offset` without gaps. `INPUT` and PTY output are raw bytes.
 `RESIZE` is ordered against output by a worker stream lock. EOF releases the
@@ -141,6 +94,11 @@ V0 `read_only` is rejected with `unsupported_mode`. Immediate `DETACH` closes
 the channel and releases authority. Positive-TTL detached holds and reclaim
 token restoration remain Stage 3; a positive TTL currently returns
 `unsupported_mode`.
+
+`SESSION_CREATE` is the sole creation operation. It atomically creates one
+Session, Pane, and TaskInstance. The response includes `session_id`, `pane_id`,
+and `task_id`. `TASK_START` is absent from the public protocol, and the CLI
+`task start` command was removed during the Stage 1 clean cutover.
 
 ## 6. Lease State Machine
 
