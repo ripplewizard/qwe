@@ -132,6 +132,17 @@ Current implementation:
   `attach-e2e`, and `tui-attach-smoke` concurrently on macOS ARM64 and Linux
   x86_64; both hosts pass.
 
+Hardening:
+
+- `CONTROL_STATUS.reconciliation` reports current state and actual scan time.
+- SQLite v6 adds Session foreign keys for Tasks, Panes, and Leases; status now
+  exposes Pane records.
+- `worker-loss-latency` computes P95 from 20 real worker kills.
+- `safety-scan-smoke` verifies detected loss for an adopted worker that cannot
+  deliver `SIGCHLD` to the current qwed.
+- `pdsh -w localhost,istoria` passes `check-qwe`,
+  `stage1-hardening-check`, Attach E2E, and TUI smoke on both platforms.
+
 ### Stage 2: Attach and Terminal Core
 
 Target: 2026-11-16 to 2026-11-27

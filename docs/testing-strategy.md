@@ -20,6 +20,9 @@ just protocol-check
 just stage0-check
 just stage1-check
 just stage1-regression-smoke
+just stage1-hardening-check
+just worker-loss-latency
+just safety-scan-smoke
 just stage2-check
 just attach-e2e
 just tui-attach-smoke
@@ -76,25 +79,24 @@ sign-off remains open.
 
 ## ADR 0011 Acceptance Gates
 
-The implementation gates pass under `pdsh -w localhost,istoria` on macOS ARM64
-and Fedora Linux x86_64.
+The supervisor and event-driven liveness implementation is covered by real
+process tests. `just worker-loss-latency` runs 20 real worker kills and computes
+P95; `just safety-scan-smoke` restarts qwed, re-adopts a worker, and kills that
+non-child worker so only the safety scan can discover loss.
+
+Both checks, the Stage 1 regression, T12, resilience, Attach E2E, and TUI smoke
+pass under pdsh on macOS ARM64 and Fedora Linux x86_64.
 
 - A worker exit delivered through `SIGCHLD` or control-connection EOF becomes
   `lost` with P95 at or below 50 ms.
 - A deliberately dropped lifecycle event is found by the safety scan. The scan
   interval is at most 2 seconds and the fallback result is visible within
   2.5 seconds.
-- Reclaim tokens contain at least 128 CSPRNG-generated bits. SQLite stores only
-  a cryptographic hash, comparison is constant-time, and the raw token never
-  appears in logs or evidence.
-- A valid reclaim token restores the original Session attachment during its
-  per-Session grace period; invalid, stale, or mismatched tokens are rejected.
-- An active grace period for one Session does not delay Attach for unaffected
-  Sessions.
-- After grace expiry, first-valid-Attach-wins applies unless a detached hold is
-  active. A stale token gives no priority and Lease fencing remains unchanged.
 - The migration uses a clean pre-release runtime cutover and does not require
   compatibility with the retired Host protocol.
+
+Reclaim-token and detached-hold acceptance remains part of Stage 3 and is not
+claimed by the Stage 1 gate.
 
 ## ADR 0012-0015 Contract Matrices
 

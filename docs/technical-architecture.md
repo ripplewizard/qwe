@@ -267,6 +267,12 @@ The process start token is mandatory. PID alone is never sufficient.
   path; persistent control EOF marks health unreachable.
 - A two-second safety scan probes workers with a 500 ms deadline, without
   holding a global supervisor lock across worker calls.
+- `CONTROL_STATUS.reconciliation` is computed from current Sessions, Tasks, and
+  worker health. `last_scan_ms` reports the latest completed safety scan rather
+  than a static startup value.
+- SQLite v6 enforces Session references from Tasks, Panes, and Leases with
+  foreign keys. `CONTROL_STATUS` returns Pane records alongside Sessions and
+  Tasks.
 - Lease release writes a generation tombstone; expiration does not kill Tasks.
 
 ## 10. Resource Model

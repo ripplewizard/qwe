@@ -1,6 +1,7 @@
 # Development Readiness
 
-Status: Stage 1 complete; Stage 2 automated and TUI acceptance complete
+Status: Stage 1 hardening complete on Linux and macOS; Stage 2 automated and
+TUI acceptance complete
 Date: 2026-11-05
 
 ## Decision

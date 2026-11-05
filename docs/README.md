@@ -50,6 +50,8 @@
 - [Experiment 0006](experiments/0006-stage-1-control-plane.md): qwed
   supervisor cutover, event-first worker liveness, 1:1 object model, and pdsh
   cross-platform validation.
+- [Experiment 0007](experiments/0007-stage-1-hardening.md): live reconciliation,
+  P95/dropped-event liveness tests, SQLite foreign keys, and Pane visibility.
 
 ## Reading Order
 
