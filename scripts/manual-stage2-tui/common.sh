@@ -47,12 +47,18 @@ ensure_session() {
     rm -f "$mapping"
   fi
 
+  local suffix
+  suffix="$(date -u +%H%M%S)-$(printf '%04x' "$(( $$ & 0xffff ))")"
   local session_id
-  session_id="$case_id-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  session_id="$case_id-$suffix"
   if (($#)); then
-    qwe_command session create "$session_id" "$program" -- "$@" >&2
+    if ! qwe_command session create "$session_id" "$program" -- "$@" >&2; then
+      return 1
+    fi
   else
-    qwe_command session create "$session_id" "$program" >&2
+    if ! qwe_command session create "$session_id" "$program" >&2; then
+      return 1
+    fi
   fi
   printf '%s\n' "$session_id" >"$mapping"
   printf '%s\n' "$session_id"

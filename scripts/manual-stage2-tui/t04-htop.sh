@@ -6,7 +6,8 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 load_state
 
-session_id="$(ensure_session manual-t04 htop)"
+session_id="$(ensure_session manual-t04 htop)" ||
+  die "failed to create or reuse the T04 Session"
 
 printf '%s\n' \
   "Session: $session_id" \

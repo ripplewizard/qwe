@@ -31,7 +31,8 @@ Each script prints its checklist before replacing itself with the Attach CLI.
 It also prints and persists the actual SessionId under the state directory, so
 detach/reattach uses the same running Session. If an older terminal Session
 with the base name exists, the script creates a timestamped Session instead of
-failing with `already_exists`.
+failing with `already_exists`. The suffix is kept short because worker socket
+paths must remain below the platform `SUN_LEN` limit.
 
 For `t08-detach-reattach.sh`, follow the on-screen delayed-output command, press
 `Ctrl-]`, wait at least six seconds, then run the same script again to reattach.

@@ -6,7 +6,8 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 load_state
 
-session_id="$(ensure_session manual-t08 nvim -u NONE "$QWE_MANUAL_FIXTURE")"
+session_id="$(ensure_session manual-t08 nvim -u NONE "$QWE_MANUAL_FIXTURE")" ||
+  die "failed to create or reuse the T08 Session"
 
 printf '%s\n' \
   "Session: $session_id" \

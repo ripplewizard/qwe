@@ -6,7 +6,8 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 load_state
 
-session_id="$(ensure_session manual-t11 bash)"
+session_id="$(ensure_session manual-t11 bash)" ||
+  die "failed to create or reuse the T11 Session"
 
 printf '%s\n' \
   "Session: $session_id" \
