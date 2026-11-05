@@ -1,13 +1,19 @@
 use clap::Parser;
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use qwe_core::ProcessIdentity;
 use qwe_protocol::{
-    PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope, ResponseEnvelope, read_frame,
-    validate_version, verify_same_uid, write_frame,
+    ATTACH_OUTPUT_QUEUE_BYTES, ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody,
+    RequestEnvelope, ResponseEnvelope, attach, read_frame, validate_version, verify_same_uid,
+    write_frame,
 };
-use qwe_runtime::{BoundedJournal, process_identity, process_matches};
+use qwe_runtime::{
+    BoundedJournal, CursorStyle as RuntimeCursorStyle,
+    MouseProtocolEncoding as RuntimeMouseProtocolEncoding,
+    MouseProtocolMode as RuntimeMouseProtocolMode, TerminalScreen, TerminalSnapshot,
+    process_identity, process_matches,
+};
 use serde_json::{Value, from_value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -15,14 +21,17 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const JOURNAL_LIMIT: usize = 16 * 1024 * 1024;
 const ATTACH_TAIL_BYTES: usize = 1024 * 1024;
+const TERMINAL_SCROLLBACK_LINES: usize = 2000;
 const TASK_STOP_GRACE: Duration = Duration::from_secs(1);
 const TASK_STOP_WAIT: Duration = Duration::from_secs(1);
+const ATTACH_WRITE_TIMEOUT: Duration = Duration::from_millis(250);
+const ATTACH_WRITE_STALL: Duration = Duration::from_secs(5);
 
 #[derive(Parser)]
 struct Args {
@@ -36,7 +45,7 @@ struct Args {
     worker_session_id: Option<String>,
     #[arg(long, hide = true, default_value = "sh")]
     worker_program: String,
-    #[arg(long = "worker-arg", hide = true)]
+    #[arg(long = "worker-arg", hide = true, allow_hyphen_values = true)]
     worker_args: Vec<String>,
 }
 
@@ -45,11 +54,51 @@ struct WorkerSession {
     identity: ProcessIdentity,
     worker_identity: ProcessIdentity,
     writer: Mutex<Box<dyn Write + Send>>,
-    journal: Mutex<BoundedJournal>,
-    screen: Mutex<String>,
+    master: Mutex<Box<dyn MasterPty + Send>>,
+    stream: Mutex<TerminalStream>,
+    active_attachment: Mutex<Option<ActiveAttachment>>,
+    next_attachment_id: std::sync::atomic::AtomicU64,
     running: AtomicBool,
     exit_code: Mutex<Option<i32>>,
     exit_signal: Mutex<Option<String>>,
+}
+
+struct TerminalStream {
+    journal: BoundedJournal,
+    terminal: TerminalScreen,
+    attachments: HashMap<u64, Arc<AttachmentQueue>>,
+}
+
+struct ActiveAttachment {
+    id: u64,
+}
+
+#[derive(Debug)]
+enum AttachmentEvent {
+    Output { stream_offset: u64, data: Vec<u8> },
+    Resized(attach::Resized),
+    Exited(attach::ProcessExited),
+    Error(attach::AttachError),
+}
+
+struct AttachmentQueueState {
+    events: VecDeque<AttachmentEvent>,
+    accounted_output_bytes: usize,
+    closed: bool,
+    overflowed: bool,
+}
+
+struct AttachmentQueue {
+    state: Mutex<AttachmentQueueState>,
+    changed: Condvar,
+    limit: usize,
+}
+
+struct AttachmentRegistration {
+    id: u64,
+    queue: Arc<AttachmentQueue>,
+    accepted: attach::AttachAccepted,
+    snapshot: attach::TerminalSnapshot,
 }
 
 struct WorkerHandle {
@@ -93,6 +142,17 @@ fn request_id(prefix: &str) -> String {
     format!("{prefix}-{}-{nanos}", std::process::id())
 }
 
+fn attach_socket(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.attach", path.display()))
+}
+
+fn reclaim_token() -> Result<String, std::io::Error> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes)
+        .map_err(|failure| std::io::Error::other(format!("random source failed: {failure}")))?;
+    Ok(hex_encode(&bytes))
+}
+
 fn session_id(request: &RequestEnvelope) -> String {
     request
         .payload
@@ -104,6 +164,168 @@ fn session_id(request: &RequestEnvelope) -> String {
 
 fn worker_socket(runtime_dir: &Path, session_id: &str) -> PathBuf {
     runtime_dir.join(format!("{}.sock", hex_encode(session_id.as_bytes())))
+}
+
+fn worker_attach_socket(runtime_dir: &Path, session_id: &str) -> PathBuf {
+    runtime_dir.join(format!("{}.a", hex_encode(session_id.as_bytes())))
+}
+
+impl AttachmentQueue {
+    fn new(limit: usize) -> Self {
+        Self {
+            state: Mutex::new(AttachmentQueueState {
+                events: VecDeque::new(),
+                accounted_output_bytes: 0,
+                closed: false,
+                overflowed: false,
+            }),
+            changed: Condvar::new(),
+            limit,
+        }
+    }
+
+    fn push_output(&self, stream_offset: u64, data: Vec<u8>) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.closed || state.overflowed {
+            return;
+        }
+        if state.accounted_output_bytes.saturating_add(data.len()) > self.limit {
+            state.events.clear();
+            state.accounted_output_bytes = data.len();
+            state.overflowed = true;
+            state.closed = true;
+            self.changed.notify_all();
+            return;
+        }
+        state.accounted_output_bytes += data.len();
+        state.events.push_back(AttachmentEvent::Output {
+            stream_offset,
+            data,
+        });
+        self.changed.notify_one();
+    }
+
+    fn push_control(&self, event: AttachmentEvent) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.closed || state.overflowed {
+            return;
+        }
+        state.events.push_back(event);
+        self.changed.notify_one();
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.closed = true;
+        self.changed.notify_all();
+    }
+
+    fn next_event(&self) -> Result<Option<AttachmentEvent>, ()> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        loop {
+            if state.overflowed {
+                return Err(());
+            }
+            if let Some(event) = state.events.pop_front() {
+                return Ok(Some(event));
+            }
+            if state.closed {
+                return Ok(None);
+            }
+            state = self
+                .changed
+                .wait(state)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+    }
+
+    fn complete_output(&self, bytes: usize) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.accounted_output_bytes = state.accounted_output_bytes.saturating_sub(bytes);
+    }
+}
+
+impl TerminalStream {
+    fn new(rows: u16, columns: u16) -> Result<Self, std::io::Error> {
+        Ok(Self {
+            journal: BoundedJournal::new(JOURNAL_LIMIT).map_err(|failure| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, failure.to_string())
+            })?,
+            terminal: TerminalScreen::new(rows, columns, TERMINAL_SCROLLBACK_LINES),
+            attachments: HashMap::new(),
+        })
+    }
+
+    fn append_output(&mut self, data: &[u8]) {
+        let stream_offset = self.journal.total_written();
+        self.journal.append(data);
+        self.terminal.process(data);
+        for queue in self.attachments.values() {
+            queue.push_output(stream_offset, data.to_vec());
+        }
+    }
+
+    fn stream_offset(&self) -> u64 {
+        self.journal.total_written()
+    }
+}
+
+fn protocol_snapshot(
+    snapshot: TerminalSnapshot,
+    next_stream_offset: u64,
+) -> attach::TerminalSnapshot {
+    let cursor_style = match snapshot.cursor_style {
+        RuntimeCursorStyle::Default => attach::CursorStyle::Default,
+        RuntimeCursorStyle::BlinkBlock => attach::CursorStyle::BlinkBlock,
+        RuntimeCursorStyle::SteadyBlock => attach::CursorStyle::SteadyBlock,
+        RuntimeCursorStyle::BlinkUnderline => attach::CursorStyle::BlinkUnderline,
+        RuntimeCursorStyle::SteadyUnderline => attach::CursorStyle::SteadyUnderline,
+        RuntimeCursorStyle::BlinkVerticalBar => attach::CursorStyle::BlinkVerticalBar,
+        RuntimeCursorStyle::SteadyVerticalBar => attach::CursorStyle::SteadyVerticalBar,
+    };
+    let mouse_protocol_mode = match snapshot.mouse_protocol_mode {
+        RuntimeMouseProtocolMode::None => attach::MouseProtocolMode::None,
+        RuntimeMouseProtocolMode::Press => attach::MouseProtocolMode::Press,
+        RuntimeMouseProtocolMode::PressRelease => attach::MouseProtocolMode::PressRelease,
+        RuntimeMouseProtocolMode::ButtonMotion => attach::MouseProtocolMode::ButtonMotion,
+        RuntimeMouseProtocolMode::AnyMotion => attach::MouseProtocolMode::AnyMotion,
+    };
+    let mouse_protocol_encoding = match snapshot.mouse_protocol_encoding {
+        RuntimeMouseProtocolEncoding::Default => attach::MouseProtocolEncoding::Default,
+        RuntimeMouseProtocolEncoding::Utf8 => attach::MouseProtocolEncoding::Utf8,
+        RuntimeMouseProtocolEncoding::Sgr => attach::MouseProtocolEncoding::Sgr,
+    };
+    attach::TerminalSnapshot {
+        rows: snapshot.rows,
+        columns: snapshot.columns,
+        cursor_row: snapshot.cursor_row,
+        cursor_column: snapshot.cursor_column,
+        cursor_visible: snapshot.cursor_visible,
+        cursor_style,
+        alternate_screen: snapshot.alternate_screen,
+        application_cursor: snapshot.application_cursor,
+        application_keypad: snapshot.application_keypad,
+        bracketed_paste: snapshot.bracketed_paste,
+        mouse_protocol_mode,
+        mouse_protocol_encoding,
+        screen_text: snapshot.screen_text,
+        next_stream_offset,
+    }
 }
 
 fn call_socket(socket: &Path, operation: &str, payload: Value) -> Result<Value, ProtocolErrorBody> {
@@ -260,6 +482,7 @@ impl Host {
             let _ = worker.kill();
             let _ = worker.wait();
             let _ = fs::remove_file(socket);
+            let _ = fs::remove_file(worker_attach_socket(&self.runtime_dir, session_id));
         }
         result
     }
@@ -367,35 +590,26 @@ impl WorkerSession {
             identity,
             worker_identity: process_identity(std::process::id())?,
             writer: Mutex::new(writer),
-            journal: Mutex::new(BoundedJournal::new(JOURNAL_LIMIT)?),
-            screen: Mutex::new(String::new()),
+            master: Mutex::new(master),
+            stream: Mutex::new(TerminalStream::new(24, 80)?),
+            active_attachment: Mutex::new(None),
+            next_attachment_id: std::sync::atomic::AtomicU64::new(1),
             running: AtomicBool::new(true),
             exit_code: Mutex::new(None),
             exit_signal: Mutex::new(None),
         });
         let reader_session = Arc::clone(&session);
         thread::spawn(move || {
-            let _master = master;
-            let mut parser = vt100::Parser::new(
-                vt100::Parser::DEFAULT_ROWS,
-                vt100::Parser::DEFAULT_COLS,
-                2000,
-            );
             let mut buffer = [0_u8; 8192];
             while let Ok(count) = reader.read(&mut buffer) {
                 if count == 0 {
                     break;
                 }
                 reader_session
-                    .journal
+                    .stream
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .append(&buffer[..count]);
-                parser.process(&buffer[..count]);
-                *reader_session
-                    .screen
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = parser.screen().contents();
+                    .append_output(&buffer[..count]);
             }
             if let Ok(status) = child.wait() {
                 *reader_session
@@ -410,13 +624,36 @@ impl WorkerSession {
                     status.signal().map(str::to_string);
             }
             reader_session.running.store(false, Ordering::SeqCst);
+            let exit_code = *reader_session
+                .exit_code
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let exit_signal = reader_session
+                .exit_signal
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            let stream = reader_session
+                .stream
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let event = attach::ProcessExited {
+                protocol_version: ATTACH_PROTOCOL_VERSION,
+                exit_code: exit_code.and_then(|value| u8::try_from(value).ok()),
+                exit_signal,
+                stream_offset: stream.stream_offset(),
+            };
+            for queue in stream.attachments.values() {
+                queue.push_control(AttachmentEvent::Exited(event.clone()));
+                queue.close();
+            }
         });
         Ok(session)
     }
 
     fn status(&self, session_id: &str) -> Value {
-        let journal = self
-            .journal
+        let stream = self
+            .stream
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let exit_code = *self
@@ -440,19 +677,15 @@ impl WorkerSession {
             "state": if self.running.load(Ordering::SeqCst) { "running" } else { "exited" },
             "exit_code": exit_code,
             "exit_signal": exit_signal,
-            "truncated_from": journal.truncated_from(),
-            "total_written": journal.total_written()
+            "truncated_from": stream.journal.truncated_from(),
+            "total_written": stream.journal.total_written()
         })
     }
 
     fn snapshot(&self, session_id: &str) -> Value {
         let running = self.running.load(Ordering::SeqCst);
-        let journal = self
-            .journal
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let screen = self
-            .screen
+        let stream = self
+            .stream
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let exit_code = *self
@@ -464,7 +697,8 @@ impl WorkerSession {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        let tail = journal.tail(ATTACH_TAIL_BYTES);
+        let tail = stream.journal.tail(ATTACH_TAIL_BYTES);
+        let terminal = stream.terminal.snapshot();
         json!({
             "session_id": session_id,
             "worker_pid": std::process::id(),
@@ -477,11 +711,12 @@ impl WorkerSession {
             "state": if running { "running" } else { "exited" },
             "exit_code": exit_code,
             "exit_signal": exit_signal,
-            "screen": *screen,
+            "screen": terminal.screen_text,
+            "terminal": protocol_snapshot(terminal, stream.stream_offset()),
             "journal_hex": hex_encode(&tail),
             "snapshot_bytes": tail.len(),
-            "truncated_from": journal.truncated_from(),
-            "total_written": journal.total_written()
+            "truncated_from": stream.journal.truncated_from(),
+            "total_written": stream.journal.total_written()
         })
     }
 
@@ -496,6 +731,151 @@ impl WorkerSession {
             .write_all(data.as_bytes())
             .map_err(|failure| error("internal", failure.to_string()))?;
         Ok(self.status(session_id))
+    }
+
+    fn resize(&self, rows: u16, columns: u16) -> Result<attach::Resized, ProtocolErrorBody> {
+        if rows == 0 || columns == 0 {
+            return Err(error(
+                "invalid_request",
+                "terminal rows and columns must be positive",
+            ));
+        }
+        let mut stream = self
+            .stream
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.master
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .resize(PtySize {
+                rows,
+                cols: columns,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|failure| error("resize_failed", failure.to_string()))?;
+        stream.terminal.resize(rows, columns);
+        let resized = attach::Resized {
+            protocol_version: ATTACH_PROTOCOL_VERSION,
+            rows,
+            columns,
+            stream_offset: stream.stream_offset(),
+        };
+        for queue in stream.attachments.values() {
+            queue.push_control(AttachmentEvent::Resized(resized.clone()));
+        }
+        Ok(resized)
+    }
+
+    fn register_attachment(
+        &self,
+        open: &attach::AttachOpen,
+    ) -> Result<AttachmentRegistration, ProtocolErrorBody> {
+        if open.mode == attach::AttachMode::ReadOnly {
+            return Err(error(
+                "unsupported_mode",
+                "read_only attach mode is reserved and is not supported in V0",
+            ));
+        }
+        if open.rows == 0 || open.columns == 0 {
+            return Err(error(
+                "invalid_request",
+                "terminal rows and columns must be positive",
+            ));
+        }
+        let id = self.next_attachment_id.fetch_add(1, Ordering::SeqCst);
+        let mut active = self
+            .active_attachment
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if active.is_some() {
+            return Err(error(
+                "already_attached",
+                "the session already has an exclusive attachment",
+            ));
+        }
+        *active = Some(ActiveAttachment { id });
+        let token = match reclaim_token() {
+            Ok(token) => token,
+            Err(failure) => {
+                *active = None;
+                return Err(error("internal", failure.to_string()));
+            }
+        };
+        drop(active);
+
+        let registration = (|| {
+            let mut stream = self
+                .stream
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let current = stream.terminal.snapshot();
+            if (current.rows, current.columns) != (open.rows, open.columns) {
+                self.master
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .resize(PtySize {
+                        rows: open.rows,
+                        cols: open.columns,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    })
+                    .map_err(|failure| error("resize_failed", failure.to_string()))?;
+                stream.terminal.resize(open.rows, open.columns);
+            }
+            let queue = Arc::new(AttachmentQueue::new(ATTACH_OUTPUT_QUEUE_BYTES));
+            stream.attachments.insert(id, Arc::clone(&queue));
+            let snapshot = stream.terminal.snapshot();
+            let stream_offset = stream.stream_offset();
+            let accepted = attach::AttachAccepted {
+                protocol_version: ATTACH_PROTOCOL_VERSION,
+                session_id: open.session_id.clone(),
+                owner: open.owner.clone(),
+                generation: 0,
+                reclaim_token: token,
+                rows: snapshot.rows,
+                columns: snapshot.columns,
+                stream_offset,
+            };
+            Ok(AttachmentRegistration {
+                id,
+                queue,
+                accepted,
+                snapshot: protocol_snapshot(snapshot, stream_offset),
+            })
+        })();
+        if registration.is_err() {
+            let mut active = self
+                .active_attachment
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if active
+                .as_ref()
+                .is_some_and(|attachment| attachment.id == id)
+            {
+                *active = None;
+            }
+        }
+        registration
+    }
+
+    fn unregister_attachment(&self, id: u64) {
+        let mut active = self
+            .active_attachment
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if active
+            .as_ref()
+            .is_some_and(|attachment| attachment.id == id)
+        {
+            *active = None;
+        }
+        drop(active);
+        self.stream
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .attachments
+            .remove(&id);
     }
 
     fn signal_process_group(&self, signal: libc::c_int) -> Result<(), ProtocolErrorBody> {
@@ -573,6 +953,310 @@ impl WorkerSession {
     }
 }
 
+fn attach_error(code: &str, message: impl Into<String>) -> attach::AttachError {
+    attach::AttachError {
+        protocol_version: ATTACH_PROTOCOL_VERSION,
+        code: code.into(),
+        message: message.into(),
+    }
+}
+
+fn write_attach_frame(
+    stream: &mut UnixStream,
+    frame_type: attach::FrameType,
+    payload: &[u8],
+) -> std::io::Result<()> {
+    let header = attach::FrameHeader {
+        frame_type,
+        payload_length: payload.len(),
+    }
+    .encode()
+    .map_err(|failure| std::io::Error::other(failure.to_string()))?;
+    let mut frame = Vec::with_capacity(header.len() + payload.len());
+    frame.extend_from_slice(&header);
+    frame.extend_from_slice(payload);
+
+    let mut written = 0;
+    let mut last_progress = Instant::now();
+    while written < frame.len() {
+        match stream.write(&frame[written..]) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "attach socket accepted zero bytes",
+                ));
+            }
+            Ok(count) => {
+                written += count;
+                last_progress = Instant::now();
+            }
+            Err(failure)
+                if matches!(
+                    failure.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if last_progress.elapsed() >= ATTACH_WRITE_STALL {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "attach client made no output progress for five seconds",
+                    ));
+                }
+            }
+            Err(failure) => return Err(failure),
+        }
+    }
+    Ok(())
+}
+
+fn write_attach_json(
+    stream: &mut UnixStream,
+    frame_type: attach::FrameType,
+    value: &impl serde::Serialize,
+) -> std::io::Result<()> {
+    let payload = serde_json::to_vec(value).map_err(std::io::Error::other)?;
+    write_attach_frame(stream, frame_type, &payload)
+}
+
+fn write_attach_event(
+    stream: &mut UnixStream,
+    queue: &AttachmentQueue,
+    event: AttachmentEvent,
+) -> std::io::Result<bool> {
+    match event {
+        AttachmentEvent::Output {
+            stream_offset,
+            data,
+        } => {
+            let mut payload = Vec::with_capacity(size_of::<u64>() + data.len());
+            payload.extend_from_slice(&stream_offset.to_be_bytes());
+            payload.extend_from_slice(&data);
+            write_attach_frame(stream, attach::FrameType::Output, &payload)?;
+            queue.complete_output(data.len());
+            Ok(true)
+        }
+        AttachmentEvent::Resized(resized) => {
+            write_attach_json(stream, attach::FrameType::Resized, &resized)?;
+            Ok(true)
+        }
+        AttachmentEvent::Exited(exited) => {
+            write_attach_json(stream, attach::FrameType::ProcessExited, &exited)?;
+            Ok(false)
+        }
+        AttachmentEvent::Error(failure) => {
+            write_attach_json(stream, attach::FrameType::Error, &failure)?;
+            Ok(false)
+        }
+    }
+}
+
+fn serve_attachment_input(
+    mut stream: UnixStream,
+    session: Arc<WorkerSession>,
+    queue: Arc<AttachmentQueue>,
+) {
+    loop {
+        let frame = match attach::read_frame(&mut stream) {
+            Ok(frame) => frame,
+            Err(attach::AttachIoError::Codec(failure)) => {
+                queue.push_control(AttachmentEvent::Error(attach_error(
+                    "unknown_frame_type",
+                    failure.to_string(),
+                )));
+                queue.close();
+                return;
+            }
+            Err(_) => {
+                queue.close();
+                return;
+            }
+        };
+        let result =
+            (|| match frame.frame_type {
+                attach::FrameType::Input => session
+                    .writer
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .write_all(&frame.payload)
+                    .map_err(|failure| attach_error("worker_protocol_error", failure.to_string())),
+                attach::FrameType::Resize => {
+                    let resize = attach::decode_json::<attach::Resize>(&frame.payload).map_err(
+                        |failure| attach_error("worker_protocol_error", failure.to_string()),
+                    )?;
+                    if resize.protocol_version != ATTACH_PROTOCOL_VERSION {
+                        return Err(attach_error(
+                            "incompatible_version",
+                            format!(
+                                "attach protocol {} is incompatible with {}",
+                                resize.protocol_version, ATTACH_PROTOCOL_VERSION
+                            ),
+                        ));
+                    }
+                    session
+                        .resize(resize.rows, resize.columns)
+                        .map(|_| ())
+                        .map_err(|failure| attach_error(&failure.code, failure.message))
+                }
+                attach::FrameType::Ack => attach::decode_json::<attach::Ack>(&frame.payload)
+                    .map(|_| ())
+                    .map_err(|failure| attach_error("worker_protocol_error", failure.to_string())),
+                attach::FrameType::Detach => {
+                    let detach = attach::decode_json::<attach::Detach>(&frame.payload).map_err(
+                        |failure| attach_error("worker_protocol_error", failure.to_string()),
+                    )?;
+                    if detach.hold_ttl_ms > 0 {
+                        return Err(attach_error(
+                            "unsupported_mode",
+                            "detached holds are scheduled for Stage 3",
+                        ));
+                    }
+                    Ok(())
+                }
+                _ => Err(attach_error(
+                    "unknown_frame_type",
+                    format!(
+                        "{} is not a valid client-to-server frame",
+                        frame.frame_type.name()
+                    ),
+                )),
+            })();
+        match result {
+            Ok(()) => {
+                if frame.frame_type == attach::FrameType::Detach {
+                    queue.close();
+                    return;
+                }
+            }
+            Err(failure) => {
+                queue.push_control(AttachmentEvent::Error(failure));
+                queue.close();
+                return;
+            }
+        }
+    }
+}
+
+fn serve_worker_attachment(
+    mut stream: UnixStream,
+    session: Arc<WorkerSession>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if verify_same_uid(&stream).is_err() {
+        return Ok(());
+    }
+    let frame = match attach::read_frame(&mut stream) {
+        Ok(frame) => frame,
+        Err(failure) => {
+            let _ = attach::write_json_frame(
+                &mut stream,
+                attach::FrameType::Error,
+                &attach_error("unknown_frame_type", failure.to_string()),
+            );
+            return Ok(());
+        }
+    };
+    if frame.frame_type != attach::FrameType::AttachOpen {
+        let _ = attach::write_json_frame(
+            &mut stream,
+            attach::FrameType::Error,
+            &attach_error(
+                "unknown_frame_type",
+                "the first attach frame must be ATTACH_OPEN",
+            ),
+        );
+        return Ok(());
+    }
+    let open = match attach::decode_json::<attach::AttachOpen>(&frame.payload) {
+        Ok(open) => open,
+        Err(failure) => {
+            let _ = attach::write_json_frame(
+                &mut stream,
+                attach::FrameType::Error,
+                &attach_error("worker_protocol_error", failure.to_string()),
+            );
+            return Ok(());
+        }
+    };
+    if open.protocol_version != ATTACH_PROTOCOL_VERSION {
+        let _ = attach::write_json_frame(
+            &mut stream,
+            attach::FrameType::Error,
+            &attach_error(
+                "incompatible_version",
+                format!(
+                    "attach protocol {} is incompatible with {}",
+                    open.protocol_version, ATTACH_PROTOCOL_VERSION
+                ),
+            ),
+        );
+        return Ok(());
+    }
+    let registration = match session.register_attachment(&open) {
+        Ok(registration) => registration,
+        Err(failure) => {
+            let _ = attach::write_json_frame(
+                &mut stream,
+                attach::FrameType::Error,
+                &attach_error(&failure.code, failure.message),
+            );
+            return Ok(());
+        }
+    };
+    stream.set_write_timeout(Some(ATTACH_WRITE_TIMEOUT))?;
+    if let Err(failure) = attach::write_json_frame(
+        &mut stream,
+        attach::FrameType::AttachAccepted,
+        &registration.accepted,
+    )
+    .and_then(|()| {
+        attach::write_json_frame(
+            &mut stream,
+            attach::FrameType::Snapshot,
+            &registration.snapshot,
+        )
+    }) {
+        session.unregister_attachment(registration.id);
+        return Err(failure.into());
+    }
+
+    let input_stream = stream.try_clone()?;
+    let input_session = Arc::clone(&session);
+    let input_queue = Arc::clone(&registration.queue);
+    thread::spawn(move || {
+        serve_attachment_input(input_stream, input_session, input_queue);
+    });
+
+    loop {
+        let event = match registration.queue.next_event() {
+            Ok(Some(event)) => event,
+            Ok(None) => break,
+            Err(()) => {
+                let _ = write_attach_json(
+                    &mut stream,
+                    attach::FrameType::Error,
+                    &attach_error(
+                        "output_backpressure",
+                        "attachment output queue exceeded 1 MiB",
+                    ),
+                );
+                break;
+            }
+        };
+        match write_attach_event(&mut stream, &registration.queue, event) {
+            Ok(true) => {}
+            Ok(false) => break,
+            Err(failure) => {
+                eprintln!("attach transport error: {failure}");
+                break;
+            }
+        }
+    }
+
+    registration.queue.close();
+    session.unregister_attachment(registration.id);
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+    Ok(())
+}
+
 fn worker_handle(
     session: &Arc<WorkerSession>,
     operation: &str,
@@ -619,6 +1303,13 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("session worker already running at {}", socket.display()).into());
     }
     let _ = fs::remove_file(&socket);
+    let attach_path = worker_attach_socket(
+        socket
+            .parent()
+            .expect("worker socket always has a runtime parent"),
+        &session_id,
+    );
+    let _ = fs::remove_file(&attach_path);
     let session_result = unsafe { libc::setsid() };
     if session_result < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
         return Err(std::io::Error::last_os_error().into());
@@ -626,11 +1317,150 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let listener = UnixListener::bind(&socket)?;
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
     let session = WorkerSession::create(&args.worker_program, &args.worker_args)?;
-    for stream in listener.incoming() {
+    let control_session = Arc::clone(&session);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let session = Arc::clone(&control_session);
+            let session_id = session_id.clone();
+            thread::spawn(move || serve_worker(stream.unwrap(), &session, &session_id));
+        }
+    });
+
+    let attach_listener = UnixListener::bind(&attach_path)?;
+    fs::set_permissions(&attach_path, fs::Permissions::from_mode(0o600))?;
+    for stream in attach_listener.incoming() {
         let session = Arc::clone(&session);
-        let session_id = session_id.clone();
-        thread::spawn(move || serve_worker(stream.unwrap(), &session, &session_id));
+        thread::spawn(move || {
+            if let Err(failure) = serve_worker_attachment(stream?, session) {
+                eprintln!("worker attach error: {failure}");
+            }
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        });
     }
+    Ok(())
+}
+
+fn proxy_bidirectional(mut left: UnixStream, mut right: UnixStream) -> std::io::Result<()> {
+    let mut left_reader = left.try_clone()?;
+    let mut right_writer = right.try_clone()?;
+    let forward = thread::spawn(move || {
+        let result = std::io::copy(&mut left_reader, &mut right_writer);
+        let _ = right_writer.shutdown(std::net::Shutdown::Write);
+        result
+    });
+    let reverse = std::io::copy(&mut right, &mut left);
+    let _ = left.shutdown(std::net::Shutdown::Both);
+    let _ = forward.join();
+    reverse.map(|_| ())
+}
+
+fn forward_attach_open(
+    stream: &mut UnixStream,
+    frame_type: attach::FrameType,
+    payload: &[u8],
+) -> Result<(), attach::AttachIoError> {
+    attach::write_payload_frame(stream, frame_type, payload)
+}
+
+fn serve_host_attachment(
+    mut client: UnixStream,
+    host: &Arc<Mutex<Host>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if verify_same_uid(&client).is_err() {
+        return Ok(());
+    }
+    let frame = match attach::read_frame(&mut client) {
+        Ok(frame) => frame,
+        Err(failure) => {
+            let _ = attach::write_json_frame(
+                &mut client,
+                attach::FrameType::Error,
+                &attach_error("unknown_frame_type", failure.to_string()),
+            );
+            return Ok(());
+        }
+    };
+    if frame.frame_type != attach::FrameType::AttachOpen {
+        let _ = attach::write_json_frame(
+            &mut client,
+            attach::FrameType::Error,
+            &attach_error(
+                "unknown_frame_type",
+                "the first attach frame must be ATTACH_OPEN",
+            ),
+        );
+        return Ok(());
+    }
+    let open = match attach::decode_json::<attach::AttachOpen>(&frame.payload) {
+        Ok(open) => open,
+        Err(failure) => {
+            let _ = attach::write_json_frame(
+                &mut client,
+                attach::FrameType::Error,
+                &attach_error("worker_protocol_error", failure.to_string()),
+            );
+            return Ok(());
+        }
+    };
+    if open.protocol_version != ATTACH_PROTOCOL_VERSION {
+        let _ = attach::write_json_frame(
+            &mut client,
+            attach::FrameType::Error,
+            &attach_error(
+                "incompatible_version",
+                format!(
+                    "attach protocol {} is incompatible with {}",
+                    open.protocol_version, ATTACH_PROTOCOL_VERSION
+                ),
+            ),
+        );
+        return Ok(());
+    }
+    let worker_socket = host
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .sessions
+        .get(&open.session_id)
+        .map(|handle| handle.socket.clone());
+    let Some(worker_socket) = worker_socket else {
+        let _ = attach::write_json_frame(
+            &mut client,
+            attach::FrameType::Error,
+            &attach_error("session_lost", "session is not owned by a live worker"),
+        );
+        return Ok(());
+    };
+    let worker_attach = worker_attach_socket(
+        worker_socket
+            .parent()
+            .expect("worker socket always has a runtime parent"),
+        &open.session_id,
+    );
+    let mut worker = match UnixStream::connect(&worker_attach) {
+        Ok(worker) => worker,
+        Err(failure) => {
+            let _ = attach::write_json_frame(
+                &mut client,
+                attach::FrameType::Error,
+                &attach_error(
+                    "worker_unreachable",
+                    format!("{}: {failure}", worker_attach.display()),
+                ),
+            );
+            return Ok(());
+        }
+    };
+    verify_same_uid(&worker)
+        .map_err(|failure| format!("worker peer verification failed: {failure}"))?;
+    if let Err(failure) = forward_attach_open(&mut worker, frame.frame_type, &frame.payload) {
+        let _ = attach::write_json_frame(
+            &mut client,
+            attach::FrameType::Error,
+            &attach_error("worker_protocol_error", failure.to_string()),
+        );
+        return Ok(());
+    }
+    proxy_bidirectional(client, worker)?;
     Ok(())
 }
 
@@ -680,6 +1510,12 @@ fn serve_host(
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .sessions
                         .remove(&session_id);
+                    let _ = fs::remove_file(worker_attach_socket(
+                        socket
+                            .parent()
+                            .expect("worker socket always has a runtime parent"),
+                        &session_id,
+                    ));
                     unsafe {
                         libc::kill(worker_pid as libc::pid_t, libc::SIGTERM);
                     }
@@ -700,6 +1536,7 @@ fn serve_host(
 
 fn run_host(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let socket = args.socket.ok_or("missing --socket")?;
+    let attach_path = attach_socket(Path::new(&socket));
     let runtime_dir = args
         .runtime_dir
         .unwrap_or_else(|| PathBuf::from(format!("{socket}.runtime")));
@@ -707,6 +1544,7 @@ fn run_host(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("qwe-host is already running at {socket}").into());
     }
     let _ = fs::remove_file(&socket);
+    let _ = fs::remove_file(&attach_path);
     let session_result = unsafe { libc::setsid() };
     if session_result < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
         return Err(std::io::Error::last_os_error().into());
@@ -714,11 +1552,25 @@ fn run_host(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let listener = UnixListener::bind(&socket)?;
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
     let host = Arc::new(Mutex::new(Host::recover(runtime_dir)?));
-    for stream in listener.incoming() {
+    let control_host = Arc::clone(&host);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let host = Arc::clone(&control_host);
+            thread::spawn(move || {
+                if let Err(failure) = serve_host(stream?, &host) {
+                    eprintln!("host protocol error: {failure}");
+                }
+                Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+            });
+        }
+    });
+    let attach_listener = UnixListener::bind(&attach_path)?;
+    fs::set_permissions(&attach_path, fs::Permissions::from_mode(0o600))?;
+    for stream in attach_listener.incoming() {
         let host = Arc::clone(&host);
         thread::spawn(move || {
-            if let Err(failure) = serve_host(stream?, &host) {
-                eprintln!("host protocol error: {failure}");
+            if let Err(failure) = serve_host_attachment(stream?, &host) {
+                eprintln!("host attach error: {failure}");
             }
             Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
         });
@@ -823,5 +1675,24 @@ mod tests {
         invalid["worker_identity"]["start_token"] = json!("stale");
         assert!(handle_from_hello(&runtime_dir, &socket, &invalid).is_none());
         let _ = fs::remove_dir_all(runtime_dir);
+    }
+
+    #[test]
+    fn attachment_queue_overflow_is_isolated_per_attachment() {
+        let slow = AttachmentQueue::new(4);
+        let fast = AttachmentQueue::new(4);
+        slow.push_output(0, b"abcd".to_vec());
+        slow.push_output(4, b"e".to_vec());
+        assert!(slow.next_event().is_err());
+
+        fast.push_output(0, b"ok".to_vec());
+        let event = fast.next_event().unwrap().unwrap();
+        assert!(matches!(
+            event,
+            AttachmentEvent::Output {
+                stream_offset: 0,
+                data
+            } if data == b"ok"
+        ));
     }
 }

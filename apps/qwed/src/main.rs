@@ -3,8 +3,8 @@ use qwe_core::{
     LeaseRecord, ProcessIdentity, SessionRecord, SessionState, TaskId, TaskRecord, TaskState,
 };
 use qwe_protocol::{
-    PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope, ResponseEnvelope, read_frame,
-    validate_version, verify_same_uid, write_frame,
+    ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope,
+    ResponseEnvelope, attach, read_frame, validate_version, verify_same_uid, write_frame,
 };
 use qwe_storage::{LeaseError, StorageError, Store};
 use serde_json::{Value, json};
@@ -65,6 +65,10 @@ fn request_id(prefix: &str) -> String {
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
     format!("{prefix}-{}-{nanos}", std::process::id())
+}
+
+fn attach_socket(socket: &str) -> String {
+    format!("{socket}.attach")
 }
 
 fn call_host(
@@ -644,6 +648,139 @@ fn proxy(mut client: UnixStream, context: &Context) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+fn attach_error(code: &str, message: impl Into<String>) -> attach::AttachError {
+    attach::AttachError {
+        protocol_version: ATTACH_PROTOCOL_VERSION,
+        code: code.into(),
+        message: message.into(),
+    }
+}
+
+fn proxy_bidirectional(mut left: UnixStream, mut right: UnixStream) -> std::io::Result<()> {
+    let mut left_reader = left.try_clone()?;
+    let mut right_writer = right.try_clone()?;
+    let forward = thread::spawn(move || {
+        let result = std::io::copy(&mut left_reader, &mut right_writer);
+        let _ = right_writer.shutdown(std::net::Shutdown::Write);
+        result
+    });
+    let reverse = std::io::copy(&mut right, &mut left);
+    let _ = left.shutdown(std::net::Shutdown::Both);
+    let _ = forward.join();
+    reverse.map(|_| ())
+}
+
+fn serve_attachment(
+    mut client: UnixStream,
+    context: &Context,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if verify_same_uid(&client).is_err() {
+        return Ok(());
+    }
+    let frame = match attach::read_frame(&mut client) {
+        Ok(frame) => frame,
+        Err(failure) => {
+            let _ = attach::write_json_frame(
+                &mut client,
+                attach::FrameType::Error,
+                &attach_error("unknown_frame_type", failure.to_string()),
+            );
+            return Ok(());
+        }
+    };
+    if frame.frame_type != attach::FrameType::AttachOpen {
+        let _ = attach::write_json_frame(
+            &mut client,
+            attach::FrameType::Error,
+            &attach_error(
+                "unknown_frame_type",
+                "the first attach frame must be ATTACH_OPEN",
+            ),
+        );
+        return Ok(());
+    }
+    let open = match attach::decode_json::<attach::AttachOpen>(&frame.payload) {
+        Ok(open) => open,
+        Err(failure) => {
+            let _ = attach::write_json_frame(
+                &mut client,
+                attach::FrameType::Error,
+                &attach_error("worker_protocol_error", failure.to_string()),
+            );
+            return Ok(());
+        }
+    };
+    if open.protocol_version != ATTACH_PROTOCOL_VERSION {
+        let _ = attach::write_json_frame(
+            &mut client,
+            attach::FrameType::Error,
+            &attach_error(
+                "incompatible_version",
+                format!(
+                    "attach protocol {} is incompatible with {}",
+                    open.protocol_version, ATTACH_PROTOCOL_VERSION
+                ),
+            ),
+        );
+        return Ok(());
+    }
+    if open.mode == attach::AttachMode::ReadOnly {
+        let _ = attach::write_json_frame(
+            &mut client,
+            attach::FrameType::Error,
+            &attach_error(
+                "unsupported_mode",
+                "read_only attach mode is reserved and is not supported in V0",
+            ),
+        );
+        return Ok(());
+    }
+
+    let session_state = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .find_session(&open.session_id)?
+        .map(|session| session.state);
+    if !matches!(session_state.as_deref(), Some("running" | "exited")) {
+        let message = session_state.map_or_else(
+            || "session has no durable record".to_string(),
+            |state| format!("session is in terminal or unavailable state '{state}'"),
+        );
+        let _ = attach::write_json_frame(
+            &mut client,
+            attach::FrameType::Error,
+            &attach_error("session_lost", message),
+        );
+        return Ok(());
+    }
+
+    let host_attach = attach_socket(&context.host_socket);
+    let mut host = match UnixStream::connect(&host_attach) {
+        Ok(host) => host,
+        Err(failure) => {
+            let _ = attach::write_json_frame(
+                &mut client,
+                attach::FrameType::Error,
+                &attach_error("worker_unreachable", format!("{host_attach}: {failure}")),
+            );
+            return Ok(());
+        }
+    };
+    verify_same_uid(&host)
+        .map_err(|failure| format!("host attach peer verification failed: {failure}"))?;
+    if let Err(failure) = attach::write_payload_frame(&mut host, frame.frame_type, &frame.payload) {
+        let _ = attach::write_json_frame(
+            &mut client,
+            attach::FrameType::Error,
+            &attach_error("worker_protocol_error", failure.to_string()),
+        );
+        return Ok(());
+    }
+    proxy_bidirectional(client, host)?;
+    Ok(())
+}
+
 fn existing_instance(socket: &str) -> bool {
     let Ok(mut stream) = UnixStream::connect(socket) else {
         return false;
@@ -667,9 +804,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if existing_instance(&args.socket) {
         return Err(format!("qwed is already running at {}", args.socket).into());
     }
+    let attach_path = attach_socket(&args.socket);
     let _ = fs::remove_file(&args.socket);
+    let _ = fs::remove_file(&attach_path);
     let listener = UnixListener::bind(&args.socket)?;
     fs::set_permissions(&args.socket, fs::Permissions::from_mode(0o600))?;
+    let attach_listener = UnixListener::bind(&attach_path)?;
+    fs::set_permissions(&attach_path, fs::Permissions::from_mode(0o600))?;
     let store_path = args
         .store
         .unwrap_or_else(|| format!("{}.sqlite", args.socket));
@@ -713,11 +854,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    for client in listener.incoming() {
+    let control_context = Arc::clone(&context);
+    thread::spawn(move || {
+        for client in listener.incoming() {
+            let context = Arc::clone(&control_context);
+            thread::spawn(move || {
+                if let Err(failure) = proxy(client?, &context) {
+                    eprintln!("proxy failed: {failure}");
+                }
+                Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+            });
+        }
+    });
+    for client in attach_listener.incoming() {
         let context = Arc::clone(&context);
         thread::spawn(move || {
-            if let Err(failure) = proxy(client?, &context) {
-                eprintln!("proxy failed: {failure}");
+            if let Err(failure) = serve_attachment(client?, &context) {
+                eprintln!("attach proxy failed: {failure}");
             }
             Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
         });

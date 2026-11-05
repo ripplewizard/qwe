@@ -1,7 +1,7 @@
 # QWE Development Plan
 
 Status: Active
-Updated: 2026-11-04
+Updated: 2026-11-05
 
 ## Planning Assumptions
 
@@ -118,6 +118,8 @@ under the consolidated topology; protocol-unit and schema-drift checks pass.
 ### Stage 2: Attach and Terminal Core
 
 Target: 2026-11-16 to 2026-11-27
+Status: Automated acceptance passing on Linux x86_64 and macOS ARM64;
+independent manual sign-off pending.
 
 - Implement the long-lived Attach endpoint and `ATTACH_OPEN` handshake.
 - Implement raw input/output framing, snapshot-to-live continuity, ACK, and
@@ -131,6 +133,25 @@ Target: 2026-11-16 to 2026-11-27
 Exit: shell Attach, resize, detach, and reconnect pass automatically; Neovim and
 htop manual checks pass on both platforms; no output gaps or duplicates occur
 in continuity tests.
+
+Current implementation:
+
+- Dedicated Attach sockets proxy client -> qwed -> Host -> worker while the
+  Stage 1 migration topology remains in place.
+- Typed binary frames, raw input/output, snapshot-to-live offset continuity,
+  a 1 MiB per-attachment queue, resize ordering, explicit detach, EOF release,
+  complete structured VT state, and a raw-terminal CLI loop are implemented.
+- `read_only`, unknown frame types, and incompatible channel versions return
+  stable errors.
+- `just attach-e2e` verifies channel continuity, exclusive Attach rejection,
+  raw framing, resize, detach, reconnect, slow-client output backpressure, and
+  the CLI loop with real sockets, processes, and PTYs.
+- Positive-TTL detached holds and reclaim-token restoration remain Stage 3.
+  Until then a positive hold TTL returns `unsupported_mode`; the returned token
+  is not yet persisted or accepted for authority transfer.
+- `just tui-attach-smoke` passes a tmux-driven Neovim/htop detach and reattach
+  check on both Linux x86_64 and macOS ARM64. Independent manual sign-off
+  remains open.
 
 ### Stage 3: Ownership, Recovery, and Task/Lease
 

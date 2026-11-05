@@ -1,7 +1,7 @@
 # QWE IPC Protocol
 
-Status: Current migration contract; accepted V0 target is authoritative
-Date: 2026-11-04
+Status: Current migration contract; Stage 2 Attach implemented
+Date: 2026-11-05
 
 This document describes the currently implemented request/response protocol.
 The accepted V0 Attach frames and state contracts are canonical in
@@ -21,6 +21,8 @@ this migration contract.
 - Session workers own PTYs and report resource state through the current
   qwed-to-Host path.
 - Clients never connect directly to worker control sockets.
+- Clients connect to a dedicated Attach socket. qwed and Host proxy that
+  connection to the worker Attach socket without transferring PTY ownership.
 
 ## 2. Transport
 
@@ -118,14 +120,27 @@ when:
 Worker operations are `WORKER_HELLO`, `SESSION_STATUS`, `SESSION_ATTACH`,
 `SESSION_INPUT`, `TASK_STOP`, and `SESSION_CLOSE`.
 
-The current CLI still exposes `session detach`, but the operation returns
-`unsupported_operation` until the Stage 2 Attach channel defines an actual
-authority transition. A no-op success is not accepted.
+The legacy control operation behind `session detach` still returns
+`unsupported_operation`; interactive detach is now the `DETACH` frame on the
+long-lived Attach channel. A no-op control success is not accepted.
 
-`SESSION_ATTACH` returns a bounded screen snapshot and at most the newest
-1 MiB journal tail. The journal tail is opaque raw bytes; the screen snapshot
-is the authoritative display. Stage 2 replaces this one-shot operation with the
-accepted binary Attach channel and makes cursor and terminal modes explicit.
+`SESSION_ATTACH` remains as a diagnostic request/response snapshot. The CLI
+exposes it as `session snapshot`. It returns structured terminal state, a
+bounded screen snapshot, and at most the newest 1 MiB journal tail. The journal
+tail is opaque raw bytes; the screen snapshot is authoritative.
+
+Interactive Attach uses a separate owner-only socket and the accepted typed
+binary frame contract. qwed, Host, and the worker each expose an Attach path;
+the first `ATTACH_OPEN` selects the Session. The worker registers the
+subscriber before capturing `SNAPSHOT`, so `OUTPUT` starts at
+`next_stream_offset` without gaps. `INPUT` and PTY output are raw bytes.
+`RESIZE` is ordered against output by a worker stream lock. EOF releases the
+Active attachment immediately.
+
+V0 `read_only` is rejected with `unsupported_mode`. Immediate `DETACH` closes
+the channel and releases authority. Positive-TTL detached holds and reclaim
+token restoration remain Stage 3; a positive TTL currently returns
+`unsupported_mode`.
 
 ## 6. Lease State Machine
 
@@ -143,10 +158,10 @@ operations cannot reuse an older fencing token.
 
 ## 7. Backpressure
 
-Each Session has one bounded 16 MiB journal. The current Attach takes a private
-snapshot of at most 1 MiB. The accepted V0 channel additionally gives each live
-attachment an independent 1 MiB output queue and closes only that channel on
-overflow; no silent output loss is permitted.
+Each Session has one bounded 16 MiB journal. One-shot snapshot returns at most
+1 MiB of diagnostic journal tail. Each live attachment has an independent
+1 MiB output queue and closes only that channel on overflow; no silent output
+loss is permitted.
 
 ## 8. Security Model
 

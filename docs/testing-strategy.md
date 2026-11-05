@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Status: Active
-Date: 2026-11-04
+Date: 2026-11-05
 
 ## Test Layers
 
@@ -19,6 +19,9 @@ just check-qwe
 just protocol-check
 just stage0-check
 just stage1-regression-smoke
+just stage2-check
+just attach-e2e
+just tui-attach-smoke
 just t12-host-smoke
 just resilience-smoke
 just verify-linux-results
@@ -53,6 +56,23 @@ the accepted consolidation is migrated in Stage 1.
 - Released Lease generation never moves backwards.
 
 Release-mode and long-duration measurements are required before V0.
+
+## Stage 2 Attach Gate
+
+`just attach-e2e` starts real Host and qwed processes, creates a real PTY
+worker, and drives the dedicated Attach channel. It checks the handshake,
+structured snapshot, exclusive-attach rejection, raw input/output framing,
+stream-offset continuity, resize ordering, immediate detach, reconnect,
+`read_only` rejection, unknown-frame rejection, and version rejection. It also
+drives the interactive CLI through the same channel.
+
+The gate passes on Linux x86_64 and macOS ARM64. The channel probe also opens a
+slow client, drives output past the 1 MiB queue, verifies
+`output_backpressure`, and reattaches to the same Session without restarting
+the worker. `just tui-attach-smoke` drives real `nvim` and `htop` processes
+through tmux on both platforms, detaches them, reattaches, checks the restored
+screen, and exits them through the attached input channel. Independent manual
+sign-off remains open.
 
 ## ADR 0011 Acceptance Gates
 

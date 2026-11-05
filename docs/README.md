@@ -45,6 +45,8 @@
   Secret Provider/resource-control and VT capability probes.
 - [Experiment 0004](experiments/0004-lifecycle-regression-fixes.md): lifecycle
   transaction, teardown, identity, and reconciliation fixes on both platforms.
+- [Experiment 0005](experiments/0005-stage-2-attach-channel.md): Stage 2
+  Attach channel, structured VT state, resize, detach/reattach, and TUI smoke.
 
 ## Reading Order
 

@@ -627,6 +627,156 @@ stage0-check:
       printf 'macOS Stage 0 platform spike not run on %s\n' "$(uname -s)"
     fi
 
+attach-e2e:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-host
+    host_socket="/tmp/qwe-attach-host-$$.sock"
+    client_socket="/tmp/qwe-attach-client-$$.sock"
+    runtime_dir="${host_socket}.runtime"
+    host_pid=""
+    qwed_pid=""
+    session_id="attach-e2e"
+    cleanup_attach() {
+      if [ -n "$qwed_pid" ]; then
+        kill -TERM "$qwed_pid" 2>/dev/null || true
+        wait "$qwed_pid" 2>/dev/null || true
+      fi
+      if [ -n "$host_pid" ]; then
+        kill -TERM "$host_pid" 2>/dev/null || true
+        wait "$host_pid" 2>/dev/null || true
+      fi
+      pkill -TERM -f -- "--worker-socket $runtime_dir/" 2>/dev/null || true
+      rm -rf -- "$runtime_dir"
+      rm -f "$host_socket" "$client_socket" \
+        "${host_socket}.attach" "${client_socket}.attach" \
+        "${client_socket}.sqlite" "${client_socket}.sqlite-shm" \
+        "${client_socket}.sqlite-wal"
+    }
+    trap cleanup_attach EXIT
+
+    target/debug/qwe-host --socket "$host_socket" &
+    host_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$host_socket" ] && [ -S "${host_socket}.attach" ] && break
+      sleep 0.02
+    done
+    [ -S "${host_socket}.attach" ]
+
+    target/debug/qwed --socket "$client_socket" --host-socket "$host_socket" &
+    qwed_pid=$!
+    for _ in $(seq 1 100); do
+      target/debug/qwe --socket "$client_socket" ping >/dev/null 2>&1 && \
+        [ -S "${client_socket}.attach" ] && break
+      sleep 0.02
+    done
+    [ -S "${client_socket}.attach" ]
+    target/debug/qwe --socket "$client_socket" session create "$session_id" sh \
+      >/dev/null
+
+    python3 "{{ fixtures }}/attach_channel_probe.py" \
+      --socket "$client_socket" --session-id "$session_id"
+
+    printf 'printf "CLI_ATTACH_OK\\n"; exit\n' |
+      target/debug/qwe --socket "$client_socket" session attach "$session_id" \
+      >"$runtime_dir/cli-attach.out"
+    grep -Fq 'CLI_ATTACH_OK' "$runtime_dir/cli-attach.out"
+    target/debug/qwe --socket "$client_socket" session status "$session_id" |
+      jq -e '.running == false and .exit_code == 0' >/dev/null
+    printf 'Attach E2E PASS\n'
+
+stage2-check:
+    just --justfile "{{ justfile() }}" stage0-check
+    just --justfile "{{ justfile() }}" attach-e2e
+
+tui-attach-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for command in tmux nvim htop; do
+      command -v "$command" >/dev/null 2>&1 || {
+        printf 'tui-attach-smoke requires %s\n' "$command" >&2
+        exit 2
+      }
+    done
+    cargo build -p qwe -p qwed -p qwe-host
+    run_root="$(mktemp -d "/tmp/qwe-tui-attach.XXXXXX")"
+    host_socket="$run_root/host.sock"
+    client_socket="$run_root/client.sock"
+    runtime_dir="${host_socket}.runtime"
+    host_pid=""
+    qwed_pid=""
+    tmux_nvim="qwe-tui-nvim-$$"
+    tmux_htop="qwe-tui-htop-$$"
+    cleanup_tui() {
+      tmux kill-session -t "$tmux_nvim" 2>/dev/null || true
+      tmux kill-session -t "$tmux_htop" 2>/dev/null || true
+      if [ -n "$qwed_pid" ]; then
+        kill -TERM "$qwed_pid" 2>/dev/null || true
+        wait "$qwed_pid" 2>/dev/null || true
+      fi
+      if [ -n "$host_pid" ]; then
+        kill -TERM "$host_pid" 2>/dev/null || true
+        wait "$host_pid" 2>/dev/null || true
+      fi
+      pkill -TERM -f -- "--worker-socket $runtime_dir/" 2>/dev/null || true
+      rm -rf -- "$runtime_dir"
+      rm -f "$host_socket" "$client_socket" \
+        "${host_socket}.attach" "${client_socket}.attach" \
+        "${client_socket}.sqlite" "${client_socket}.sqlite-shm" \
+        "${client_socket}.sqlite-wal"
+    }
+    trap cleanup_tui EXIT
+
+    target/debug/qwe-host --socket "$host_socket" &
+    host_pid=$!
+    for _ in $(seq 1 100); do
+      [ -S "$host_socket" ] && break
+      sleep 0.02
+    done
+    target/debug/qwed --socket "$client_socket" --host-socket "$host_socket" &
+    qwed_pid=$!
+    for _ in $(seq 1 100); do
+      target/debug/qwe --socket "$client_socket" ping >/dev/null 2>&1 && break
+      sleep 0.02
+    done
+
+    target/debug/qwe --socket "$client_socket" session create tui-nvim \
+      nvim -- -u NONE >/dev/null
+    tmux new-session -d -s "$tmux_nvim" -x 100 -y 30 \
+      "target/debug/qwe --socket '$client_socket' session attach tui-nvim"
+    sleep 0.8
+    tmux send-keys -t "$tmux_nvim" 'iHELLO_NVIM_TEST' Escape
+    sleep 0.3
+    tmux send-keys -t "$tmux_nvim" C-]
+    sleep 0.5
+    tmux new-session -d -s "$tmux_nvim" -x 100 -y 30 \
+      "target/debug/qwe --socket '$client_socket' session attach tui-nvim"
+    sleep 0.8
+    tmux capture-pane -p -t "$tmux_nvim" >"$run_root/nvim.screen"
+    grep -Fq 'HELLO_NVIM_TEST' "$run_root/nvim.screen"
+    tmux send-keys -t "$tmux_nvim" ':q!' Enter
+    sleep 0.6
+    target/debug/qwe --socket "$client_socket" session status tui-nvim |
+      jq -e '.running == false' >/dev/null
+
+    target/debug/qwe --socket "$client_socket" session create tui-htop htop \
+      >/dev/null
+    tmux new-session -d -s "$tmux_htop" -x 100 -y 30 \
+      "target/debug/qwe --socket '$client_socket' session attach tui-htop"
+    sleep 0.8
+    tmux send-keys -t "$tmux_htop" C-]
+    sleep 0.5
+    tmux new-session -d -s "$tmux_htop" -x 100 -y 30 \
+      "target/debug/qwe --socket '$client_socket' session attach tui-htop"
+    sleep 0.8
+    tmux capture-pane -p -t "$tmux_htop" >"$run_root/htop.screen"
+    grep -Eq 'CPU|Mem|Tasks' "$run_root/htop.screen"
+    tmux send-keys -t "$tmux_htop" q
+    sleep 0.6
+    target/debug/qwe --socket "$client_socket" session status tui-htop |
+      jq -e '.running == false' >/dev/null
+    printf 'TUI attach smoke PASS (nvim, htop)\n'
+
 stage1-regression-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -699,7 +849,7 @@ stage1-regression-smoke:
       exit 1
     }
     set +e
-    target/debug/qwe --socket "$client_socket" session attach transaction-failure \
+    target/debug/qwe --socket "$client_socket" session snapshot transaction-failure \
       >"$run_root/transaction-failure-attach.out" 2>"$run_root/transaction-failure-attach.err"
     transaction_attach_status=$?
     set -e
@@ -781,7 +931,7 @@ stage1-regression-smoke:
     target/debug/qwe --socket "$client_socket" session input task-stop-case \
       $'printf "FINAL_SNAPSHOT\\n"\r' >/dev/null
     for _ in $(seq 1 100); do
-      target/debug/qwe --socket "$client_socket" session attach task-stop-case \
+      target/debug/qwe --socket "$client_socket" session snapshot task-stop-case \
         >"$run_root/task-stop-before.json"
       jq -e '.screen | contains("FINAL_SNAPSHOT")' \
         "$run_root/task-stop-before.json" >/dev/null && break
@@ -789,7 +939,7 @@ stage1-regression-smoke:
     done
     target/debug/qwe --socket "$client_socket" task stop "$task_id" \
       >"$run_root/task-stop.json"
-    target/debug/qwe --socket "$client_socket" session attach task-stop-case \
+      target/debug/qwe --socket "$client_socket" session snapshot task-stop-case \
       >"$run_root/task-stop-after.json"
     target/debug/qwe --socket "$client_socket" status \
       >"$run_root/task-stop-control.json"
@@ -894,7 +1044,7 @@ t12-host-smoke:
       $'printf "QWE_T12_BEFORE\\n"\r' >/dev/null
     before=""
     for _ in $(seq 1 100); do
-      before="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+      before="$(target/debug/qwe --socket "$client_socket" session snapshot "$session_id")"
       printf '%s' "$before" | jq -e '.screen | contains("QWE_T12_BEFORE")' >/dev/null &&
         break
       sleep 0.02
@@ -916,7 +1066,7 @@ t12-host-smoke:
       sleep 0.02
     done
     target/debug/qwe --socket "$client_socket" ping >/dev/null
-    recovered="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+    recovered="$(target/debug/qwe --socket "$client_socket" session snapshot "$session_id")"
     printf '%s' "$recovered" | jq -e \
       --argjson pid "$session_pid" \
       '.running == true and .pid == $pid and (.screen | contains("QWE_T12_BEFORE"))' \
@@ -925,7 +1075,7 @@ t12-host-smoke:
       $'printf "QWE_T12_AFTER\\n"\r' >/dev/null
     after=""
     for _ in $(seq 1 100); do
-      after="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+      after="$(target/debug/qwe --socket "$client_socket" session snapshot "$session_id")"
       printf '%s' "$after" | jq -e '.screen | contains("QWE_T12_AFTER")' >/dev/null &&
         break
       sleep 0.02
@@ -943,7 +1093,7 @@ t12-host-smoke:
       sleep 0.02
     done
     jq -e '.total_written >= 104857600' "$bounded_attach" >/dev/null
-    target/debug/qwe --socket "$client_socket" session attach "$session_id" \
+    target/debug/qwe --socket "$client_socket" session snapshot "$session_id" \
       >"$bounded_attach"
     jq -e \
       '.snapshot_bytes == 1048576 and
@@ -1036,7 +1186,7 @@ resilience-smoke:
     target/debug/qwe --socket "$client_socket" session input "$session_id" \
       $'printf "QWE_RESILIENCE_BEFORE\\n"\r' >/dev/null
     for _ in $(seq 1 100); do
-      recovered="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+      recovered="$(target/debug/qwe --socket "$client_socket" session snapshot "$session_id")"
       printf '%s' "$recovered" | jq -e \
         '.screen | contains("QWE_RESILIENCE_BEFORE")' >/dev/null && break
       sleep 0.02
@@ -1056,7 +1206,7 @@ resilience-smoke:
     kill -0 "$worker_pid"
 
     start_host
-    recovered="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+      recovered="$(target/debug/qwe --socket "$client_socket" session snapshot "$session_id")"
     printf '%s' "$recovered" | jq -e \
       --argjson pid "$session_pid" \
       --arg start "$start_token" \
@@ -1079,7 +1229,7 @@ resilience-smoke:
       $'printf "QWE_RESILIENCE_AFTER\\n"\r' >/dev/null
     attached_after=""
     for _ in $(seq 1 100); do
-      attached_after="$(target/debug/qwe --socket "$client_socket" session attach "$session_id")"
+      attached_after="$(target/debug/qwe --socket "$client_socket" session snapshot "$session_id")"
       printf '%s' "$attached_after" | jq -e \
         '.screen | contains("QWE_RESILIENCE_AFTER")' >/dev/null && break
       sleep 0.02

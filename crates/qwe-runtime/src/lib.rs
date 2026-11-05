@@ -2,8 +2,12 @@ use std::collections::VecDeque;
 use thiserror::Error;
 
 mod process;
+mod terminal;
 
 pub use process::{process_identity, process_matches};
+pub use terminal::{
+    CursorStyle, MouseProtocolEncoding, MouseProtocolMode, TerminalScreen, TerminalSnapshot,
+};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum JournalError {
