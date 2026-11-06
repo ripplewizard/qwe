@@ -293,3 +293,16 @@ CONTAINER-001 passes for Ubuntu 22.04, Ubuntu 24.04, and Debian 12 in
 [Experiment 0027](experiments/0027-container-compatibility.md). This is
 compatibility smoke only and does not promote those distributions to supported
 release targets.
+
+## Stage 7 Resource Governance
+
+| ID | Case | Expected result |
+|---|---|---|
+| RG-001 | Apply resource profiles | Requested and effective policy are visible; explicit field overrides and invalid combinations are deterministic |
+| RG-002 | Detect Linux cgroup capabilities | Missing systemd user manager or controllers return `unsupported_capability`; no limit is silently ignored |
+| RG-003 | Exercise scope lifecycle failures | Normal exit, OOM, forced kill, worker crash, and qwed restart leave no residual Session scope |
+| RG-004 | Use a Session under sustained pressure | Memory, CPU, and task limit violations affect that Session while qwed remains responsive |
+| RG-005 | Qualify installed-systemd Linux targets | Packaged service, cgroup delegation, limits, recovery, and cleanup pass before support is claimed |
+| RG-006 | Retain long-run resource events | Enforcement and pressure history remains bounded with an explicit retention policy |
+
+These rows are planned. They pass only with linked real-process evidence.

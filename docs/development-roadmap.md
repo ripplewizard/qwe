@@ -101,3 +101,18 @@ target. It does not expand the product capability boundary.
 Exit: the Stage 6 exit criteria in
 [Development Plan](development-plan.md#stage-6-linux-v0-adoption-and-stabilization)
 pass without broadening unsupported platform or feature claims.
+
+## Milestone D6: Linux Resource Governance
+
+Status: Planned. Stage 7 productizes the existing Linux cgroup v2 resource
+controls for long-running Sessions. It is not a Docker or Podman runtime.
+
+- Add reusable, opt-in resource profiles.
+- Harden systemd scope, controller detection, cleanup, and recovery.
+- Expose bounded resource usage and enforcement events.
+- Pass a 24-hour multi-Session resource soak.
+- Validate installed systemd and cgroup behavior on each claimed Linux target.
+
+Exit: the Stage 7 gates in
+[Linux Resource Governance](stage7-resource-governance.md)
+pass without claiming container or security-sandbox capabilities.

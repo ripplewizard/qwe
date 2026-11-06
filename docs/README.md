@@ -41,6 +41,9 @@
   credentials, and teardown.
 - [Development Plan](development-plan.md): delivery sequence, estimates,
   gates, risks, and scope controls.
+- [Stage 7 Resource Governance](stage7-resource-governance.md): cgroup v2
+  profiles, lifecycle hardening, observability, long-run soak, and Linux
+  qualification. This is not a container-runtime plan.
 - [Readiness](development-readiness.md): known gaps and start gate.
 - [Roadmap](development-roadmap.md): implementation milestones.
 - [Testing Strategy](testing-strategy.md): layers, commands, and acceptance.

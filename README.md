@@ -13,8 +13,8 @@ local/experimental.
   it from source, then start the systemd user service.
 - [Usage](USAGE.md): Sessions, Attach/detach, input, Leases, resources,
   credentials, and teardown.
-- [QWE 0.1.1 release](https://github.com/ripplewizard/qwe/releases/tag/v0.1.1):
-  Linux x86_64 package, checksum, and release notes.
+- [QWE 0.1.1 notes](docs/releases/v0.1.1.md): current Linux x86_64 release
+  notes; artifact publication remains a Stage 6 gate.
 - [Release](docs/release.md): supported platforms, package contract, and known
   limitations.
 
@@ -24,9 +24,13 @@ branch is the integration branch for the next release.
 ## Current Phase
 
 Stages 0-5 are complete for the Linux-first V0 release. Stage 6 is in progress:
-Linux V0 adoption and stabilization. It adds hosted core CI, a dedicated Fedora
-release gate, a reproducible published binary, pilot feedback triage, and the
-`v0.1.x` patch-release process.
+Linux V0 adoption and stabilization. Completed work includes hosted core CI and
+the dedicated Fedora release-gate workflow. Clean-source publication, the real
+Linux pilot, and the first `v0.1.x` patch release remain open.
+
+Stage 7 is planned around Linux cgroup v2 resource governance for long-running
+Sessions. It extends QWE's existing `qwed`/PTY model and does not introduce a
+Docker runtime. See [Linux Resource Governance](docs/stage7-resource-governance.md).
 
 macOS binary distribution is deferred post-V0 under ADR 0020 and limited to
 explicitly marked local self-signed packages under ADR 0019. Fedora Linux

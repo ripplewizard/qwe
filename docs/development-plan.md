@@ -348,6 +348,27 @@ least one `v0.1.x` patch-release path has been exercised.
 Stage 6 does not authorize public macOS distribution, QWE Mesh, sandboxing,
 plugin systems, remote scheduling, or a broader Linux support claim.
 
+### Stage 7: Linux Resource Governance
+
+Target: Planning
+Status: Planned.
+
+- Treat cgroup v2 as the Linux resource-control mechanism for the Session
+  process tree, not as a container runtime.
+- Add reusable resource profiles and explicit requested/effective policy
+  reporting.
+- Harden controller detection, scope startup, teardown, crash recovery, and
+  residual-scope cleanup.
+- Expose bounded current/peak usage, pressure, and enforcement events.
+- Run installed-systemd resource qualification on Fedora, Ubuntu, and Debian
+  before making support claims.
+- Complete 8/16-Session short soak gates and a 24-hour release qualification.
+
+Exit: the Stage 7 gates in
+[Linux Resource Governance](stage7-resource-governance.md)
+pass. Docker/Podman execution, namespaces, container images, and GPU isolation
+remain outside this stage.
+
 ## Test and Delivery Gates
 
 Every merge:
@@ -374,6 +395,9 @@ just stage4-check
 just credential-smoke
 just cross-uid-smoke
 ```
+
+Stage 7 will add `just stage7-check` for profiles, controller failure
+handling, scope cleanup, and the long-run resource gate.
 
 Post-V0:
 

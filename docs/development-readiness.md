@@ -159,3 +159,8 @@ release publication, hosted core CI, a dedicated Fedora release-gate runner,
 real pilot feedback, and an exercised `v0.1.x` patch release. Until those
 gates close, existing `dist/` archives are local evidence rather than
 published release assets.
+
+Stage 7 is planned as Linux cgroup v2 resource governance for long-running
+Sessions. It builds on the existing per-Session systemd scopes and does not
+introduce a container runtime. The detailed scope and gates are in
+[Stage 7 Resource Governance](stage7-resource-governance.md).

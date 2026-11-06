@@ -214,6 +214,12 @@ evidence.
 inside rootless Podman images. It is a compatibility probe, not a substitute
 for installed-systemd, cgroup, migration, or manual release acceptance.
 
+Stage 7 will extend resource testing around the existing cgroup v2 controls:
+controller availability, profile validation, scope startup and cleanup under
+all crash paths, bounded enforcement events, 8/16-Session pressure runs, and a
+24-hour qualification on real installed-systemd Linux targets. Container
+compatibility tests cannot substitute for these gates.
+
 Until Developer ID is available, ADR 0019 permits a dedicated local
 self-signed package tier. It signs all four executables through an isolated
 Keychain, records `local-self-signed` and `public_trust: false`, adds the
