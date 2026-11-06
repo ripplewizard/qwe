@@ -70,9 +70,10 @@ macOS Secret Provider design pass on both platforms.
 Status: In progress. Stage 5 now has checksummed native packages, isolated
 installation and in-place reinstall acceptance, SQLite v9-to-v10 migration,
 worker adoption, release-mode eight-Session Attach/soak benchmarks, and a
-strict macOS Developer ID/notarization gate. Fedora release evidence, full
-manual release acceptance, public notarization, final audit disposition, and
-V0 scope freeze remain open. See Experiment 0021 and `docs/release.md`.
+strict macOS Developer ID/notarization gate. Release gates pass on macOS and
+Fedora; full manual release acceptance, public notarization, final audit
+disposition, and V0 scope freeze remain open.
+See Experiment 0021 and `docs/release.md`.
 
 - Build the first usable CLI/TUI vertical slice.
 - Run release-mode latency, memory, and soak benchmarks.

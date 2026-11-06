@@ -9,8 +9,8 @@ V0 qualification currently targets these native development platforms:
 
 | Target | Status | Service manager | Resource enforcement | Credential provider |
 |---|---|---|---|---|
-| macOS ARM64 | Qualified through Stage 4; Stage 5 in progress | launchd user agent | libproc monitoring, explicitly monitored | macOS Keychain |
-| Fedora Linux x86_64 | Qualified through Stage 4; Stage 5 in progress | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
+| macOS ARM64 | Stage 4 qualified; Stage 5 release gates passing; manual/public gates pending | launchd user agent | libproc monitoring, explicitly monitored | macOS Keychain |
+| Fedora Linux x86_64 | Stage 4 qualified; Stage 5 release gates passing; manual gate pending | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
 | macOS x86_64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
 | Linux ARM64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
 | Other operating systems | Unsupported in V0 | unsupported claim | unsupported claim | unsupported claim |
@@ -91,8 +91,6 @@ Developer ID identity available.
 
 ## Stage 5 Remaining Gates
 
-- Run `just release-gate` on Fedora Linux x86_64 and record target-specific
-  release thresholds and evidence.
 - Run full manual Neovim, htop, detach/attach, and job-control release
   acceptance on both supported targets.
 - Sign and notarize the selected macOS release artifact with a public

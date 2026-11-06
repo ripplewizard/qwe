@@ -282,7 +282,8 @@ evidence and public Developer ID trust remain pending.
 
 Target: 2026-12-21 to 2026-12-24
 Status: In progress on 2026-11-06; release package, installer, upgrade,
-macOS release-mode benchmark, and strict signing/notarization gate implemented.
+release-mode benchmark, and strict signing/notarization gate implemented on
+both supported targets.
 
 - Run release-mode Attach latency, memory, and soak benchmarks.
 - Run full manual Neovim, htop, detach/attach, and job-control acceptance.
@@ -311,8 +312,8 @@ Current implementation:
   acceptance, and Gatekeeper assessment without falling back to ad-hoc trust.
 - `just release-gate` currently combines the workspace/state gates, packaging,
   installation/upgrade acceptance, and a 15-second release benchmark.
-- macOS ARM64 passes the new package, reinstall, adoption, migration, and
-  benchmark probes. Fedora validation, full manual release acceptance, public
+- macOS ARM64 and Fedora Linux x86_64 pass the package, reinstall, adoption,
+  migration, and benchmark probes. Full manual release acceptance, public
   Developer ID signing/notarization, final POC audit disposition, and final V0
   freeze remain open.
 

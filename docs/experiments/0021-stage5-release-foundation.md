@@ -1,9 +1,10 @@
 # Experiment 0021: Stage 5 Release Foundation
 
-Status: Foundation passing on macOS ARM64; Linux and public distribution pending
+Status: Foundation passing on macOS ARM64 and Fedora Linux x86_64; public
+distribution and manual acceptance pending
 Date: 2026-11-06
-Commit: `a0dfeb0`
-Environment: macOS 26.5.1 arm64, release profile
+Commits: macOS `a0dfeb0`; Fedora `c59048e` with only an untracked `.vscode/`
+Environment: macOS 26.5.1 arm64; Fedora Linux 35 x86_64; release profile
 
 ## Scope
 
@@ -18,7 +19,7 @@ their package version.
 
 ## Installation and Upgrade
 
-The isolated-home probe passed:
+The isolated-home probe passed on both platforms:
 
 ```json
 {"case":"PACK-003","package":"pass","archive_extraction":"pass","temporary_home_install":"pass","service_assets":"pass","database_preserved_during_reinstall":"pass","worker_adopted_after_restart":"pass","schema_v9_to_v10":"pass"}
@@ -43,22 +44,29 @@ Observed:
 
 ```json
 {"case":"PERF-001","build_profile":"release","sessions":8,"attach_requests":560,"soak_seconds":15.0,"p50_ms":18.818,"p95_ms":23.869,"p99_ms":24.451,"max_ms":34.479,"max_rss_bytes":172638208,"max_p95_ms":1000,"max_p99_ms":2000,"max_rss_limit_bytes":536870912}
+{"case":"PERF-001","build_profile":"release","sessions":8,"attach_requests":536,"soak_seconds":15.0,"p50_ms":9.268,"p95_ms":26.108,"p99_ms":26.403,"max_ms":26.627,"max_rss_bytes":153726976,"max_p95_ms":1000,"max_p99_ms":2000,"max_rss_limit_bytes":536870912}
 ```
 
 These thresholds are release-gate regression bounds for the tested machine,
 not cross-platform performance claims.
 
+The first line is macOS ARM64; the second is Fedora Linux x86_64. Fedora
+produced archive SHA-256
+`a28472903a23292c55a2d87ee7a14c3808f68eef056334011c09b628c6c656e6`.
+Its tracked and staged diffs were clean; the package marked the source dirty
+because the pre-existing `.vscode/` directory is untracked.
+
 ## Gate Result
 
-`just release-gate` passes from clean commit `a0dfeb0` on macOS ARM64 with the
-package, archive extraction, isolated installation, reinstall,
-worker-adoption, schema-migration, and release-mode benchmark probes above.
+`just release-gate` passes on both supported targets with the package, archive
+extraction, isolated installation, reinstall, worker-adoption,
+schema-migration, and release-mode benchmark probes above.
 
 ## Boundary
 
-macOS package installation, reinstall, worker adoption, schema migration, and
-the release benchmark pass. Fedora package acceptance and benchmarking have
-not run at this commit. Full manual release acceptance is pending.
+macOS and Fedora package installation, reinstall, worker adoption, schema
+migration, and release benchmarks pass. Full manual release acceptance remains
+pending.
 
 No public Apple Developer identity is available. Developer ID signing,
 notarization, and Gatekeeper public-trust acceptance remain unpassed and are

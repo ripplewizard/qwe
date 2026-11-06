@@ -94,8 +94,7 @@ These are implementation work, not reasons to delay development:
 - The release package, offline installer, checksum and version checks,
   isolated-home installation, in-place reinstall, SQLite v9-to-v10 migration,
   worker adoption, and an eight-Session release-mode Attach/soak benchmark are
-  implemented. macOS ARM64 passes these probes; Fedora release validation
-  remains pending.
+  implemented. macOS ARM64 and Fedora Linux x86_64 pass these probes.
 - API Key Manager, tree-scoped resource policy, and forced teardown are
   implemented and pass `just stage4-check` on macOS and Fedora. Linux provides
   hard cgroup v2 limits; macOS reports monitored enforcement with bounded
@@ -140,6 +139,6 @@ Structured closure evidence is in
 
 Public Developer ID trust, notarization, packaged installation, upgrade
 migration, and release-mode soak measurements belong to Stage 5. Packaged
-installation, reinstall, and v9-to-v10 migration now pass on macOS; public
-Developer ID trust and notarization remain unpassed because no public identity
-is available.
+installation, reinstall, v9-to-v10 migration, and release-mode benchmarks now
+pass on both supported targets; public Developer ID trust and notarization
+remain unpassed because no public identity is available.

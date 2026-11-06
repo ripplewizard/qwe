@@ -252,6 +252,6 @@ measurements are also Stage 5 gates.
 | PERF-001 | Run release-mode Attach and soak | Eight independent Sessions complete real Attach/snapshot/detach cycles within configured latency and aggregate-RSS limits throughout the soak |
 
 Packaged installation, reinstall, worker adoption, schema migration, and
-release-mode performance pass on macOS ARM64 at the Stage 5 foundation commit.
-Fedora release evidence, public macOS signing/notarization, full manual release
-acceptance, and final V0 freeze remain pending.
+release-mode performance pass on macOS ARM64 and Fedora Linux x86_64. Public
+macOS signing/notarization, full manual release acceptance, and final V0 freeze
+remain pending.
