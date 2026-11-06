@@ -136,6 +136,46 @@ pruning, and failure of pending non-creation mutations with
 through one command. It passes on macOS ARM64 and Fedora Linux x86_64; the
 audit is recorded in [Experiment 0009](experiments/0009-stages-1-3-audit.md).
 
+## Stage 4 Gate
+
+`just stage4-check` runs the workspace gate, service-manifest validation, a
+real launchd/systemd lifecycle probe, the Stage 4 capability probe, a real
+second-UID socket probe, and durable idempotency recovery. The probes start
+qwed, workers, PTYs, and child processes against real control sockets and
+SQLite.
+
+It covers:
+
+- Private credential files, symlink/traversal/oversize rejection, inherited
+  descriptor delivery, and secret redaction from argv, environment, status,
+  terminal output, logs, and SQLite.
+- Aggregate CPU-time enforcement, Linux cgroup v2 hard memory/swap/task/CPU
+  bandwidth controls, macOS libproc monitoring, current/peak metrics, and
+  explicit unsupported-tier responses.
+- Malformed and oversized control frames, oversized input, and the peer-UID
+  rejection policy.
+- Session, batch Task, and server forced teardown in the process table and
+  durable state.
+- Dynamic resource-policy updates on a running Held Session, including runtime
+  application and durable Pane policy verification.
+- systemd unit structure, launchd plist linting, managed SIGKILL restart,
+  worker adoption by the restarted qwed, graceful SIGTERM cleanup, and persisted
+  terminal Session/Task state.
+- Binary path replacement before a managed restart, plus local signed Keychain
+  ACL, locked-Keychain fail-closed, and unlock recovery on macOS.
+- A second UID is denied by the private runtime socket; after a temporary ACL
+  bypass, qwed still rejects the connected peer through its application-level
+  UID check.
+
+The gate passes on macOS ARM64 and Fedora Linux x86_64. Public Developer ID
+trust/distribution remains Stage 5 release packaging.
+
+`just cross-uid-smoke` verifies an isolated runtime directory with the same
+owner-only directory and socket semantics used by the service assets. It
+requires the unprivileged `qwe-probe` account and one narrow sudoers rule
+documented in `packaging/README.md`. It does not install or package QWE;
+packaged installation and migration acceptance remain Stage 5 gates.
+
 ## ADR 0012-0015 Contract Matrices
 
 The corresponding ADRs are accepted. Every row has a stable ID in

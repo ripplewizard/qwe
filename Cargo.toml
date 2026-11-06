@@ -29,3 +29,4 @@ sha2 = "0.10"
 thiserror = "2"
 uuid = { version = "1", features = ["serde", "v7"] }
 vt100 = "0.18"
+zeroize = "1"

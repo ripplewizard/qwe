@@ -1,8 +1,7 @@
 # V0 Contract Test Matrices
 
-Status: Stages 1-3 automated matrices validated on macOS ARM64 and Fedora Linux
-x86_64
-Date: 2026-11-05
+Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64
+Date: 2026-11-06
 
 These IDs are stable contract identifiers. An implementation test may be
 named after an ID only after it exercises the complete row with real sockets,
@@ -145,6 +144,35 @@ Successful and deterministic error responses are retained for 24 hours.
 | HIST-001 | A terminal Session is pruned only when older than 30 days and outside the newest 10,000 terminal Sessions; running Sessions and records with attachment authority are retained |
 | HIST-002 | Startup maintenance removes eligible terminal Session, Task, and Pane history before qwed accepts clients |
 
+## Stage 4 Services, Security, and V0 Capabilities
+
+These rows define the Stage 4 acceptance surface. A row is complete only when
+its named command has evidence on both required platforms.
+
+| ID | Case | Expected result |
+|---|---|---|
+| SVC-001 | Parse and platform-lint the systemd user unit and launchd agent assets | Required restart, runtime/state-directory, umask, and kill-policy fields are present; malformed manifests fail |
+| SVC-002 | SIGKILL qwed while managed by launchd or systemd | The worker and Task survive; the service manager restarts qwed; startup reconciliation adopts the same worker and Session |
+| SVC-003 | Stop the managed qwed service with a live Session | qwed handles SIGTERM, terminates worker/Task, persists Session `closed` and Task `stopped`, and exits cleanly |
+| SVC-004 | Replace the managed qwed executable before a crash restart | The next service start executes the replacement path, adopts the surviving worker, and preserves the Session |
+| SEC-001 | Send malformed JSON in a valid-length client frame | Close that client connection and keep qwed healthy |
+| SEC-002 | Send a client frame header above 8 MiB | Reject before reading or allocating the payload and keep qwed healthy |
+| SEC-003 | Send control input over 1 MiB | Return `input_too_large` without forwarding input to the worker |
+| SEC-004 | Compare matching and mismatched socket peer UIDs | The private runtime socket denies a second UID; a temporary ACL bypass permits connection; qwed then rejects the client with the `unauthorized_peer` policy error |
+| CRED-001 | Load a credential from a private regular file and reject missing, insecure, symlink, and oversized sources | Only the private regular file is loaded; failures return `credential_unavailable` |
+| CRED-002 | Consume a credential in a real PTY child through the inherited descriptor contract | Secret bytes match exactly and do not appear in argv, environment, protocol status, terminal output, logs, or SQLite |
+| CRED-003 | Use an explicitly signed qwed binary against an ACL-bound temporary Keychain | Trusted code signature reads the item; locking the Keychain fails closed without UI; unlocking restores access; public Developer ID distribution remains a release-identity requirement |
+| RES-001 | Apply an aggregate Pane CPU-time limit | The whole Session tree is terminated after consumed CPU time crosses the limit |
+| RES-002 | Request a resource that the current platform/enforcement tier lacks | Return `unsupported_capability`; never silently downgrade or ignore the request |
+| RES-003 | Apply tree memory limits | Linux enforces `memory.max`/`memory.swap.max`; macOS reports monitored enforcement and terminates after sampling a breach |
+| RES-004 | Apply a task-count limit | Linux enforces `pids.max`; macOS monitors the process tree; both retain current/peak task metrics |
+| RES-005 | Update limits on a running held Session | Worker and durable Pane policy change together; status reports the new effective policy and metrics tier |
+| RES-006 | Inspect resource status during enforcement | Current/peak memory and task counts, CPU seconds, tier, and last violation are reported without unbounded history |
+| RES-007 | Lower limits below current resource usage | Linux memory triggers cgroup OOM on the Session tree; lower `tasks_max` blocks new forks without killing existing tasks; macOS monitors and terminates on the next breach sample |
+| KILL-001 | Force-kill one held Session | Task and Session terminate; process group disappears; authority is released; Session persists as `closed` |
+| KILL-002 | Batch-force multiple held Tasks | Every requested Task becomes `stopped` and reports per-item failures without aborting unrelated teardown |
+| KILL-003 | Force-kill the server with explicit confirmation | Every Session is torn down, the result is returned, and qwed exits successfully |
+
 ## Stage 1 Hardening Evidence
 
 The following rows now have real-process coverage:
@@ -182,3 +210,32 @@ The AUTH and LIVE policies are unit-tested across every state pair, with
 real-process probes covering attach, grace, hold, Lease, close/task-stop,
 control input, orphan/conflict, identity mismatch, duplicate workers, and
 exited-worker health. The Stage 1-3 audit passes on both required platforms.
+
+## Stage 4 Completion Evidence
+
+macOS ARM64 and Fedora Linux x86_64 currently pass `just stage4-check`:
+
+- Private credential loading, descriptor delivery, and secret-redaction checks.
+- Aggregate CPU-time enforcement and explicit unsupported-capability responses.
+- Linux cgroup v2 hard memory, swap, task, and CPU-bandwidth enforcement.
+- macOS libproc current/peak resource monitoring and monitored termination.
+- Dynamic Active/Held policy updates persisted in SQLite and applied live.
+- Malformed/oversized control frames, oversized input, and peer-UID policy.
+- Session, batch Task, and server forced teardown with real processes.
+- systemd-unit and launchd-plist structural validation, including macOS
+  `plutil` lint.
+- Real launchd/systemd crash-restart, worker adoption, graceful stop, and
+  terminal-state cleanup.
+- Binary path replacement before managed restart, with worker adoption.
+- Local signed Keychain ACL, locked-Keychain fail-closed, and unlock
+  recovery with no background password dialog.
+- Real second-UID socket denial and application peer-UID rejection on macOS
+  and Fedora.
+
+All Stage 4 rows are closed. See
+[Experiment 0020](experiments/0020-stage-4-closure.md) for the closure record.
+
+Public Developer ID trust and notarized distribution are Stage 5 release
+packaging gates. Local signed ACL and locked/unlocked Keychain behavior pass.
+Final packaged installation, upgrade migration, and release-mode soak
+measurements are also Stage 5 gates.

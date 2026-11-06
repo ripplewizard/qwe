@@ -233,6 +233,7 @@ Current implementation:
 ### Stage 4: Services, Security, and V0 Capabilities
 
 Target: 2026-12-07 to 2026-12-18
+Status: Complete on 2026-11-06.
 
 - Add systemd user-service and launchd integration.
 - Verify worker orphan cleanup and supervisor upgrade behavior.
@@ -246,6 +247,37 @@ Target: 2026-12-07 to 2026-12-18
 Exit: D3 acceptance matrix passes on both platforms. Any unsupported platform
 capability is explicit and cannot be reported as implemented.
 
+Current implementation:
+
+- ADR 0017 fixes the secret, forced-teardown, and service-asset contracts;
+  ADR 0018 replaces its initial Pane resource contract.
+- API Key Manager loads private credential files or macOS Keychain items into
+  zeroizing memory, transfers them through a one-shot owner-only broker socket,
+  and exposes descriptor 3 as `QWE_CREDENTIAL_FD` to the PTY child.
+- Pane policy is persisted in SQLite v10. Linux uses one transient systemd
+  cgroup v2 scope per Session for hard tree memory, swap, task-count, and CPU
+  bandwidth controls. macOS uses libproc monitoring for current/peak memory,
+  task count, and CPU time with explicit monitored enforcement.
+- `SESSION_RESOURCE_UPDATE` changes limits on a running Active/Held Session;
+  runtime policy and SQLite are rolled back together on apply failure.
+- `SESSION_KILL`, `TASK_KILL_BATCH`, and confirmed `SERVER_KILL` force-kill real
+  process groups and retain durable terminal history.
+- Control input is limited to 1 MiB, client frames to 8 MiB, and
+  `CONTROL_STATUS` reports the active capability matrix and credential backend.
+- systemd and launchd crash-restart, worker adoption, and graceful stop cleanup
+  pass with real service-manager jobs on both platforms.
+- Managed binary-path replacement before restart preserves and re-adopts the
+  live worker.
+- A real second UID is denied by the private socket and rejected by qwed's
+  peer-UID check after a temporary ACL bypass.
+- `just stage4-check` passes on macOS ARM64 and Fedora Linux x86_64.
+
+Local signed Keychain ACL, locked/unlocked behavior, and binary-replacement
+restart pass. See
+[Experiment 0020](experiments/0020-stage-4-closure.md). Packaged installation,
+upgrade migration, public Developer ID trust, notarization, and release-mode
+soak measurements remain Stage 5 work.
+
 ### Stage 5: Release Candidate
 
 Target: 2026-12-21 to 2026-12-24
@@ -253,6 +285,8 @@ Target: 2026-12-21 to 2026-12-24
 - Run release-mode Attach latency, memory, and soak benchmarks.
 - Run full manual Neovim, htop, detach/attach, and job-control acceptance.
 - Verify installation, upgrade, service restart, and documentation.
+- Sign and notarize the macOS release artifact with the selected Developer ID
+  identity and verify public-distribution trust.
 - Produce final POC/manual audit disposition without rewriting failed evidence.
 - Freeze V0 scope and publish an explicit supported-platform matrix.
 
@@ -274,14 +308,22 @@ just t12-host-smoke
 just resilience-smoke
 ```
 
-New planned Justfile gates:
+Implemented Stage gates:
 
 ```text
 just protocol-check
 just attach-e2e
-just state-matrix
-just service-smoke
+just service-config-check
+just stage4-capabilities
+just stage4-check
 just credential-smoke
+just cross-uid-smoke
+```
+
+Still planned:
+
+```text
+just state-matrix
 just release-gate
 ```
 

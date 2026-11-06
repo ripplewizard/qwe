@@ -48,3 +48,7 @@ codex/stage-4-services-credentials
 ```
 
 It is not merged into `dev` and is not part of this Stage 3 closure.
+
+The implementation was restarted from `dev` under ADR 0017. See
+[Experiment 0017](0017-stage-4-core-capabilities.md) for the current Stage 4
+evidence; the WIP commit above remains historical scaffolding.

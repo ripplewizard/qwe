@@ -21,3 +21,5 @@ that links to the replaced decision.
 | [0014](0014-attachment-ownership-authorization.md) | Attachment ownership and authorization | Accepted |
 | [0015](0015-worker-liveness-reconciliation.md) | Worker liveness and reconciliation | Accepted |
 | [0016](0016-stage-3-retention-and-clock-policy.md) | Stage 3 Lease clock, TTL, and retention | Accepted |
+| [0017](0017-stage-4-service-security-and-capabilities.md) | Stage 4 service, secret, resource, and teardown contracts | Accepted |
+| [0018](0018-pane-resource-enforcement.md) | Pane resource enforcement tiers and dynamic limits | Accepted |

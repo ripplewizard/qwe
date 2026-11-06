@@ -15,3 +15,6 @@ qwe-runtime = { path = "../../crates/qwe-runtime" }
 qwe-storage = { path = "../../crates/qwe-storage" }
 serde_json.workspace = true
 sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+zeroize.workspace = true

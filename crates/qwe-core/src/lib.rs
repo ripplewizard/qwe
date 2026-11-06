@@ -343,9 +343,48 @@ pub struct TaskRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourcePolicy {
+    pub memory_high_bytes: Option<u64>,
+    #[serde(alias = "memory_bytes")]
+    pub memory_max_bytes: Option<u64>,
+    pub memory_swap_max_bytes: Option<u64>,
+    #[serde(alias = "process_limit")]
+    pub tasks_max: Option<u64>,
+    pub cpu_quota_percent: Option<u32>,
+    pub cpu_seconds: Option<u64>,
+}
+
+impl ResourcePolicy {
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            memory_high_bytes: None,
+            memory_max_bytes: None,
+            memory_swap_max_bytes: None,
+            tasks_max: None,
+            cpu_quota_percent: None,
+            cpu_seconds: None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self == &Self::empty()
+    }
+}
+
+impl Default for ResourcePolicy {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneRecord {
     pub id: PaneId,
     pub session_id: String,
+    pub resource_policy: ResourcePolicy,
     pub updated_at_ms: i64,
 }
 

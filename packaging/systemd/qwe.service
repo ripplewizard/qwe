@@ -1,0 +1,25 @@
+[Unit]
+Description=QWE durable terminal supervisor
+After=default.target
+StartLimitIntervalSec=30
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/qwed --socket=%t/qwe/qwe.sock --store=%S/qwe/qwe.sqlite --keychain-service-prefix=qwe
+Restart=on-failure
+RestartSec=1
+RuntimeDirectory=qwe
+RuntimeDirectoryMode=0700
+StateDirectory=qwe
+StateDirectoryMode=0700
+UMask=0077
+KillMode=process
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=default.target

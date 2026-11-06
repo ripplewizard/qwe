@@ -46,6 +46,13 @@ Task and Lease history.
 
 ## Milestone D3: Service and Security
 
+Status: Complete. Real launchd/systemd crash-restart and stop lifecycle pass.
+Linux hard cgroup scopes, macOS monitoring, dynamic policy updates, binary
+replacement, local signed Keychain ACL behavior, and real second-UID rejection
+pass on both platforms. Public Developer ID trust/distribution, packaged
+installation, upgrade migration, and release-mode soak measurements move to
+Stage 5. See ADRs 0017-0018, Experiment 0020, and `just stage4-check`.
+
 - Add systemd user-service and launchd integration.
 - Verify worker orphan cleanup and upgrade behavior.
 - Add unauthorized UID, stale epoch, malformed frame, and oversized input tests.

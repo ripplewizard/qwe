@@ -14,7 +14,7 @@ qwed supervisor ------------ SQLite WAL
   |
   +-- session worker
   |     +-- PTY and VT state
-  |     +-- task process group
+  |     +-- qwe-session-exec -> systemd scope (Linux) / task process group
   |     +-- bounded output journal
   |
   +-- session worker
@@ -78,6 +78,9 @@ and liveness matrix work is tracked in
 ### qwe-worker
 
 - One process per Session; owns the PTY, process group, VT state, and journal.
+- Starts the session process through the internal `qwe-session-exec` launcher.
+- On Linux, starts `qwe-session-exec` inside a transient systemd user scope.
+  The launcher reports the final task PID and cgroup path before exec.
 - Serves a persistent request/response control channel and a typed Attach
   channel over owner-only Unix sockets.
 - Survives qwed crashes; qwed re-adopts it by socket path, SessionId, worker PID,
@@ -137,13 +140,17 @@ session.input
 session.resize
 session.status
 session.close
+session.kill
+session.resource_update
 task.status
 task.stop
+task.kill_batch
 task.history
 lease.claim
 lease.touch
 lease.release
 lease.takeover
+server.kill
 ```
 
 Errors are stable codes, for example:
@@ -297,22 +304,31 @@ The process start token is mandatory. PID alone is never sufficient.
 - `CONTROL_STATUS.reconciliation` is computed from current Sessions, Tasks, and
   worker health. `last_scan_ms` reports the latest completed safety scan rather
   than a static startup value.
-- SQLite v8 enforces Session references and stores attachment authority plus
-  two-phase idempotency replay records. `CONTROL_STATUS` returns Pane records
-  alongside Sessions and Tasks.
+- SQLite v10 enforces Session references and stores attachment authority,
+  two-phase idempotency replay records, and optional Pane resource policy.
+  `CONTROL_STATUS` returns Pane records alongside Sessions and Tasks.
 - Lease release writes a generation tombstone; expiration does not kill Tasks.
 
 ## 10. Resource Model
 
-V0 reports:
+- Each Pane/Session has a tree-scoped policy for memory high/max/swap,
+  processes-plus-threads, CPU bandwidth, and cumulative CPU time.
+- Linux creates one transient systemd user scope per Session. `memory.max`,
+  `memory.swap.max`, `pids.max`, and `cpu.max` are hard limits; cumulative CPU
+  time is monitored. `memory.oom.group=1` treats the Session as one OOM unit.
+- macOS traverses the task tree with `proc_listchildpids` and samples
+  `proc_pid_rusage` every 100 ms. Memory, task-count, and CPU limits are
+  `monitored`; a breach terminates the process group.
+- Status reports requested/effective policy, current and peak memory/task
+  usage, cumulative CPU time, enforcement tier, and last violation.
+- Dynamic updates replace selected fields on a running Active/Held Session.
+  Raising limits is immediate. Lowering a Linux hard memory limit can reclaim
+  or OOM immediately; lowering `pids.max` does not kill existing tasks but
+  blocks new forks until usage falls below the limit.
+- V0 does not claim hard tree limits when systemd user scopes are unavailable.
 
-- Process CPU and process-group CPU.
-- RSS, process-tree RSS, and an explicit warning about shared pages.
-- Sampling latency and monitor overhead.
-- GPU capability and device metrics where supported.
-
-GPU-to-task attribution is returned only when a reliable platform identifier
-exists; otherwise the field is `unsupported`.
+GPU-to-task attribution remains outside the Pane resource contract and is
+reported only when a reliable platform identifier exists.
 
 ## 11. Security Baseline
 
@@ -323,22 +339,34 @@ exists; otherwise the field is `unsupported`.
 - Peer-UID verification.
 - Frame and input size limits.
 - Secrets are never included in configuration or test evidence.
+- API Key Manager uses private credential sources and zeroizing memory. A
+  one-shot owner-only broker socket delivers the secret to the internal
+  launcher, which re-exposes it to the final child as inherited descriptor 3
+  and sets only `QWE_CREDENTIAL_FD=3`.
+- Credential files must be private regular files of at most 16 KiB. Missing,
+  insecure, symlinked, or oversized sources fail closed.
+- Control input is limited to 1 MiB. Client request frames remain limited to
+  8 MiB before payload allocation.
 
 ## 12. Concurrency and Latency
 
-- `qwed`, Host, and workers accept each client connection independently.
+- `qwed` and workers accept each client connection independently.
 - Snapshot locks cover state capture, not socket writes to slow clients.
 - The automated gate runs 64 Attach requests with eight clients during
   continuous PTY output.
 - V0 requires zero request failures, P95 at or below 3,000 ms, and P99 at or
   below 5,000 ms.
 
-## 13. Product Capabilities Scheduled
+## 13. Product Capabilities
 
-- D3 API Key Manager uses a broker or inherited descriptor; secrets cannot
-  enter args, environment, files, logs, or persisted state.
-- D3 Pane resource policy covers CPU, memory, and process limits.
-- D3 forced teardown covers Session, Server, and batch Task termination.
+- D3 API Key Manager is implemented through a broker and final-child inherited
+  descriptor. Secrets cannot enter args, environment, workspace files, logs,
+  or persisted state.
+- D3 Pane policy uses Linux cgroup v2 hard limits and macOS monitored libproc
+  enforcement. Dynamic updates are supported through
+  `SESSION_RESOURCE_UPDATE`. See ADR 0018.
+- D3 forced teardown implements `kill-session`, confirmed `kill-server`, and
+  batch Task termination. See ADR 0017.
 
 ## 14. Open Decisions
 

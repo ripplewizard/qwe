@@ -1,9 +1,14 @@
 use std::collections::VecDeque;
 use thiserror::Error;
 
+mod cgroup;
 mod process;
 mod terminal;
 
+pub use cgroup::{
+    apply_resource_policy, current_cgroup_path, read_cpu_usage_microseconds,
+    read_enforcement_event, read_resource_usage, systemd_scope_available,
+};
 pub use process::{process_identity, process_matches};
 pub use terminal::{
     CursorStyle, MouseProtocolEncoding, MouseProtocolMode, TerminalScreen, TerminalSnapshot,

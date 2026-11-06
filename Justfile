@@ -782,6 +782,111 @@ stage3-check:
 stage3-foundation-check:
     just --justfile "{{ justfile() }}" stage3-check
 
+service-config-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python3 "{{ justfile_directory() }}/tests/fixtures/service_config_probe.py"
+    case "$(uname -s)" in
+      Darwin)
+        plutil -lint \
+          "{{ justfile_directory() }}/packaging/launchd/com.qwe.qwed.plist"
+        ;;
+      Linux)
+        command -v systemd-analyze >/dev/null 2>&1 || {
+          printf 'systemd-analyze is required to validate the Linux service\n' >&2
+          exit 2
+        }
+        scratch="$(mktemp -d "${TMPDIR:-/tmp}/qwe-service.XXXXXX")"
+        trap 'rm -rf "$scratch"' EXIT
+        sed 's#^ExecStart=.*#ExecStart=/bin/true#' \
+          "{{ justfile_directory() }}/packaging/systemd/qwe.service" \
+          >"$scratch/qwe.service"
+        systemd-analyze verify "$scratch/qwe.service"
+        ;;
+      *)
+        printf 'unsupported platform service validation: %s\n' "$(uname -s)" >&2
+        exit 2
+        ;;
+    esac
+
+service-lifecycle-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker
+    run_root="$(mktemp -d "/tmp/qwe-service-lifecycle.XXXXXX")"
+    cleanup_service_lifecycle() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_service_lifecycle EXIT
+    python3 "{{ fixtures }}/service_lifecycle_probe.py" \
+      --qwed target/debug/qwed \
+      --qwe target/debug/qwe \
+      --socket "$run_root/client.sock"
+
+keychain-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname -s)" != "Darwin" ]; then
+      printf 'macOS Keychain smoke not applicable on %s\n' "$(uname -s)"
+      exit 0
+    fi
+    cargo build -p qwe -p qwed -p qwe-worker
+    run_root="$(mktemp -d "/tmp/qwe-keychain.XXXXXX")"
+    cleanup_keychain() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_keychain EXIT
+    python3 "{{ fixtures }}/macos_keychain_probe.py" \
+      --qwed target/debug/qwed \
+      --socket "$run_root/client.sock"
+
+cross-uid-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwed
+    run_root="$(mktemp -d "/tmp/qwe-cross-uid.XXXXXX")"
+    cleanup_cross_uid() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+      rm -f /tmp/qwe-cross-uid-client.py /tmp/qwe-cross-uid-client.socket
+    }
+    trap cleanup_cross_uid EXIT
+    python3 "{{ fixtures }}/cross_uid_probe.py" \
+      --qwed target/debug/qwed \
+      --socket "$run_root/client.sock"
+
+stage4-capabilities:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker
+    run_root="$(mktemp -d "/tmp/qwe-stage4.XXXXXX")"
+    cleanup_stage4() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_stage4 EXIT
+    python3 "{{ fixtures }}/stage4_probe.py" \
+      --qwed target/debug/qwed \
+      --socket "$run_root/client.sock"
+
+credential-smoke:
+    just --justfile "{{ justfile() }}" stage4-capabilities
+
+stage4-check:
+    just --justfile "{{ justfile() }}" check-qwe
+    just --justfile "{{ justfile() }}" service-config-check
+    just --justfile "{{ justfile() }}" service-lifecycle-smoke
+    just --justfile "{{ justfile() }}" keychain-smoke
+    just --justfile "{{ justfile() }}" stage4-capabilities
+    just --justfile "{{ justfile() }}" cross-uid-smoke
+    just --justfile "{{ justfile() }}" stage3-idempotency
+
 stages-1-3-check:
     just --justfile "{{ justfile() }}" stage1-hardening-check
     just --justfile "{{ justfile() }}" stage2-check
@@ -2342,6 +2447,7 @@ _runtime-smoke platform:
     set -euo pipefail
     root="{{ poc }}"
     repo_root="$(CDPATH= cd -- "$root/.." && pwd)"
+    cd "$repo_root"
     platform="{{ platform }}"
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     run_id="$stamp-$$"

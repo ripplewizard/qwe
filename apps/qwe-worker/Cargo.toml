@@ -16,3 +16,4 @@ qwe-runtime = { path = "../../crates/qwe-runtime" }
 serde.workspace = true
 serde_json.workspace = true
 vt100.workspace = true
+zeroize.workspace = true
