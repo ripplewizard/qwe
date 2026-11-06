@@ -974,6 +974,16 @@ release-acceptance package archive="":
     python3 "{{ justfile_directory() }}/tests/fixtures/release_acceptance_probe.py" \
       "${arguments[@]}"
 
+release-service-acceptance package:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'release service acceptance currently requires Linux\n' >&2
+      exit 2
+    }
+    python3 "{{ justfile_directory() }}/tests/fixtures/release_service_probe.py" \
+      --package "{{ package }}"
+
 release-benchmark seconds="15":
     python3 "{{ justfile_directory() }}/tests/fixtures/release_benchmark.py" \
       --qwed "{{ justfile_directory() }}/target/release/qwed" \
@@ -1012,7 +1022,9 @@ release-gate:
     python3 tests/fixtures/release_acceptance_probe.py \
       --package "$package" \
       --archive "$archive"
-    if [ "$(uname -s)" = "Darwin" ]; then
+    if [ "$(uname -s)" = "Linux" ]; then
+      just --justfile "{{ justfile() }}" release-service-acceptance "$package"
+    elif [ "$(uname -s)" = "Darwin" ]; then
       rejection_log="$root/dist/local-public-gate-rejection.txt"
       set +e
       QWE_DEVELOPER_ID=placeholder \
@@ -1026,6 +1038,9 @@ release-gate:
         "$rejection_log" >/dev/null
     fi
     just --justfile "{{ justfile() }}" release-benchmark 15
+    if [ "$(uname -s)" = "Linux" ]; then
+      just --justfile "{{ justfile() }}" tui-attach-smoke
+    fi
 
 stages-1-3-check:
     just --justfile "{{ justfile() }}" stage1-hardening-check
