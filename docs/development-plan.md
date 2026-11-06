@@ -1,6 +1,6 @@
 # QWE Development Plan
 
-Status: Complete for Linux-first V0; post-V0 follow-ups listed
+Status: Stage 6 in progress for Linux-first V0 adoption and stabilization
 Updated: 2026-11-06
 
 ## Planning Assumptions
@@ -321,6 +321,32 @@ Current implementation:
   The final historical evidence disposition and independent manual acceptance
   are complete. macOS remains frozen at the experimental local self-signed
   tier under ADR 0019/0020.
+
+### Stage 6: Linux V0 Adoption and Stabilization
+
+Target: 2026-11-06 onward
+Status: In progress.
+
+- Publish a clean-source Fedora Linux x86_64 release artifact with a release
+  manifest, SHA-256, installation instructions, and release notes.
+- Run formatting, Clippy, workspace tests, protocol validation, and release
+  builds on hosted Linux and macOS runners.
+- Run the complete `just release-gate` on a dedicated Fedora x86_64
+  self-hosted runner before publishing or replacing a release artifact.
+- Collect real installation, service, Attach/TUI, resource-policy, and upgrade
+  feedback from Linux V0 users.
+- Triage pilot defects by severity and ship fixes through the `v0.1.x` patch
+  release process.
+- Promote another platform only after its complete release, service, resource,
+  migration, and manual acceptance gates pass.
+
+Exit: clean-source Linux V0 artifacts are published; core CI and the Fedora
+release gate are repeatable; the pilot has completed; no open Linux P0/P1
+defect remains; the supported-platform matrix matches tested evidence; and at
+least one `v0.1.x` patch-release path has been exercised.
+
+Stage 6 does not authorize public macOS distribution, QWE Mesh, sandboxing,
+plugin systems, remote scheduling, or a broader Linux support claim.
 
 ## Test and Delivery Gates
 

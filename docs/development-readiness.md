@@ -1,6 +1,6 @@
 # Development Readiness
 
-Status: Stages 1-5 complete for Linux-first V0; public macOS deferred post-V0
+Status: Stages 1-5 complete; Stage 6 Linux adoption and stabilization in progress
 Date: 2026-11-06
 
 ## Decision
@@ -153,3 +153,9 @@ Linux V0 release packaging, installation, reinstall, v9-to-v10 migration,
 systemd crash recovery, release-mode performance, TUI/job-control smoke,
 historical evidence disposition, and independent manual acceptance are
 complete. Public macOS distribution is deferred post-V0 under ADR 0020.
+
+Stage 6 starts with no new runtime capability. Its open gates are clean-source
+release publication, hosted core CI, a dedicated Fedora release-gate runner,
+real pilot feedback, and an exercised `v0.1.x` patch release. Until those
+gates close, existing `dist/` archives are local evidence rather than
+published release assets.

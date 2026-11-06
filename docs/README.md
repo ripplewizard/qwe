@@ -102,6 +102,8 @@
   cgroup OOM event-retention regression and five-run verification.
 - [Experiment 0025](experiments/0025-stage5-linux-v0-closure.md): Linux-first
   V0 closure, independent acceptance, and final release boundary.
+- [Experiment 0026](experiments/0026-stage6-adoption-baseline.md): Stage 6
+  distribution, CI, and pilot entry state.
 
 ## Reading Order
 

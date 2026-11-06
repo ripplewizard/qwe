@@ -33,6 +33,23 @@ continue feature work on them.
    contract changes.
 9. Merge back to `dev` only after validation.
 
+## Continuous Integration
+
+Every push to `dev` or `main` and every pull request runs
+`.github/workflows/ci.yml` on hosted Linux and macOS runners. The workflow
+checks formatting, Clippy, workspace tests, the canonical protocol schema, and
+release builds.
+
+The complete Fedora release gate is a separate manual workflow,
+`.github/workflows/release-gate.yml`. It requires a runner registered with the
+`self-hosted`, `linux`, `x64`, `fedora`, and `qwe-release` labels plus a live
+systemd user manager. Hosted Ubuntu coverage never substitutes for Fedora
+release qualification.
+
+Release artifacts must be built from a clean commit and pass the Fedora
+workflow before publication. Never upload an ignored local `dist/` archive
+whose manifest reports a different source commit or `source_dirty: true`.
+
 ## Commit Rules
 
 Use Conventional Commits. Examples:

@@ -21,15 +21,17 @@ branch is the integration branch for the next release.
 
 ## Current Phase
 
-Active development starts on the `dev` branch. Stages 0-5 are complete for the
-Linux-first V0 release. The release adds
-checksummed native release packages, temporary-prefix installation,
-in-place upgrade acceptance, release-mode Attach/soak benchmarks, and a
-separate Developer ID notarization gate. macOS binary distribution is
-deferred post-V0 under ADR 0020 and limited to explicitly marked local
-self-signed packages under ADR 0019. Fedora Linux x86_64 is the supported V0
-target; the final historical audit disposition and independent manual
-acceptance are complete.
+Stages 0-5 are complete for the Linux-first V0 release. Stage 6 is in progress:
+Linux V0 adoption and stabilization. It adds hosted core CI, a dedicated Fedora
+release gate, a reproducible published binary, pilot feedback triage, and the
+`v0.1.x` patch-release process.
+
+macOS binary distribution is deferred post-V0 under ADR 0020 and limited to
+explicitly marked local self-signed packages under ADR 0019. Fedora Linux
+x86_64 remains the only supported V0 target. New Mesh, sandbox, plugin, and
+remote-scheduling features remain out of scope until a separate accepted plan
+and ADR.
+
 Implementation follows
 [`docs/design-baseline.md`](docs/design-baseline.md).
 

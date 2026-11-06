@@ -85,3 +85,19 @@ release is deferred under ADR 0020. See Experiments 0021-0025 and
 
 Exit: V0 acceptance gates in the current Design Baseline pass without
 unsupported claims.
+
+## Milestone D5: Linux V0 Adoption and Stabilization
+
+Status: In progress. Stage 6 formalizes release distribution, continuous
+integration, feedback triage, and patch releases for the supported Linux V0
+target. It does not expand the product capability boundary.
+
+- Publish clean-source Fedora Linux x86_64 release assets and checksums.
+- Require hosted core CI and a dedicated Fedora release gate.
+- Run a real Linux pilot and classify reported defects by severity.
+- Exercise the `v0.1.x` patch-release path.
+- Keep the support matrix aligned with complete qualification evidence.
+
+Exit: the Stage 6 exit criteria in
+[Development Plan](development-plan.md#stage-6-linux-v0-adoption-and-stabilization)
+pass without broadening unsupported platform or feature claims.

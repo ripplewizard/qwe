@@ -203,6 +203,13 @@ the final human gate. Public macOS distribution is a separate post-V0 strict
 gate: Developer ID signing, notary acceptance, and Gatekeeper assessment must
 pass; a local certificate or ad-hoc signature is not accepted as public trust.
 
+Stage 6 adds two continuous feedback loops. Hosted Linux and macOS jobs repeat
+formatting, Clippy, workspace tests, protocol validation, and release builds on
+every integration change. A dedicated Fedora x86_64 runner separately repeats
+the complete `just release-gate`. The hosted jobs prove portability of the
+source checks; only the Fedora runner can produce supported V0 release
+evidence.
+
 Until Developer ID is available, ADR 0019 permits a dedicated local
 self-signed package tier. It signs all four executables through an isolated
 Keychain, records `local-self-signed` and `public_trust: false`, adds the

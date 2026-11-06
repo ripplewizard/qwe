@@ -265,3 +265,15 @@ committed.
 The installed-systemd probe passes on Fedora Linux x86_64 with the installed
 unit, binary reinstall, supervisor crash-restart, worker/task adoption, and
 graceful stop persistence.
+
+## Stage 6 Adoption and Stabilization
+
+| ID | Case | Expected result |
+|---|---|---|
+| STAGE6-001 | Run hosted core CI | Formatting, Clippy, workspace tests, protocol validation, and release builds pass on Linux and macOS without creating a new platform-support claim |
+| STAGE6-002 | Run the release gate on the dedicated Fedora runner | The complete `just release-gate` passes on Fedora x86_64 with a live systemd user manager and uploads the archive plus SHA-256 |
+| STAGE6-003 | Publish a clean-source release | The release manifest names the tagged source commit with `source_dirty: false`; the archive hash, installation, and service recovery match the published evidence |
+| STAGE6-004 | Close the Linux pilot | Reports are triaged, no P0/P1 defect remains open, and at least one `v0.1.x` patch release path is exercised |
+
+These rows are open until their linked external evidence exists. Documentation
+or workflow definitions alone do not pass STAGE6-001 through STAGE6-004.
