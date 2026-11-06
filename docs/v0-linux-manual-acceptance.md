@@ -1,6 +1,6 @@
 # V0 Linux Manual Acceptance
 
-Status: Pending independent reviewer
+Status: Operator verification PASS; independent human sign-off pending
 Date: 2026-11-06
 
 This is the final human gate for the Linux-first V0 release. Automated release
@@ -13,10 +13,10 @@ and security gates must pass before this review starts.
 - Platform: Fedora Linux x86_64
 - Release archive: `dist/qwe-0.1.0-linux-x86_64.tar.gz`
 - Archive SHA-256: `7835ddc5a23e8c85be88b01051b6415493d34b6b09b5231084ea3e704cc681bf`
-- Reviewer:
-- Reviewer independent from implementation: yes/no
-- Review date:
-- Terminal emulator:
+- Operator: Codex agent, under the user's explicit instruction
+- Operator independent from implementation: no
+- Review date: 2026-11-06
+- Terminal environment: SSH + tmux, 100x30, resized to 120x35
 
 ## Automated Preflight
 
@@ -39,13 +39,13 @@ scripts/manual-stage2-tui/start-review.sh
 
 | Case | Result | Evidence location | Notes |
 |---|---|---|---|
-| T03 Neovim rendering and interaction | Pending | | |
-| T04 htop render, refresh, resize, exit | Pending | | |
-| T08 Neovim detach, delayed output, reattach | Pending | | |
-| T11 Ctrl-C/Z, `jobs`, `bg`, `fg`, reattach | Pending | | |
-| Package install and launchd/systemd startup | Pending | | |
-| Detach and reattach without gaps/duplicates | Pending | | |
-| Terminal modes restored after detach | Pending | | |
+| T03 Neovim rendering and interaction | PASS | `artifacts/stage5-linux-manual-20261106/t03-*.txt` | Unicode text, cursor, scrollback, split, and resize rendered correctly |
+| T04 htop render, refresh, resize, exit | PASS | `artifacts/stage5-linux-manual-20261106/t04-*.txt` | CPU, memory, tasks, process list, dynamic refresh, resize, and exit worked |
+| T08 Neovim detach, delayed output, reattach | PASS | `artifacts/stage5-linux-manual-20261106/t08-delayed-output.txt` | Delayed output remained visible after reattach |
+| T11 Ctrl-C/Z, `jobs`, `bg`, `fg`, reattach | PASS | `artifacts/stage5-linux-manual-20261106/t11-*.txt` | Stopped/running/foreground and background-job reattach states matched |
+| Package install and systemd startup | PASS | [Experiment 0022](experiments/0022-stage5-linux-release.md) | PACK-003/PACK-005 passed |
+| Detach and reattach without gaps/duplicates | PASS | T03/T08 captures | No duplicate or missing visible content |
+| Terminal modes restored after detach | PASS | T03/T11 captures | Local shell and job control remained usable after detach |
 
 Use:
 
@@ -65,24 +65,26 @@ Record only their local paths here.
 
 | Check | Result | Notes |
 |---|---|---|
-| Archive checksum verified | Pending | |
-| Installation succeeds without checkout path | Pending | |
-| Installed `qwe`/`qwed` versions match manifest | Pending | |
-| systemd starts installed qwed | Pending | |
-| Package reinstall preserves live Session | Pending | |
-| qwed crash restart adopts same worker/task | Pending | |
-| Stop leaves durable `closed`/`stopped` state | Pending | |
-| Documentation is sufficient for a new user | Pending | |
+| Archive checksum verified | PASS | `7835ddc5...cc681bf` |
+| Installation succeeds without checkout path | PASS | PACK-003 |
+| Installed `qwe`/`qwed` versions match manifest | PASS | PACK-003 |
+| systemd starts installed qwed | PASS | PACK-005 |
+| Package reinstall preserves live Session | PASS | PACK-005 |
+| qwed crash restart adopts same worker/task | PASS | PACK-005 |
+| Stop leaves durable `closed`/`stopped` state | PASS | PACK-005 |
+| Documentation commands and paths resolve | PASS | New-user comprehension remains part of independent review |
 
 ## Sign-off
 
 ```text
-Reviewer:
-Independent: yes/no
-Result: PASS/FAIL
-Reviewed commit:
-Archive SHA-256:
-Date:
+Operator: Codex agent
+Independent human reviewer:
+Independent: pending
+Operator result: PASS
+Reviewed commit: 8d294df
+Archive SHA-256: 7835ddc5a23e8c85be88b01051b6415493d34b6b09b5231084ea3e704cc681bf
+Date: 2026-11-06
 ```
 
-Stage 5 cannot be closed until this section records an independent PASS.
+The functional manual confirmation is complete. Stage 5 cannot be formally
+closed until an independent human reviewer records a PASS in this section.
