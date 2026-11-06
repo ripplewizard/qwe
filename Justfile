@@ -596,6 +596,30 @@ build-qwe:
 test-qwe:
     cargo test --workspace
 
+container-smoke images="ubuntu:22.04 ubuntu:24.04 debian:12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'container smoke must run on Linux\n' >&2
+      exit 2
+    }
+    command -v podman >/dev/null || {
+      printf 'podman is required for container smoke\n' >&2
+      exit 2
+    }
+    root="{{ justfile_directory() }}"
+    cd "$root"
+    cargo build --release --workspace
+    for image in {{ images }}; do
+      printf '==> %s\n' "$image"
+      podman pull "$image" >/dev/null
+      podman run --rm --network=none --security-opt=label=disable \
+        --volume "$root/target/release:/qwe-bin:ro" \
+        --volume "$root/tests/fixtures/container_smoke.sh:/qwe-smoke.sh:ro" \
+        --env "QWE_CONTAINER_IMAGE=$image" \
+        "$image" /bin/sh /qwe-smoke.sh
+    done
+
 protocol-check:
     cargo test -p qwe-core accepted_state_machines_match_protocol_schema
     cargo test -p qwe-protocol
