@@ -2,6 +2,7 @@
 
 Status: Passed on macOS ARM64 and Fedora Linux x86_64
 Date: 2026-11-06
+Commit: `83a74e1`
 Environment: ulysses macOS 26.5.1 arm64; istoria Fedora Linux 35 x86_64
 
 ## Scope
@@ -48,6 +49,9 @@ Both hosts use a narrowly scoped sudoers rule for
 SQLite, service-manager, Keychain, and second-UID processes. Linux reports hard
 cgroup v2 memory, swap, task-count, and CPU-bandwidth controls. macOS reports
 `monitored` libproc enforcement with bounded polling overshoot.
+
+The cumulative `just stages-1-3-check` also passes on both platforms at the
+same commit.
 
 ## Boundary
 
