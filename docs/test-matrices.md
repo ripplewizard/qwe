@@ -282,3 +282,14 @@ recorded in
 [Experiment 0026](experiments/0026-stage6-adoption-baseline.md). STAGE6-002
 through STAGE6-004 close only when their linked runner, publication, and pilot
 evidence exists.
+
+## Linux Container Compatibility
+
+| ID | Case | Expected result |
+|---|---|---|
+| CONTAINER-001 | Run QWE Session operations in glibc-based Linux containers | Session creation, input, shell function output, snapshot, Task history, supervisor restart adoption, and clean server teardown pass |
+
+CONTAINER-001 passes for Ubuntu 22.04, Ubuntu 24.04, and Debian 12 in
+[Experiment 0027](experiments/0027-container-compatibility.md). This is
+compatibility smoke only and does not promote those distributions to supported
+release targets.

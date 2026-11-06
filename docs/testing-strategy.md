@@ -210,6 +210,10 @@ the complete `just release-gate`. The hosted jobs prove portability of the
 source checks; only the Fedora runner can produce supported V0 release
 evidence.
 
+`just container-smoke` runs the same real Session/input/snapshot/restart smoke
+inside rootless Podman images. It is a compatibility probe, not a substitute
+for installed-systemd, cgroup, migration, or manual release acceptance.
+
 Until Developer ID is available, ADR 0019 permits a dedicated local
 self-signed package tier. It signs all four executables through an isolated
 Keychain, records `local-self-signed` and `public_trust: false`, adds the

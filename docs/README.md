@@ -104,6 +104,8 @@
   V0 closure, independent acceptance, and final release boundary.
 - [Experiment 0026](experiments/0026-stage6-adoption-baseline.md): Stage 6
   distribution, CI, and pilot entry state.
+- [Experiment 0027](experiments/0027-container-compatibility.md): rootless
+  Podman smoke on Ubuntu 22.04/24.04 and Debian 12.
 
 ## Reading Order
 

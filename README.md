@@ -74,6 +74,7 @@ just t12-host-smoke
 just resilience-smoke
 just stage4-check
 just release-gate
+just container-smoke
 ```
 
 Protocol schema validation uses
