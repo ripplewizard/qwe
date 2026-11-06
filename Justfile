@@ -1064,9 +1064,11 @@ tui-attach-smoke:
     qwed_pid=""
     tmux_nvim="qwe-tui-nvim-$$"
     tmux_htop="qwe-tui-htop-$$"
+    tmux_jobs="qwe-tui-jobs-$$"
     cleanup_tui() {
       tmux kill-session -t "$tmux_nvim" 2>/dev/null || true
       tmux kill-session -t "$tmux_htop" 2>/dev/null || true
+      tmux kill-session -t "$tmux_jobs" 2>/dev/null || true
       if [ -n "$qwed_pid" ]; then
         kill -TERM "$qwed_pid" 2>/dev/null || true
         wait "$qwed_pid" 2>/dev/null || true
@@ -1121,7 +1123,55 @@ tui-attach-smoke:
     sleep 0.6
     target/debug/qwe --socket "$client_socket" session status tui-htop |
       jq -e '.running == false' >/dev/null
-    printf 'TUI attach smoke PASS (nvim, htop)\n'
+
+    target/debug/qwe --socket "$client_socket" session create tui-jobs bash \
+      >/dev/null
+    tmux new-session -d -s "$tmux_jobs" -x 100 -y 30 \
+      "target/debug/qwe --socket '$client_socket' session attach tui-jobs"
+    sleep 0.8
+    tmux send-keys -t "$tmux_jobs" 'sleep 300' Enter
+    sleep 0.3
+    tmux send-keys -t "$tmux_jobs" C-z
+    sleep 0.4
+    tmux send-keys -t "$tmux_jobs" 'jobs' Enter
+    sleep 0.2
+    tmux capture-pane -p -t "$tmux_jobs" >"$run_root/jobs-stopped.screen"
+    grep -Eq 'Stopped|suspended' "$run_root/jobs-stopped.screen"
+    tmux send-keys -t "$tmux_jobs" 'bg' Enter
+    sleep 0.3
+    tmux send-keys -t "$tmux_jobs" 'jobs' Enter
+    sleep 0.2
+    tmux capture-pane -p -t "$tmux_jobs" >"$run_root/jobs-running.screen"
+    grep -Eq 'Running' "$run_root/jobs-running.screen"
+    tmux send-keys -t "$tmux_jobs" 'fg' Enter
+    sleep 0.3
+    tmux send-keys -t "$tmux_jobs" C-c
+    sleep 0.3
+    tmux send-keys -t "$tmux_jobs" 'echo JOB_CONTROL_DONE' Enter
+    sleep 0.2
+    tmux capture-pane -p -t "$tmux_jobs" >"$run_root/jobs-fg.screen"
+    grep -Fq 'JOB_CONTROL_DONE' "$run_root/jobs-fg.screen"
+    tmux send-keys -t "$tmux_jobs" 'sleep 300 &' Enter
+    sleep 0.3
+    tmux send-keys -t "$tmux_jobs" C-]
+    sleep 0.5
+    tmux new-session -d -s "$tmux_jobs" -x 100 -y 30 \
+      "target/debug/qwe --socket '$client_socket' session attach tui-jobs"
+    sleep 0.8
+    tmux send-keys -t "$tmux_jobs" 'jobs' Enter
+    sleep 0.2
+    tmux capture-pane -p -t "$tmux_jobs" >"$run_root/jobs-reattached.screen"
+    grep -Eq 'Running' "$run_root/jobs-reattached.screen"
+    tmux send-keys -t "$tmux_jobs" 'kill %1; echo REATTACH_JOB_CONTROL_DONE' Enter
+    sleep 0.2
+    tmux capture-pane -p -t "$tmux_jobs" >"$run_root/jobs-cleanup.screen"
+    grep -Fq 'REATTACH_JOB_CONTROL_DONE' "$run_root/jobs-cleanup.screen"
+    tmux send-keys -t "$tmux_jobs" 'exit' Enter
+    sleep 0.5
+    target/debug/qwe --socket "$client_socket" session status tui-jobs |
+      jq -e '.running == false' >/dev/null
+
+    printf 'TUI attach smoke PASS (nvim, htop, job-control)\n'
 
 stage1-regression-smoke:
     #!/usr/bin/env bash
