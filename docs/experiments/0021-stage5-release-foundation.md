@@ -2,7 +2,7 @@
 
 Status: Foundation passing on macOS ARM64; Linux and public distribution pending
 Date: 2026-11-06
-Base commit: `a8dea54` with Stage 5 worktree changes
+Commit: `a0dfeb0`
 Environment: macOS 26.5.1 arm64, release profile
 
 ## Scope
@@ -42,7 +42,7 @@ plus the sustained soak.
 Observed:
 
 ```json
-{"case":"PERF-001","build_profile":"release","sessions":8,"attach_requests":568,"soak_seconds":15.0,"p50_ms":18.412,"p95_ms":23.893,"p99_ms":24.7,"max_ms":26.002,"max_rss_bytes":172834816,"max_p95_ms":1000,"max_p99_ms":2000,"max_rss_limit_bytes":536870912}
+{"case":"PERF-001","build_profile":"release","sessions":8,"attach_requests":560,"soak_seconds":15.0,"p50_ms":18.818,"p95_ms":23.869,"p99_ms":24.451,"max_ms":34.479,"max_rss_bytes":172638208,"max_p95_ms":1000,"max_p99_ms":2000,"max_rss_limit_bytes":536870912}
 ```
 
 These thresholds are release-gate regression bounds for the tested machine,
@@ -50,10 +50,9 @@ not cross-platform performance claims.
 
 ## Gate Result
 
-`just release-gate` passes on macOS ARM64 with the package, archive extraction,
-isolated installation, reinstall, worker-adoption, schema-migration, and
-release-mode benchmark probes above. The source was dirty because this
-experiment records the worktree before its Stage 5 commit.
+`just release-gate` passes from clean commit `a0dfeb0` on macOS ARM64 with the
+package, archive extraction, isolated installation, reinstall,
+worker-adoption, schema-migration, and release-mode benchmark probes above.
 
 ## Boundary
 
