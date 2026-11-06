@@ -3,7 +3,7 @@
 Status: Foundation passing on macOS ARM64 and Fedora Linux x86_64; public
 distribution and manual acceptance pending
 Date: 2026-11-06
-Commits: macOS `a0dfeb0`; Fedora `c59048e` with only an untracked `.vscode/`
+Commits: macOS `ec6764c`; Fedora `c59048e` with only an untracked `.vscode/`
 Environment: macOS 26.5.1 arm64; Fedora Linux 35 x86_64; release profile
 
 ## Scope
@@ -62,7 +62,7 @@ plus the sustained soak.
 Observed:
 
 ```json
-{"case":"PERF-001","build_profile":"release","sessions":8,"attach_requests":600,"soak_seconds":15.0,"p50_ms":17.757,"p95_ms":20.154,"p99_ms":20.453,"max_ms":22.733,"max_rss_bytes":171982848,"max_p95_ms":1000,"max_p99_ms":2000,"max_rss_limit_bytes":536870912}
+{"case":"PERF-001","build_profile":"release","sessions":8,"attach_requests":600,"soak_seconds":15.0,"p50_ms":17.431,"p95_ms":20.197,"p99_ms":20.866,"max_ms":22.166,"max_rss_bytes":171343872,"max_p95_ms":1000,"max_p99_ms":2000,"max_rss_limit_bytes":536870912}
 {"case":"PERF-001","build_profile":"release","sessions":8,"attach_requests":536,"soak_seconds":15.0,"p50_ms":9.268,"p95_ms":26.108,"p99_ms":26.403,"max_ms":26.627,"max_rss_bytes":153726976,"max_p95_ms":1000,"max_p99_ms":2000,"max_rss_limit_bytes":536870912}
 ```
 
