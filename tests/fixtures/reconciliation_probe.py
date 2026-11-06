@@ -113,11 +113,21 @@ def start_worker(binary, runtime_dir, session_id, socket_path=None):
     return process, socket_path
 
 
-def create_session(path, session_id, program="sh", require_running=True):
+def create_session(
+    path,
+    session_id,
+    program="sh",
+    arguments=None,
+    require_running=True,
+):
     created = send_control(
         path,
         "SESSION_CREATE",
-        {"session_id": session_id, "program": program, "args": []},
+        {
+            "session_id": session_id,
+            "program": program,
+            "args": arguments or [],
+        },
         key=f"create-{session_id}",
     )
     if require_running:
@@ -316,7 +326,7 @@ def main():
         exited_created = create_session(
             args.socket,
             exited_id,
-            program="true",
+            arguments=["-c", "sleep 0.1; exit 0"],
             require_running=False,
         )
         exited_worker_pid = exited_created.get("worker_pid")
