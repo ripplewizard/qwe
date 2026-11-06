@@ -1,0 +1,113 @@
+name: Release Gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-gate
+  cancel-in-progress: false
+
+jobs:
+  fedora:
+    name: Fedora x86_64 release gate
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - fedora
+      - qwe-release
+    timeout-minutes: 90
+    env:
+      PATH: /home/.local/bin:/usr/local/rust/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Verify dedicated runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = fedora
+          command -v just
+          command -v systemctl
+          systemctl --user show-environment >/dev/null
+          printf 'Fedora %s release runner ready\n' "$VERSION_ID"
+
+      - name: Prepare protocol validation environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/qwe-ci-venv"
+          "$RUNNER_TEMP/qwe-ci-venv/bin/python" -m pip install \
+            -r scripts/requirements-protocol.txt
+          printf '%s\n' "$RUNNER_TEMP/qwe-ci-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Require a clean source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short
+            printf 'release gate requires a clean checkout\n' >&2
+            exit 1
+          fi
+
+      - name: Run complete release gate
+        run: just release-gate
+
+      - name: Verify manifest and record archive checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          archive="dist/qwe-${version}-linux-x86_64.tar.gz"
+          test -f "$archive"
+          package_root="$(basename "${archive%.tar.gz}")"
+          manifest="$RUNNER_TEMP/qwe-release.json"
+          tar -xOzf "$archive" "$package_root/release.json" > "$manifest"
+          python3 - "$manifest" <<'PY'
+          import json
+          import os
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              manifest = json.load(stream)
+          commit = os.environ["GITHUB_SHA"]
+          assert manifest["schema"] == "qwe-release/v1", manifest
+          assert manifest["target"] == "linux-x86_64", manifest
+          assert manifest["source_dirty"] is False, manifest
+          assert commit.startswith(manifest["source_commit"]), (
+              commit,
+              manifest,
+          )
+          PY
+          sha256sum "$archive" > "$archive.sha256"
+          cat "$archive.sha256"
+
+      - name: Preserve release candidate on runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_dir="$HOME/qwe-release-candidates/$GITHUB_SHA"
+          mkdir -p "$candidate_dir"
+          cp dist/qwe-*-linux-x86_64.tar.gz "$candidate_dir/"
+          cp dist/qwe-*-linux-x86_64.tar.gz.sha256 "$candidate_dir/"
+
+      - name: Upload release-gate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwe-linux-x86_64-release-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/qwe-*-linux-x86_64.tar.gz
+            dist/qwe-*-linux-x86_64.tar.gz.sha256
+
