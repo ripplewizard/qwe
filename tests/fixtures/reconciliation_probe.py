@@ -319,7 +319,8 @@ def main():
             program="true",
             require_running=False,
         )
-        exited_worker_pid = exited_created["worker_pid"]
+        exited_worker_pid = exited_created.get("worker_pid")
+        assert exited_worker_pid is not None, exited_created
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             exited_report = status(args.socket)
