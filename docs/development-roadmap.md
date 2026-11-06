@@ -51,7 +51,8 @@ Linux hard cgroup scopes, macOS monitoring, dynamic policy updates, binary
 replacement, local signed Keychain ACL behavior, and real second-UID rejection
 pass on both platforms. Public Developer ID trust/distribution, packaged
 installation, upgrade migration, and release-mode soak measurements move to
-Stage 5. See ADRs 0017-0018, Experiment 0020, and `just stage4-check`.
+Stage 5; public macOS distribution is subsequently deferred post-V0 by ADR
+0020. See ADRs 0017-0020, Experiment 0020, and `just stage4-check`.
 
 - Add systemd user-service and launchd integration.
 - Verify worker orphan cleanup and upgrade behavior.
@@ -73,9 +74,10 @@ worker adoption, release-mode eight-Session Attach/soak benchmarks, and a
 strict macOS Developer ID/notarization gate. Release gates pass on macOS and
 Fedora. macOS temporarily uses a local self-signed `-local` package under ADR
 0019 and is paused while Linux release acceptance proceeds. Fedora now passes
-installed-systemd crash-restart and TUI smoke; full manual release acceptance,
-public notarization, final audit disposition, and V0 scope freeze remain open.
-See Experiment 0021 and `docs/release.md`.
+installed-systemd crash-restart, TUI, and job-control smoke. Historical
+evidence disposition is complete. Independent Linux manual acceptance, merge,
+tag, and V0 scope freeze remain. Public macOS release is deferred under ADR
+0020. See Experiments 0021-0023 and `docs/release.md`.
 
 - Build the first usable CLI/TUI vertical slice.
 - Run release-mode latency, memory, and soak benchmarks.

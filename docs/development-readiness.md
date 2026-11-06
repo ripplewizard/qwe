@@ -124,10 +124,12 @@ These are implementation work, not reasons to delay development:
 
 ## Non-Blocking Audit Items
 
-- Historical POC T03/T04/T08/T11 evidence disposition remains open.
-  Experiment 0010 signs the production Rust Stage 2 path, not the old
-  cross-language POC results.
-- T12 remains a negative historical POC result.
+- Historical POC T03/T04/T08/T11 rows remain blocked and archived; Experiment
+  0010 signs the separate production Rust path.
+- Historical T12 remains a negative POC result; production recovery evidence
+  does not rewrite it.
+- The final disposition is recorded in
+  [Experiment 0023](experiments/0023-v0-evidence-audit.md).
 - Raw terminal captures and SQLite evidence stay local because repository
   policy prohibits committing them.
 
@@ -144,8 +146,8 @@ updates, local signed Keychain ACL behavior, and real second-UID rejection.
 Structured closure evidence is in
 [Experiment 0020](experiments/0020-stage-4-closure.md).
 
-Public Developer ID trust, notarization, packaged installation, upgrade
-migration, and release-mode soak measurements belong to Stage 5. Packaged
-installation, reinstall, v9-to-v10 migration, and release-mode benchmarks now
-pass on both supported targets; public Developer ID trust and notarization
-remain unpassed because no public identity is available.
+Linux V0 release packaging, installation, reinstall, v9-to-v10 migration,
+systemd crash recovery, release-mode performance, TUI/job-control smoke, and
+historical evidence disposition are complete. The remaining Stage 5 gate is
+independent Linux manual acceptance, followed by merge and tag. Public macOS
+distribution is deferred post-V0 under ADR 0020.

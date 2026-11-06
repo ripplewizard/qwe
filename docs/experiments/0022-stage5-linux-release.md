@@ -40,11 +40,15 @@ Linux release performance:
 {"case":"PERF-001","build_profile":"release","sessions":8,"attach_requests":568,"soak_seconds":15.0,"p50_ms":8.375,"p95_ms":26.058,"p99_ms":26.385,"max_ms":26.492,"max_rss_bytes":153907200,"max_p95_ms":1000,"max_p99_ms":2000,"max_rss_limit_bytes":536870912}
 ```
 
-Neovim and htop detach/reattach smoke passed:
+Neovim, htop, and job-control smoke passed:
 
 ```text
-TUI attach smoke PASS (nvim, htop)
+TUI attach smoke PASS (nvim, htop, job-control)
 ```
+
+The job-control case covered Ctrl-Z, `jobs`, `bg`, `fg`, Ctrl-C, a background
+job surviving detach, and the same background job remaining visible after
+reattach.
 
 The cumulative Linux security gate also passed:
 

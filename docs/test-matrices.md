@@ -1,7 +1,7 @@
 # V0 Contract Test Matrices
 
-Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64; Stage 5
-foundation passing on both, with macOS temporarily local-self-signed
+Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64; Linux V0
+automated release gates pass, with independent manual acceptance pending
 Date: 2026-11-06
 
 These IDs are stable contract identifiers. An implementation test may be

@@ -30,6 +30,8 @@
   tiers and dynamic policy updates.
 - [ADR 0019](adr/0019-temporary-macos-local-signing.md): temporary local
   self-signed macOS releases until Developer ID is available.
+- [ADR 0020](adr/0020-linux-first-v0-release.md): Linux-first V0 release with
+  macOS public distribution deferred to a later milestone.
 
 ## Development
 
@@ -42,6 +44,8 @@
   object-model, and idempotency case IDs.
 - [Release](release.md): release gates, supported platforms, packaging, and
   public-distribution boundaries.
+- [V0 Linux Manual Acceptance](v0-linux-manual-acceptance.md): final
+  independent reviewer checklist and sign-off block.
 - [Workflow](development-workflow.md): branch, commit, and evidence rules.
 - [Stage 2 Manual TUI Review](../scripts/manual-stage2-tui/README.md):
   reproducible Fedora/macOS scripts and checklists for T03/T04/T08/T11.
@@ -88,6 +92,8 @@
 - [Experiment 0022](experiments/0022-stage5-linux-release.md): installed
   systemd crash-restart, worker adoption, release benchmark, and TUI smoke for
   the Linux release candidate.
+- [Experiment 0023](experiments/0023-v0-evidence-audit.md): final disposition
+  for the historical POC T03/T04/T08/T11/T12 evidence.
 
 ## Reading Order
 

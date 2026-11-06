@@ -281,15 +281,15 @@ evidence and public Developer ID trust remain pending.
 ### Stage 5: Release Candidate
 
 Target: 2026-12-21 to 2026-12-24
-Status: In progress on 2026-11-06; release package, installer, upgrade,
-release-mode benchmark, and strict signing/notarization gate implemented on
-both supported targets.
+Status: In progress on 2026-11-06; Linux-first release packaging, installed
+systemd recovery, release benchmark, TUI/job-control smoke, and evidence audit
+are complete. Independent Linux manual acceptance and release tagging remain.
 
 - Run release-mode Attach latency, memory, and soak benchmarks.
 - Run full manual Neovim, htop, detach/attach, and job-control acceptance.
 - Verify installation, upgrade, service restart, and documentation.
-- Sign and notarize the macOS release artifact with the selected Developer ID
-  identity and verify public-distribution trust.
+- Defer public macOS signing/notarization to the post-V0 milestone defined by
+  ADR 0020.
 - Produce final POC/manual audit disposition without rewriting failed evidence.
 - Freeze V0 scope and publish an explicit supported-platform matrix.
 
@@ -309,7 +309,8 @@ Current implementation:
   real Attach channel in release mode, samples aggregate RSS, and runs a
   configurable soak period.
 - `packaging/notarize_macos.sh` enforces Developer ID signatures, notary
-  acceptance, and Gatekeeper assessment without falling back to ad-hoc trust.
+  acceptance, and Gatekeeper assessment without falling back to ad-hoc trust;
+  this gate is retained for the post-V0 macOS milestone.
 - ADR 0019 temporarily downgrades macOS binary distribution to a machine-local
   self-signed package. Local artifacts carry `-local`, report
   `public_trust: false`, and are rejected by the public notarization gate.
@@ -318,12 +319,11 @@ Current implementation:
 - On Linux, `just release-gate` also runs PACK-005 against the installed
   systemd unit, verifies binary replacement plus supervisor crash-restart,
   worker/task adoption, and cleanup, then runs Neovim/htop TUI smoke.
-- macOS ARM64 and Fedora Linux x86_64 pass the package, reinstall, adoption,
-  migration, and benchmark probes. Fedora also passes the installed-systemd
-  crash-restart probe and TUI smoke. macOS remains frozen at the local
-  self-signed tier while Linux acceptance proceeds. Independent manual release
-  acceptance, public Developer ID signing/notarization, final POC audit
-  disposition, and final V0 freeze remain open.
+- Fedora Linux x86_64 passes package, reinstall, installed-systemd
+  crash-restart, migration, benchmark, Neovim/htop, and job-control probes.
+  The final historical evidence disposition is complete. Independent Linux
+  manual acceptance, merge, tag, and V0 scope freeze remain open. macOS remains
+  frozen at the experimental local self-signed tier under ADR 0019/0020.
 
 ## Test and Delivery Gates
 

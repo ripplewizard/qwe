@@ -112,3 +112,5 @@ events.
   platform matrix; public trust is not claimed before those gates pass.
   ADR 0019 temporarily marks macOS binary distribution as
   `local-self-signed`/non-public until a Developer ID identity is available.
+  ADR 0020 scopes V0 to Linux-first release and defers public macOS to a
+  separate post-V0 milestone.

@@ -194,11 +194,14 @@ The release probes exercise:
 - SQLite v9-to-v10 startup migration without resetting state.
 - Eight independent Sessions, real Attach handshakes and snapshots, aggregate
   RSS sampling, and a configurable sustained soak.
+- On Linux, the installed systemd unit, binary reinstall, supervisor
+  crash-restart, worker/task adoption, graceful persistence, Neovim/htop, and
+  Ctrl-Z/jobs/bg/fg job control.
 
-Public macOS distribution is a separate strict gate. Developer ID signing,
-notary acceptance, and Gatekeeper assessment must pass; a local certificate or
-ad-hoc signature is not accepted as public trust. `just release-gate` does not
-claim public distribution success on a host without the selected identity.
+Linux-first V0 is defined by ADR 0020. Independent Linux manual acceptance is
+the final human gate. Public macOS distribution is a separate post-V0 strict
+gate: Developer ID signing, notary acceptance, and Gatekeeper assessment must
+pass; a local certificate or ad-hoc signature is not accepted as public trust.
 
 Until Developer ID is available, ADR 0019 permits a dedicated local
 self-signed package tier. It signs all four executables through an isolated

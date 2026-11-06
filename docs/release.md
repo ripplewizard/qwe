@@ -9,8 +9,8 @@ V0 qualification currently targets these native development platforms:
 
 | Target | Status | Service manager | Resource enforcement | Credential provider |
 |---|---|---|---|---|
-| macOS ARM64 | Local self-signed package only; public binary distribution unavailable pending Developer ID | launchd user agent | libproc monitoring, explicitly monitored | macOS Keychain |
-| Fedora Linux x86_64 | Stage 4 qualified; Stage 5 release gates passing; manual gate pending | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
+| macOS ARM64 | Experimental local self-signed only; public release deferred post-V0 | launchd user agent | libproc monitoring, explicitly monitored | macOS Keychain |
+| Fedora Linux x86_64 | V0 release candidate; supported after independent manual acceptance | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
 | macOS x86_64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
 | Linux ARM64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
 | Other operating systems | Unsupported in V0 | unsupported claim | unsupported claim | unsupported claim |
@@ -111,7 +111,7 @@ just macos-local-identity-remove
 This path is for the local machine and controlled testing. It is not a public
 distribution tier and does not replace the public gate below.
 
-## Public macOS Distribution
+## Post-V0 Public macOS Distribution
 
 An ad-hoc or local certificate is not a public release identity. Public macOS
 distribution requires:
@@ -130,17 +130,19 @@ No public-trust claim is valid until the selected Developer ID, notary
 submission, and Gatekeeper checks pass. The current environment has no public
 Developer ID identity available.
 
-When the account is available, [ADR 0019](adr/0019-temporary-macos-local-signing.md)
-defines the restoration sequence. The public gate rejects local unsigned or
+When the account is available,
+[ADR 0019](adr/0019-temporary-macos-local-signing.md) defines the restoration
+sequence, and [ADR 0020](adr/0020-linux-first-v0-release.md) places the work in
+a separate post-V0 milestone. The public gate rejects local unsigned or
 self-signed profiles before contacting Apple.
 
 ## Stage 5 Remaining Gates
 
-- Run full manual Neovim, htop, detach/attach, and job-control release
-  acceptance on both supported targets.
-- Sign and notarize the selected macOS release artifact with a public
-  Developer ID and verify public-distribution trust.
-- Complete the final POC/manual audit disposition without rewriting failed
-  evidence.
-- Freeze V0 scope and change the supported-platform matrix from in progress to
-  qualified only after every required gate passes.
+- Complete the independent Linux manual acceptance in
+  [V0 Linux Manual Acceptance](v0-linux-manual-acceptance.md).
+- Merge the accepted Linux release branch and tag the frozen V0 revision.
+- Publish Linux V0 as supported and keep macOS explicitly local/experimental.
+
+The POC/manual audit disposition is complete in
+[Experiment 0023](experiments/0023-v0-evidence-audit.md). Public macOS signing
+and notarization are post-V0 work under ADR 0020.
