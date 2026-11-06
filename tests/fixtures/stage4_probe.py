@@ -257,28 +257,26 @@ def probe_resources(path):
             "unsupported_capability",
         )
     else:
-        memory_policy = {"memory_max_bytes": 67108864}
-        if capabilities["memory_max"] == "hard":
-            memory_policy["memory_swap_max_bytes"] = 0
+        process_script = (
+            "import os,time; ok=0; err=0\n"
+            "for _ in range(10):\n"
+            " try:\n"
+            "  pid=os.fork()\n"
+            "  if pid==0: time.sleep(5); os._exit(0)\n"
+            "  ok+=1\n"
+            " except OSError: err+=1\n"
+            " time.sleep(0.05)\n"
+            "print(f'ok={ok} err={err}',flush=True)\n"
+        )
+        if capabilities["tasks_max"] == "hard_tasks":
+            process_script += "raise SystemExit(7 if err else 0)"
+        else:
+            process_script += "time.sleep(10)"
         create_session(
             path,
             "process-limit",
             program="python3",
-            arguments=[
-                "-c",
-                (
-                    "import os,time; ok=0; err=0\n"
-                    "for _ in range(10):\n"
-                    " try:\n"
-                    "  pid=os.fork()\n"
-                    "  if pid==0: time.sleep(5); os._exit(0)\n"
-                    "  ok+=1\n"
-                    " except OSError: err+=1\n"
-                    " time.sleep(0.05)\n"
-                    "print(f'ok={ok} err={err}',flush=True)\n"
-                    "time.sleep(10)"
-                ),
-            ],
+            arguments=["-c", process_script],
             resource_policy={"tasks_max": 5},
             require_running=False,
         )
@@ -301,6 +299,9 @@ def probe_resources(path):
             "unsupported_capability",
         )
     else:
+        memory_policy = {"memory_max_bytes": 67108864}
+        if capabilities["memory_max"] == "hard":
+            memory_policy["memory_swap_max_bytes"] = 0
         create_session(
             path,
             "memory-limit",
@@ -434,6 +435,120 @@ def probe_security(path):
     assert request(path, "PING", {})["daemon"] == "ok"
 
 
+def probe_dynamic_stress(path):
+    capabilities = request(path, "CONTROL_STATUS", {})["capabilities"]["resources"]
+    initial_policy = {"memory_max_bytes": 268435456}
+    if capabilities["memory_high"] == "hard":
+        initial_policy["memory_high_bytes"] = 134217728
+    if capabilities["memory_max"] == "hard":
+        initial_policy["memory_swap_max_bytes"] = 0
+    memory = create_session(
+        path,
+        "dynamic-memory-stress",
+        program="python3",
+        arguments=[
+            "-c",
+            (
+                "import time\n"
+                "b=bytearray(128*1024*1024)\n"
+                "for i in range(0,len(b),4096): b[i]=1\n"
+                "print('MEMORY_READY',flush=True)\n"
+                "time.sleep(30)"
+            ),
+        ],
+        resource_policy=initial_policy,
+    )
+    generation = claim(path, "dynamic-memory-stress")
+    time.sleep(0.4)
+    before = request(
+        path, "SESSION_STATUS", {"session_id": "dynamic-memory-stress"}
+    )
+    assert before["running"] is True, before
+    assert before["resource_metrics"]["memory_current_bytes"] > 67108864, before
+    memory_update = request(
+        path,
+        "SESSION_RESOURCE_UPDATE",
+        {
+            "session_id": "dynamic-memory-stress",
+            "owner": "stage4-owner",
+            "generation": generation,
+            "resource_policy": {"memory_max_bytes": 67108864},
+        },
+    )
+    assert memory_update["resource_policy"]["memory_max_bytes"] == 67108864, (
+        memory_update
+    )
+    updated_high = memory_update["resource_policy"]["memory_high_bytes"]
+    assert updated_high is None or updated_high <= 67108864, memory_update
+    memory_status = wait_session_exit(path, "dynamic-memory-stress")
+    assert memory_status["resource_metrics"]["last_violation"] == "memory_max", (
+        memory_status
+    )
+    assert_process_gone(memory["pid"])
+
+    tasks = create_session(
+        path,
+        "dynamic-tasks-stress",
+        program="python3",
+        arguments=[
+            "-c",
+            (
+                "import os,time\n"
+                "children=[]\n"
+                "for _ in range(4):\n"
+                " pid=os.fork()\n"
+                " if pid==0: time.sleep(30); os._exit(0)\n"
+                " children.append(pid)\n"
+                "print('TASKS_READY',flush=True)\n"
+                "while True:\n"
+                " time.sleep(0.2)\n"
+                " try:\n"
+                "  pid=os.fork()\n"
+                "  if pid==0: os._exit(0)\n"
+                "  os.waitpid(pid,0)\n"
+                " except OSError:\n"
+                "  print('TASK_FORK_DENIED',flush=True)\n"
+                "  break\n"
+                "time.sleep(10)"
+            ),
+        ],
+        resource_policy={"tasks_max": 20},
+    )
+    generation = claim(path, "dynamic-tasks-stress")
+    wait_session_snapshot(path, "dynamic-tasks-stress", "TASKS_READY")
+    request(
+        path,
+        "SESSION_RESOURCE_UPDATE",
+        {
+            "session_id": "dynamic-tasks-stress",
+            "owner": "stage4-owner",
+            "generation": generation,
+            "resource_policy": {"tasks_max": 3},
+        },
+    )
+    tasks_status = request(
+        path, "SESSION_STATUS", {"session_id": "dynamic-tasks-stress"}
+    )
+    if capabilities["tasks_max"] == "hard_tasks":
+        wait_session_snapshot(path, "dynamic-tasks-stress", "TASK_FORK_DENIED")
+        assert tasks_status["running"] is True, tasks_status
+    else:
+        tasks_status = wait_session_exit(path, "dynamic-tasks-stress")
+        assert tasks_status["resource_metrics"]["last_violation"] == "tasks_max", (
+            tasks_status
+        )
+    request(
+        path,
+        "SESSION_KILL",
+        {
+            "session_id": "dynamic-tasks-stress",
+            "owner": "stage4-owner",
+            "generation": generation,
+        },
+    )
+    assert_process_gone(tasks["pid"])
+
+
 def probe_teardown(path):
     single = create_session(
         path, "kill-session", arguments=["-c", "sleep 30"]
@@ -503,6 +618,7 @@ def main():
             credential = probe_credentials(args.socket, qwed, credential_dir)
             worker_pids.extend([credential["worker_pid"], credential["pid"]])
             probe_resources(args.socket)
+            probe_dynamic_stress(args.socket)
             probe_security(args.socket)
             worker_pids.extend(item["pid"] for item in probe_teardown(args.socket))
             finished_qwed = qwed
@@ -524,7 +640,7 @@ def main():
             print(
                 json.dumps(
                     {
-                        "case": "CRED-001/RES-001/RES-003/RES-004/RES-005/RES-006/SEC-001/KILL-001",
+                        "case": "CRED-001/RES-001/RES-003/RES-004/RES-005/RES-006/RES-007/SEC-001/KILL-001",
                         "credential_descriptor": "pass",
                         "credential_redaction": "pass",
                         "resource_capability": "pass",

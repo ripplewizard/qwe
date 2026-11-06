@@ -507,9 +507,7 @@ mod tests {
             );
             assert!(active.authorize(operation, active_owner, NOW).is_ok());
             assert_eq!(
-                grace
-                    .authorize(operation, no_authority, NOW)
-                    .unwrap_err(),
+                grace.authorize(operation, no_authority, NOW).unwrap_err(),
                 AuthorityError::NotAttached
             );
             assert!(held.authorize(operation, held_owner, NOW).is_ok());

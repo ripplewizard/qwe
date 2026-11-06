@@ -49,8 +49,9 @@ Task and Lease history.
 Status: In progress. The runtime capability slice and service assets are
 implemented; real launchd/systemd crash-restart and stop lifecycle pass.
 Linux hard cgroup scopes, macOS monitoring, and dynamic policy updates pass.
-Binary-replacement upgrade, installed cross-UID acceptance, and signed macOS
-Keychain acceptance remain open. See ADRs 0017-0018 and `just stage4-check`.
+Binary replacement and local signed Keychain ACL behavior pass. Installed
+cross-UID acceptance remains open. Public Developer ID trust/distribution moves
+to release packaging. See ADRs 0017-0018 and `just stage4-check`.
 
 - Add systemd user-service and launchd integration.
 - Verify worker orphan cleanup and upgrade behavior.

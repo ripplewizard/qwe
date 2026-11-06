@@ -73,7 +73,6 @@ No secret bytes appeared in test evidence.
 
 ## Open Acceptance
 
-- Verify replacement of the installed qwed binary across a managed restart.
 - Launch a real cross-UID client in the installed socket layout.
-- Validate a signed macOS release build against Keychain ACL and locked-keychain
-  behavior.
+- Validate public Developer ID trust and signed distribution. Local signed
+  Keychain ACL and locked/unlocked behavior pass in Experiment 0019.

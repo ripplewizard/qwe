@@ -216,6 +216,12 @@ impl ResourceController {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
+        if self.cgroup_dir.is_some() {
+            return policy
+                .cpu_seconds
+                .is_some_and(|maximum| metrics.cpu_microseconds > maximum.saturating_mul(1_000_000))
+                .then(|| "cpu_seconds".to_string());
+        }
         if let Some(reason) = metrics.last_violation {
             return Some(reason);
         }

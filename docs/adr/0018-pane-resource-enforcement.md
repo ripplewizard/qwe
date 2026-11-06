@@ -73,6 +73,9 @@ events.
   Active or Held Session authority.
 - Raising limits is immediate.
 - Lowering a Linux memory hard limit may immediately trigger reclaim/OOM.
+- If `memory_max_bytes` is lowered without explicitly changing
+  `memory_high_bytes`, the existing high threshold is clamped to the new max.
+  Explicitly conflicting high/max values are rejected.
 - Lowering `tasks_max` below current usage does not kill existing tasks; it
   prevents new forks until usage falls below the new maximum.
 - Monitor-based macOS changes take effect on the next sample.

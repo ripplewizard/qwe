@@ -156,6 +156,9 @@ durably updating the Pane, and rolls the runtime back if persistence fails. Its
 response contains the durable policy and terminal status, including current and
 peak metrics. The CLI is `qwe session limits`.
 
+When lowering `memory_max_bytes` without explicitly supplying
+`memory_high_bytes`, the existing high threshold is clamped to the new maximum.
+
 Forced teardown operations are:
 
 - `SESSION_KILL`: authorize like `SESSION_CLOSE`, then `SIGKILL` the Task

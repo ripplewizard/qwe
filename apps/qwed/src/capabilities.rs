@@ -171,6 +171,7 @@ pub fn merge_resource_policy(
     let object = value
         .as_object()
         .ok_or_else(|| error("invalid_request", "resource_policy must be an object"))?;
+    let high_was_explicit = object.contains_key("memory_high_bytes");
     let mut merged = serde_json::to_value(current)
         .map_err(|failure| error("invalid_request", failure.to_string()))?;
     let merged_object = merged
@@ -192,6 +193,19 @@ pub fn merge_resource_policy(
             }
         };
         merged_object.insert(canonical.into(), value.clone());
+    }
+    if !high_was_explicit {
+        let high = merged_object
+            .get("memory_high_bytes")
+            .and_then(Value::as_u64);
+        let maximum = merged_object
+            .get("memory_max_bytes")
+            .and_then(Value::as_u64);
+        if let (Some(high), Some(maximum)) = (high, maximum) {
+            if high > maximum {
+                merged_object.insert("memory_high_bytes".into(), json!(maximum));
+            }
+        }
     }
     validate_resource_policy(&json!({"resource_policy": merged}), hard_cgroup)
 }
@@ -262,6 +276,28 @@ mod tests {
                     "resource_policy": {"cpu_seconds": 0}
                 }),
                 false
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn lowering_memory_max_clamps_implicit_high() {
+        let current = ResourcePolicy {
+            memory_high_bytes: Some(128),
+            memory_max_bytes: Some(256),
+            ..ResourcePolicy::empty()
+        };
+        let merged =
+            merge_resource_policy(&current, &json!({"memory_max_bytes": 64}), true).unwrap();
+        assert_eq!(merged.memory_high_bytes, Some(64));
+        assert_eq!(merged.memory_max_bytes, Some(64));
+        assert!(
+            merge_resource_policy(
+                &current,
+                &json!({"memory_high_bytes": 128, "memory_max_bytes": 64}),
+                true,
             )
             .is_err()
         );

@@ -155,18 +155,21 @@ its named command has evidence on both required platforms.
 | SVC-001 | Parse and platform-lint the systemd user unit and launchd agent assets | Required restart, runtime/state-directory, umask, and kill-policy fields are present; malformed manifests fail |
 | SVC-002 | SIGKILL qwed while managed by launchd or systemd | The worker and Task survive; the service manager restarts qwed; startup reconciliation adopts the same worker and Session |
 | SVC-003 | Stop the managed qwed service with a live Session | qwed handles SIGTERM, terminates worker/Task, persists Session `closed` and Task `stopped`, and exits cleanly |
+| SVC-004 | Replace the managed qwed executable before a crash restart | The next service start executes the replacement path, adopts the surviving worker, and preserves the Session |
 | SEC-001 | Send malformed JSON in a valid-length client frame | Close that client connection and keep qwed healthy |
 | SEC-002 | Send a client frame header above 8 MiB | Reject before reading or allocating the payload and keep qwed healthy |
 | SEC-003 | Send control input over 1 MiB | Return `input_too_large` without forwarding input to the worker |
 | SEC-004 | Compare matching and mismatched socket peer UIDs | Match is accepted; mismatch returns the `unauthorized_peer` policy error; a real cross-UID process launch remains a release-platform check |
 | CRED-001 | Load a credential from a private regular file and reject missing, insecure, symlink, and oversized sources | Only the private regular file is loaded; failures return `credential_unavailable` |
 | CRED-002 | Consume a credential in a real PTY child through the inherited descriptor contract | Secret bytes match exactly and do not appear in argv, environment, protocol status, terminal output, logs, or SQLite |
+| CRED-003 | Use an explicitly signed qwed binary against an ACL-bound temporary Keychain | Trusted code signature reads the item; locking the Keychain fails closed without UI; unlocking restores access; public Developer ID distribution remains a release-identity requirement |
 | RES-001 | Apply an aggregate Pane CPU-time limit | The whole Session tree is terminated after consumed CPU time crosses the limit |
 | RES-002 | Request a resource that the current platform/enforcement tier lacks | Return `unsupported_capability`; never silently downgrade or ignore the request |
 | RES-003 | Apply tree memory limits | Linux enforces `memory.max`/`memory.swap.max`; macOS reports monitored enforcement and terminates after sampling a breach |
 | RES-004 | Apply a task-count limit | Linux enforces `pids.max`; macOS monitors the process tree; both retain current/peak task metrics |
 | RES-005 | Update limits on a running held Session | Worker and durable Pane policy change together; status reports the new effective policy and metrics tier |
 | RES-006 | Inspect resource status during enforcement | Current/peak memory and task counts, CPU seconds, tier, and last violation are reported without unbounded history |
+| RES-007 | Lower limits below current resource usage | Linux memory triggers cgroup OOM on the Session tree; lower `tasks_max` blocks new forks without killing existing tasks; macOS monitors and terminates on the next breach sample |
 | KILL-001 | Force-kill one held Session | Task and Session terminate; process group disappears; authority is released; Session persists as `closed` |
 | KILL-002 | Batch-force multiple held Tasks | Every requested Task becomes `stopped` and reports per-item failures without aborting unrelated teardown |
 | KILL-003 | Force-kill the server with explicit confirmation | Every Session is torn down, the result is returned, and qwed exits successfully |
@@ -224,9 +227,13 @@ macOS ARM64 and Fedora Linux x86_64 currently pass `just stage4-check`:
   `plutil` lint.
 - Real launchd/systemd crash-restart, worker adoption, graceful stop, and
   terminal-state cleanup.
+- Binary path replacement before managed restart, with worker adoption.
+- Local signed Keychain ACL, locked-Keychain fail-closed, and unlock
+  recovery with no background password dialog.
 
 The following Stage 4 gates remain open:
 
 - A real cross-UID client launch under the final installation layout.
-- Binary-replacement service upgrade acceptance.
-- Signed macOS build Keychain ACL, locked-keychain, and restart behavior.
+
+Public Developer ID trust and notarized distribution are Stage 5 release
+packaging gates; local signed ACL and locked/unlocked Keychain behavior pass.

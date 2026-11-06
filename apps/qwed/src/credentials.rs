@@ -2,8 +2,6 @@ use std::fs::{self, OpenOptions};
 use std::io::Read;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "macos")]
-use std::process::Command;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
@@ -54,14 +52,20 @@ pub enum CredentialError {
 pub struct CredentialProvider {
     root: Option<PathBuf>,
     keychain_prefix: Option<String>,
+    keychain_path: Option<PathBuf>,
 }
 
 impl CredentialProvider {
     #[must_use]
-    pub fn new(root: Option<PathBuf>, keychain_prefix: Option<String>) -> Self {
+    pub fn new(
+        root: Option<PathBuf>,
+        keychain_prefix: Option<String>,
+        keychain_path: Option<PathBuf>,
+    ) -> Self {
         Self {
             root,
             keychain_prefix,
+            keychain_path,
         }
     }
 
@@ -101,7 +105,7 @@ impl CredentialProvider {
             return read_file(root, name);
         }
         if let Some(prefix) = &self.keychain_prefix {
-            return read_keychain(prefix, name);
+            return read_keychain(prefix, name, self.keychain_path.as_deref());
         }
         Err(CredentialError::NotConfigured)
     }
@@ -173,34 +177,105 @@ fn validate_name(name: &str) -> Result<(), CredentialError> {
 }
 
 #[cfg(target_os = "macos")]
-fn read_keychain(prefix: &str, name: &str) -> Result<Zeroizing<Vec<u8>>, CredentialError> {
+fn read_keychain(
+    prefix: &str,
+    name: &str,
+    keychain_path: Option<&Path>,
+) -> Result<Zeroizing<Vec<u8>>, CredentialError> {
+    use std::ffi::{CString, c_char, c_void};
+    use std::os::unix::ffi::OsStrExt;
+    use std::ptr;
+
+    type SecKeychainRef = *mut c_void;
+    type OsStatus = i32;
+    const ERR_SEC_SUCCESS: OsStatus = 0;
+    const ERR_SEC_ITEM_NOT_FOUND: OsStatus = -25300;
+
+    #[link(name = "Security", kind = "framework")]
+    unsafe extern "C" {
+        fn SecKeychainOpen(path: *const c_char, keychain: *mut SecKeychainRef) -> OsStatus;
+        fn SecKeychainCopyDefault(keychain: *mut SecKeychainRef) -> OsStatus;
+        fn SecKeychainSetUserInteractionAllowed(allowed: u8) -> OsStatus;
+        fn SecKeychainFindGenericPassword(
+            keychain: SecKeychainRef,
+            service_name_length: u32,
+            service_name: *const c_char,
+            account_name_length: u32,
+            account_name: *const c_char,
+            password_length: *mut u32,
+            password_data: *mut *mut c_void,
+            item_ref: *mut *mut c_void,
+        ) -> OsStatus;
+        fn SecKeychainItemFreeContent(attribute_list: *mut c_void, data: *mut c_void) -> OsStatus;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFRelease(value: *const c_void);
+    }
+
     let service = format!("{prefix}.{name}");
-    let output = Command::new("/usr/bin/security")
-        .arg("find-generic-password")
-        .arg("-s")
-        .arg(&service)
-        .arg("-w")
-        .output()
-        .map_err(|_| CredentialError::Keychain(name.into()))?;
-    if !output.status.success() {
+    let service = CString::new(service).map_err(|_| CredentialError::InvalidName)?;
+    if unsafe { SecKeychainSetUserInteractionAllowed(0) } != ERR_SEC_SUCCESS {
         return Err(CredentialError::Keychain(name.into()));
     }
-    let mut secret = output.stdout;
-    if secret.last() == Some(&b'\n') {
-        secret.pop();
+    let mut keychain: SecKeychainRef = ptr::null_mut();
+    let status = if let Some(path) = keychain_path {
+        let path =
+            CString::new(path.as_os_str().as_bytes()).map_err(|_| CredentialError::InvalidName)?;
+        unsafe { SecKeychainOpen(path.as_ptr(), &mut keychain) }
+    } else {
+        unsafe { SecKeychainCopyDefault(&mut keychain) }
+    };
+    if status != ERR_SEC_SUCCESS || keychain.is_null() {
+        return Err(CredentialError::Keychain(name.into()));
     }
-    if secret.len() as u64 > MAX_CREDENTIAL_BYTES {
-        return Err(CredentialError::TooLarge {
+    let mut password_length = 0_u32;
+    let mut password_data: *mut c_void = ptr::null_mut();
+    let status = unsafe {
+        SecKeychainFindGenericPassword(
+            keychain,
+            service.as_bytes().len() as u32,
+            service.as_ptr(),
+            0,
+            ptr::null(),
+            &mut password_length,
+            &mut password_data,
+            ptr::null_mut(),
+        )
+    };
+    unsafe {
+        CFRelease(keychain.cast());
+    }
+    if status == ERR_SEC_ITEM_NOT_FOUND {
+        return Err(CredentialError::NotFound(name.into()));
+    }
+    if status != ERR_SEC_SUCCESS || password_data.is_null() {
+        return Err(CredentialError::Keychain(name.into()));
+    }
+    let bytes =
+        unsafe { std::slice::from_raw_parts(password_data.cast::<u8>(), password_length as usize) };
+    let bytes_len = bytes.len() as u64;
+    let result = Zeroizing::new(bytes.to_vec());
+    unsafe {
+        let _ = SecKeychainItemFreeContent(ptr::null_mut(), password_data);
+    }
+    if bytes_len > MAX_CREDENTIAL_BYTES {
+        Err(CredentialError::TooLarge {
             name: name.into(),
-            bytes: secret.len() as u64,
+            bytes: bytes_len,
             maximum: MAX_CREDENTIAL_BYTES,
-        });
+        })
+    } else {
+        Ok(result)
     }
-    Ok(Zeroizing::new(secret))
 }
 
 #[cfg(not(target_os = "macos"))]
-fn read_keychain(_prefix: &str, name: &str) -> Result<Zeroizing<Vec<u8>>, CredentialError> {
+fn read_keychain(
+    _prefix: &str,
+    name: &str,
+    _keychain_path: Option<&Path>,
+) -> Result<Zeroizing<Vec<u8>>, CredentialError> {
     Err(CredentialError::Keychain(name.into()))
 }
 
@@ -216,7 +291,7 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-        let provider = CredentialProvider::new(Some(root.clone()), None);
+        let provider = CredentialProvider::new(Some(root.clone()), None, None);
         (root, provider)
     }
 
@@ -243,7 +318,7 @@ mod tests {
     #[test]
     fn rejects_traversal_and_unconfigured_providers() {
         assert!(matches!(
-            CredentialProvider::new(None, None).read("TEST_API_KEY"),
+            CredentialProvider::new(None, None, None).read("TEST_API_KEY"),
             Err(CredentialError::NotConfigured)
         ));
         let (_root, provider) = temporary_vault();

@@ -266,10 +266,12 @@ Current implementation:
   `CONTROL_STATUS` reports the active capability matrix and credential backend.
 - systemd and launchd crash-restart, worker adoption, and graceful stop cleanup
   pass with real service-manager jobs on both platforms.
+- Managed binary-path replacement before restart preserves and re-adopts the
+  live worker.
 - `just stage4-check` passes on macOS ARM64 and Fedora Linux x86_64.
 
-Open: binary-replacement service upgrade acceptance, real cross-UID
-installation checks, and signed macOS Keychain acceptance are not complete.
+Open: real cross-UID installation check remains. Local signed Keychain ACL,
+locked/unlocked behavior, and binary-replacement restart pass.
 
 ### Stage 5: Release Candidate
 
@@ -278,6 +280,8 @@ Target: 2026-12-21 to 2026-12-24
 - Run release-mode Attach latency, memory, and soak benchmarks.
 - Run full manual Neovim, htop, detach/attach, and job-control acceptance.
 - Verify installation, upgrade, service restart, and documentation.
+- Sign and notarize the macOS release artifact with the selected Developer ID
+  identity and verify public-distribution trust.
 - Produce final POC/manual audit disposition without rewriting failed evidence.
 - Freeze V0 scope and publish an explicit supported-platform matrix.
 

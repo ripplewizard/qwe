@@ -59,6 +59,8 @@ struct Args {
     credentials_dir: Option<PathBuf>,
     #[arg(long)]
     keychain_service_prefix: Option<String>,
+    #[arg(long)]
+    keychain_path: Option<PathBuf>,
 }
 
 struct Context {
@@ -3175,6 +3177,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .keychain_service_prefix
         .or_else(|| std::env::var("QWE_KEYCHAIN_SERVICE_PREFIX").ok())
         .filter(|_| cfg!(target_os = "macos"));
+    let keychain_path = args
+        .keychain_path
+        .or_else(|| std::env::var_os("QWE_KEYCHAIN_PATH").map(PathBuf::from))
+        .filter(|_| cfg!(target_os = "macos"));
     let (worker_event_tx, worker_event_rx) = mpsc::channel();
     let (supervisor_event_tx, supervisor_event_rx) = mpsc::channel();
     let bridge_sender = supervisor_event_tx.clone();
@@ -3196,7 +3202,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         creation_lock: Mutex::new(()),
         idempotency_lock: Mutex::new(()),
         attachment_lock: Mutex::new(()),
-        credentials: CredentialProvider::new(credentials_dir, keychain_prefix),
+        credentials: CredentialProvider::new(credentials_dir, keychain_prefix, keychain_path),
         _runtime_lock: runtime_lock,
     });
     let report = startup_reconcile(&context)?;

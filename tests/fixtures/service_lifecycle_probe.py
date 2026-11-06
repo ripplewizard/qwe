@@ -6,6 +6,7 @@ import os
 import plistlib
 import re
 import signal
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -250,10 +251,19 @@ def main():
     task_pid = 0
     try:
         client = QweClient(str(qwe), str(socket_path))
+        service_bin = root / "service-bin"
+        service_bin.mkdir()
+        service_qwed = service_bin / "qwed"
+        for source in (
+            qwed,
+            qwed.with_name("qwe-worker"),
+            qwed.with_name("qwe-session-exec"),
+        ):
+            shutil.copy2(source, service_bin / source.name)
         if sys.platform == "linux":
-            manager = SystemdService(root, qwed, socket_path, store_path)
+            manager = SystemdService(root, service_qwed, socket_path, store_path)
         elif sys.platform == "darwin":
-            manager = LaunchdService(root, qwed, socket_path, store_path)
+            manager = LaunchdService(root, service_qwed, socket_path, store_path)
         else:
             raise RuntimeError(f"unsupported service platform: {sys.platform}")
         manager.install()
@@ -261,16 +271,21 @@ def main():
         created = client.create_session()
         worker_pid = created["worker_pid"]
         task_pid = created["pid"]
+        replacement = service_bin / "qwed.replacement"
+        shutil.copy2(qwed, replacement)
+        replacement.chmod(0o755)
+        os.replace(replacement, service_qwed)
         restarted = probe_service(
             manager, client, socket_path, worker_pid, task_pid
         )
         print(
             json.dumps(
                 {
-                    "case": "SVC-002/SVC-003",
+                    "case": "SVC-002/SVC-003/SVC-004",
                     "service_manager": manager.__class__.__name__,
                     "worker_survived_qwed_sigkill": "pass",
                     "qwed_restart_adopted_worker": "pass",
+                    "binary_replaced_before_restart": "pass",
                     "graceful_stop_cleaned_worker": "pass",
                     "session_closed": "pass",
                     "task_stopped": "pass",

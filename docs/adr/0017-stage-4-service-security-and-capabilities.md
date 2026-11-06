@@ -3,8 +3,9 @@
 Status: Accepted
 Date: 2026-11-05
 Implementation state: Core runtime behavior, capability reporting, service
-assets, and managed crash-restart/stop lifecycle are implemented. Signed
-Keychain and installed cross-UID acceptance remain open.
+assets, managed crash-restart/stop lifecycle, local signed Keychain ACL,
+and binary-replacement restart are implemented. Installed cross-UID acceptance
+and public Developer ID distribution remain open.
 
 The initial per-process Pane resource contract is superseded by
 [ADR 0018](0018-pane-resource-enforcement.md); secret, service, and teardown
@@ -102,7 +103,7 @@ descriptor, not durable secret storage.
 
 ## Acceptance Required
 
-- Verify binary-replacement service upgrade behavior.
 - Verify a real cross-UID client rejection in the installed socket layout.
-- Verify Keychain ACL, locked-keychain, and signed-build behavior.
-- Decide whether a future process-tree memory/count primitive is in V0 scope.
+
+Resource-enforcement acceptance now follows ADR 0018.
+Public Developer ID trust and notarized release packaging are Stage 5 gates.

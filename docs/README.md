@@ -71,6 +71,8 @@
   credentials, resource capability, security, and forced-teardown core slice.
 - [Experiment 0018](experiments/0018-pane-resource-enforcement.md): Linux hard
   cgroup limits, macOS resource monitoring, and dynamic Pane policy.
+- [Experiment 0019](experiments/0019-keychain-acl-and-binary-upgrade.md): local
+  signed Keychain ACL, locked-Keychain behavior, and binary replacement.
 
 ## Reading Order
 

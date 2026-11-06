@@ -84,9 +84,8 @@ These are implementation work, not reasons to delay development:
   risking a duplicate effect.
 - Lease renewal anchoring, maximum TTL, and 30-day/10,000-terminal-Session
   history pruning are implemented under ADR 0016.
-- systemd and launchd real crash-restart, worker adoption, and graceful stop
-  cleanup pass on Fedora Linux and macOS. Binary-replacement upgrade remains a
-  release-acceptance item.
+- systemd and launchd real crash-restart, worker adoption, binary replacement,
+  and graceful stop cleanup pass on Fedora Linux and macOS.
 - Malformed frames, oversized frames, oversized input, and peer-UID policy are
   covered. A real cross-UID client launch under the installed layout remains
   open.
@@ -128,6 +127,7 @@ used as the active development branch.
 Stage 4 core capabilities pass `just stage4-check` on macOS ARM64 and Fedora
 Linux x86_64, including real launchd/systemd crash-restart, worker adoption,
 graceful stop cleanup, hard Linux resource scopes, macOS resource monitoring,
-and dynamic policy updates. Stage 4 is not closed: binary-replacement upgrade,
-installed cross-UID rejection, and signed macOS Keychain acceptance are still
-required.
+and dynamic policy updates. Stage 4 is not closed only on the installed
+cross-UID rejection test. Local signed Keychain ACL and locked/unlocked
+behavior pass; public Developer ID trust/distribution belongs to Stage 5
+release packaging.
