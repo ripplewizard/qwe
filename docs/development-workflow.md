@@ -35,10 +35,9 @@ continue feature work on them.
 
 ## Continuous Integration
 
-Every push to `dev` or `main` and every pull request runs
-`.github/workflows/ci.yml` on hosted Linux and macOS runners. The workflow
-checks formatting, Clippy, workspace tests, the canonical protocol schema, and
-release builds.
+Every branch push and every pull request runs `.github/workflows/ci.yml` on
+hosted Linux and macOS runners. The workflow checks formatting, Clippy,
+workspace tests, the canonical protocol schema, and release builds.
 
 The complete Fedora release gate is a separate manual workflow,
 `.github/workflows/release-gate.yml`. It requires a runner registered with the
