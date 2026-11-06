@@ -9,9 +9,10 @@ and security gates must pass before this review starts.
 ## Candidate
 
 - Branch: `codex/stage5-linux-release`
+- Candidate commit: `5e3197a`
 - Platform: Fedora Linux x86_64
 - Release archive: `dist/qwe-0.1.0-linux-x86_64.tar.gz`
-- Archive SHA-256: fill from the final release-gate run
+- Archive SHA-256: `89b53822144ea26d35a6d3b7001073d3ad520cfb6cc7386df2f70f54d47c1514`
 - Reviewer:
 - Reviewer independent from implementation: yes/no
 - Review date:
