@@ -95,6 +95,9 @@ These are implementation work, not reasons to delay development:
   isolated-home installation, in-place reinstall, SQLite v9-to-v10 migration,
   worker adoption, and an eight-Session release-mode Attach/soak benchmark are
   implemented. macOS ARM64 and Fedora Linux x86_64 pass these probes.
+- Fedora additionally passes the installed-systemd crash-restart probe,
+  preserving the live worker/task after binary replacement and verifying
+  closed/stopped state after service stop.
 - macOS releases temporarily use a local self-signed identity under ADR 0019.
   The package is marked `local-self-signed` with `public_trust: false`; public
   binary distribution remains unavailable until Developer ID and

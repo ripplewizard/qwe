@@ -72,8 +72,9 @@ installation and in-place reinstall acceptance, SQLite v9-to-v10 migration,
 worker adoption, release-mode eight-Session Attach/soak benchmarks, and a
 strict macOS Developer ID/notarization gate. Release gates pass on macOS and
 Fedora. macOS temporarily uses a local self-signed `-local` package under ADR
-0019; full manual release acceptance, public notarization, final audit
-disposition, and V0 scope freeze remain open.
+0019 and is paused while Linux release acceptance proceeds. Fedora now passes
+installed-systemd crash-restart and TUI smoke; full manual release acceptance,
+public notarization, final audit disposition, and V0 scope freeze remain open.
 See Experiment 0021 and `docs/release.md`.
 
 - Build the first usable CLI/TUI vertical slice.

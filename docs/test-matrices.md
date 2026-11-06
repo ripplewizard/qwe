@@ -250,6 +250,7 @@ measurements are also Stage 5 gates.
 | PACK-002 | Verify and install a package into an isolated prefix | Checksums pass, executable modes are correct, native service assets are rendered without a checkout path, and no service is started |
 | PACK-003 | Reinstall while preserving state, restart qwed, and migrate v9 state | SQLite is preserved during install; the same worker/task are adopted; startup migrates schema v9 to v10 |
 | PACK-004 | Sign, notarize, and assess the public macOS artifact | Developer ID signatures are verified, notarization is accepted, and Gatekeeper assessment passes |
+| PACK-005 | Exercise the installed Linux service through systemd | The installed unit starts qwed; binary reinstall preserves state; SIGKILL restarts the service; the same worker/task are adopted; stop cleans processes and persists closed/stopped state |
 | PERF-001 | Run release-mode Attach and soak | Eight independent Sessions complete real Attach/snapshot/detach cycles within configured latency and aggregate-RSS limits throughout the soak |
 
 Packaged installation, reinstall, worker adoption, schema migration, and
@@ -260,3 +261,7 @@ remain pending.
 The local signing lifecycle passes with an isolated create/sign/verify/remove
 probe on macOS ARM64. The temporary identity is marked non-public and is not
 committed.
+
+The installed-systemd probe passes on Fedora Linux x86_64 with the installed
+unit, binary reinstall, supervisor crash-restart, worker/task adoption, and
+graceful stop persistence.

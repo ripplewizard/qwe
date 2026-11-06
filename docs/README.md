@@ -85,6 +85,9 @@
   cross-platform gate and second-UID rejection evidence.
 - [Experiment 0021](experiments/0021-stage5-release-foundation.md): packaged
   installation, upgrade migration, and release-mode benchmark foundation.
+- [Experiment 0022](experiments/0022-stage5-linux-release.md): installed
+  systemd crash-restart, worker adoption, release benchmark, and TUI smoke for
+  the Linux release candidate.
 
 ## Reading Order
 

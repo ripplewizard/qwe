@@ -34,6 +34,9 @@ moves to supported only after the structured release gates pass on that target.
    adoption, and SQLite v9-to-v10 migration.
 7. A release-mode benchmark with eight independent Sessions, rotating
    exclusive Attach, bounded memory sampling, and a sustained soak period.
+8. On Linux, a real installed-systemd probe covering binary reinstall,
+   supervisor SIGKILL, automatic restart, worker/task adoption, and graceful
+   persistence, followed by Neovim/htop TUI smoke.
 
 The local gate generates runtime artifacts under ignored `dist/`. Structured
 results may be summarized in a checked-in experiment; raw terminal captures,

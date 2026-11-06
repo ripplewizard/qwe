@@ -315,11 +315,15 @@ Current implementation:
   `public_trust: false`, and are rejected by the public notarization gate.
 - `just release-gate` currently combines the workspace/state gates, packaging,
   installation/upgrade acceptance, and a 15-second release benchmark.
+- On Linux, `just release-gate` also runs PACK-005 against the installed
+  systemd unit, verifies binary replacement plus supervisor crash-restart,
+  worker/task adoption, and cleanup, then runs Neovim/htop TUI smoke.
 - macOS ARM64 and Fedora Linux x86_64 pass the package, reinstall, adoption,
-  migration, and benchmark probes. macOS currently uses the local self-signed
-  tier. Full manual release acceptance, public Developer ID
-  signing/notarization, final POC audit disposition, and final V0 freeze remain
-  open.
+  migration, and benchmark probes. Fedora also passes the installed-systemd
+  crash-restart probe and TUI smoke. macOS remains frozen at the local
+  self-signed tier while Linux acceptance proceeds. Independent manual release
+  acceptance, public Developer ID signing/notarization, final POC audit
+  disposition, and final V0 freeze remain open.
 
 ## Test and Delivery Gates
 
