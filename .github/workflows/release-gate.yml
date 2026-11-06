@@ -47,10 +47,20 @@ jobs:
             -r scripts/requirements-protocol.txt
           printf '%s\n' "$RUNNER_TEMP/qwe-ci-venv/bin" >> "$GITHUB_PATH"
 
+      - name: Require a clean source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short
+            printf 'release gate requires a clean checkout\n' >&2
+            exit 1
+          fi
+
       - name: Run complete release gate
         run: just release-gate
 
-      - name: Record archive checksum
+      - name: Verify manifest and record archive checksum
         shell: bash
         run: |
           set -euo pipefail
@@ -58,6 +68,25 @@ jobs:
             python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
           archive="dist/qwe-${version}-linux-x86_64.tar.gz"
           test -f "$archive"
+          package_root="$(basename "${archive%.tar.gz}")"
+          manifest="$RUNNER_TEMP/qwe-release.json"
+          tar -xOzf "$archive" "$package_root/release.json" > "$manifest"
+          python3 - "$manifest" <<'PY'
+          import json
+          import os
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              manifest = json.load(stream)
+          commit = os.environ["GITHUB_SHA"]
+          assert manifest["schema"] == "qwe-release/v1", manifest
+          assert manifest["target"] == "linux-x86_64", manifest
+          assert manifest["source_dirty"] is False, manifest
+          assert commit.startswith(manifest["source_commit"]), (
+              commit,
+              manifest,
+          )
+          PY
           sha256sum "$archive" > "$archive.sha256"
           cat "$archive.sha256"
 
