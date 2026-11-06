@@ -1,6 +1,7 @@
 # V0 Contract Test Matrices
 
-Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64
+Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64; Stage 5
+foundation passing on macOS ARM64
 Date: 2026-11-06
 
 These IDs are stable contract identifiers. An implementation test may be
@@ -239,3 +240,18 @@ Public Developer ID trust and notarized distribution are Stage 5 release
 packaging gates. Local signed ACL and locked/unlocked Keychain behavior pass.
 Final packaged installation, upgrade migration, and release-mode soak
 measurements are also Stage 5 gates.
+
+## Stage 5 Release Candidate
+
+| ID | Case | Expected result |
+|---|---|---|
+| PACK-001 | Build a native release package | All four executables report the manifest version; payload paths are portable; a safely extractable archive, SHA-256 checksums, and `qwe-release/v1` metadata are present |
+| PACK-002 | Verify and install a package into an isolated prefix | Checksums pass, executable modes are correct, native service assets are rendered without a checkout path, and no service is started |
+| PACK-003 | Reinstall while preserving state, restart qwed, and migrate v9 state | SQLite is preserved during install; the same worker/task are adopted; startup migrates schema v9 to v10 |
+| PACK-004 | Sign, notarize, and assess the public macOS artifact | Developer ID signatures are verified, notarization is accepted, and Gatekeeper assessment passes |
+| PERF-001 | Run release-mode Attach and soak | Eight independent Sessions complete real Attach/snapshot/detach cycles within configured latency and aggregate-RSS limits throughout the soak |
+
+Packaged installation, reinstall, worker adoption, schema migration, and
+release-mode performance pass on macOS ARM64 at the Stage 5 foundation commit.
+Fedora release evidence, public macOS signing/notarization, full manual release
+acceptance, and final V0 freeze remain pending.

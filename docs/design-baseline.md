@@ -1,7 +1,7 @@
 # QWE Design Baseline
 
 Status: Active Development Baseline
-Updated: 2026-11-04
+Updated: 2026-11-06
 
 ## 1. Purpose
 
@@ -106,4 +106,7 @@ events.
 - D1 adds Resize and complete VT state.
 - D2 adds durable idempotency and Task control.
 - D3 adds Key Manager, Pane limits, teardown, services, and security negatives.
-- D4 performs release-mode soak and user-facing acceptance.
+- D4 performs release-mode soak and user-facing acceptance. Stage 5 also adds
+  checksummed native packages, isolated installation and upgrade recovery,
+  strict macOS Developer ID/notarization gates, and an explicit supported
+  platform matrix; public trust is not claimed before those gates pass.

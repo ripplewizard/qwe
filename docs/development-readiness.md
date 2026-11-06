@@ -1,6 +1,6 @@
 # Development Readiness
 
-Status: Stages 1, 2, 3, and 4 complete
+Status: Stages 1, 2, 3, and 4 complete; Stage 5 in progress
 Date: 2026-11-06
 
 ## Decision
@@ -89,8 +89,13 @@ These are implementation work, not reasons to delay development:
 - Malformed frames, oversized frames, oversized input, and peer-UID policy are
   covered. A real second-UID client is denied by the private runtime socket and
   then rejected by the application peer-UID check after a temporary ACL bypass.
-  Final packaged installation and migration acceptance belongs to Stage 5.
-- Release-mode soak and larger-concurrency measurements remain pending.
+  Packaged installation and migration pass on macOS; Fedora and public-release
+  acceptance remain Stage 5 gates.
+- The release package, offline installer, checksum and version checks,
+  isolated-home installation, in-place reinstall, SQLite v9-to-v10 migration,
+  worker adoption, and an eight-Session release-mode Attach/soak benchmark are
+  implemented. macOS ARM64 passes these probes; Fedora release validation
+  remains pending.
 - API Key Manager, tree-scoped resource policy, and forced teardown are
   implemented and pass `just stage4-check` on macOS and Fedora. Linux provides
   hard cgroup v2 limits; macOS reports monitored enforcement with bounded
@@ -134,4 +139,7 @@ Structured closure evidence is in
 [Experiment 0020](experiments/0020-stage-4-closure.md).
 
 Public Developer ID trust, notarization, packaged installation, upgrade
-migration, and release-mode soak measurements belong to Stage 5.
+migration, and release-mode soak measurements belong to Stage 5. Packaged
+installation, reinstall, and v9-to-v10 migration now pass on macOS; public
+Developer ID trust and notarization remain unpassed because no public identity
+is available.

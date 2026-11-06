@@ -5,7 +5,7 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 
 #[derive(Debug, Parser)]
-#[command(about = "Internal QWE Session resource-limit launcher")]
+#[command(version, about = "Internal QWE Session resource-limit launcher")]
 struct Args {
     #[arg(long)]
     topology_socket: Option<std::path::PathBuf>,

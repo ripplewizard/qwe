@@ -37,6 +37,7 @@ const ATTACH_WRITE_TIMEOUT: Duration = Duration::from_millis(250);
 const ATTACH_WRITE_STALL: Duration = Duration::from_secs(5);
 
 #[derive(Parser)]
+#[command(version, about = "QWE durable Session worker")]
 struct Args {
     #[arg(long, hide = true)]
     worker_socket: PathBuf,

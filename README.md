@@ -6,10 +6,13 @@ extension boundaries.
 
 ## Current Phase
 
-Active development starts on the `dev` branch. Stage 0 design acceptance and
-de-risking are complete; Stage 1 is the control-plane and protocol foundation.
-Automated POC evidence is complete on Linux and macOS; manual POC sign-off
-remains a non-blocking audit task. Implementation follows
+Active development starts on the `dev` branch. Stages 0-4 are complete;
+Stage 5 release-candidate work is in progress. The current slice adds
+checksummed native release packages, temporary-prefix installation,
+in-place upgrade acceptance, release-mode Attach/soak benchmarks, and a
+separate Developer ID notarization gate. Automated POC evidence is complete on
+Linux and macOS; final manual audit disposition remains Stage 5 work.
+Implementation follows
 [`docs/design-baseline.md`](docs/design-baseline.md).
 
 The process and crate boundaries are described in
@@ -42,6 +45,8 @@ just build-qwe
 just test-qwe
 just t12-host-smoke
 just resilience-smoke
+just stage4-check
+just release-gate
 ```
 
 Protocol schema validation uses

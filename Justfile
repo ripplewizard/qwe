@@ -887,6 +887,81 @@ stage4-check:
     just --justfile "{{ justfile() }}" cross-uid-smoke
     just --justfile "{{ justfile() }}" stage3-idempotency
 
+state-matrix:
+    cargo test -p qwe-core authority::tests
+    cargo test -p qwe-core tests::session_state_machine_rejects_resurrection
+    cargo test -p qwe-core tests::task_instance_has_one_initial_transition_path
+    cargo test -p qwe-storage tests::created_session_and_task_commit_atomically
+    cargo test -p qwe-storage tests::created_session_has_one_pane_and_one_task_instance
+    cargo test -p qwe-storage tests::history_pruning_preserves_sessions_with_attachment_authority
+    cargo test -p qwe-storage tests::history_pruning_requires_both_age_and_terminal_capacity_pressure
+    cargo test -p qwe-storage tests::idempotency_records_replay_until_the_retention_deadline
+    cargo test -p qwe-storage tests::lease_claim_touch_release_and_takeover
+    cargo test -p qwe-storage tests::lease_renewal_does_not_shorten_deadlines_when_the_wall_clock_moves_back
+    cargo test -p qwe-storage tests::migrates_version_one_database
+    cargo test -p qwe-storage tests::persisted_active_attachment_enters_reclaim_grace
+    just --justfile "{{ justfile() }}" stage3-idempotency
+    just --justfile "{{ justfile() }}" stage3-attach-authority
+    just --justfile "{{ justfile() }}" stage3-control-authority
+    just --justfile "{{ justfile() }}" stage3-reconciliation
+
+release-build:
+    cargo build --release --workspace
+
+release-package:
+    python3 "{{ justfile_directory() }}/packaging/build_release.py" --force
+
+release-package-signed identity:
+    cargo build --release --workspace
+    python3 "{{ justfile_directory() }}/packaging/build_release.py" \
+      --sign-identity "{{ identity }}" \
+      --force
+
+release-acceptance package archive="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    arguments=(--package "{{ package }}")
+    if [ -n "{{ archive }}" ]; then
+      arguments+=(--archive "{{ archive }}")
+    fi
+    python3 "{{ justfile_directory() }}/tests/fixtures/release_acceptance_probe.py" \
+      "${arguments[@]}"
+
+release-benchmark seconds="15":
+    python3 "{{ justfile_directory() }}/tests/fixtures/release_benchmark.py" \
+      --qwed "{{ justfile_directory() }}/target/release/qwed" \
+      --sessions 8 \
+      --rounds 8 \
+      --soak-seconds "{{ seconds }}"
+
+release-public-gate artifact:
+    "{{ justfile_directory() }}/packaging/notarize_macos.sh" "{{ artifact }}"
+
+release-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ justfile_directory() }}"
+    cd "$root"
+    just --justfile "{{ justfile() }}" check-qwe
+    just --justfile "{{ justfile() }}" state-matrix
+    just --justfile "{{ justfile() }}" release-build
+    package_json="$(
+      python3 packaging/build_release.py --force
+    )"
+    printf '%s\n' "$package_json"
+    package="$(
+      printf '%s' "$package_json" |
+        python3 -c 'import json,sys; print(json.load(sys.stdin)["package"])'
+    )"
+    archive="$(
+      printf '%s' "$package_json" |
+        python3 -c 'import json,sys; print(json.load(sys.stdin)["archive"])'
+    )"
+    python3 tests/fixtures/release_acceptance_probe.py \
+      --package "$package" \
+      --archive "$archive"
+    just --justfile "{{ justfile() }}" release-benchmark 15
+
 stages-1-3-check:
     just --justfile "{{ justfile() }}" stage1-hardening-check
     just --justfile "{{ justfile() }}" stage2-check

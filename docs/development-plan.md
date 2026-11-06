@@ -1,7 +1,7 @@
 # QWE Development Plan
 
 Status: Active
-Updated: 2026-11-05
+Updated: 2026-11-06
 
 ## Planning Assumptions
 
@@ -31,14 +31,13 @@ Implemented with current repository evidence:
   interactive CLI loop.
 - Persisted attachment authority, reclaim-token grace, detached holds, Lease
   release tombstones, and 24-hour durable idempotency.
-- 43 workspace tests pass, including five `vt100` capability probes.
+- 51 workspace tests pass, including five `vt100` capability probes.
 
 Not ready for V0:
 
-- Durable service ownership, credential injection, Pane resource policy, and
-  forced teardown remain Stage 4 work.
-- Release-mode soak, larger-concurrency measurements, and final installation
-  acceptance remain Stage 5 work.
+- Fedora release acceptance, public Developer ID signing/notarization, full
+  manual release acceptance, and final audit disposition remain Stage 5
+  work.
 - Historical cross-language POC manual disposition remains separate from the
   completed production Rust Stage 2 sign-off.
 
@@ -274,13 +273,16 @@ Current implementation:
 
 Local signed Keychain ACL, locked/unlocked behavior, and binary-replacement
 restart pass. See
-[Experiment 0020](experiments/0020-stage-4-closure.md). Packaged installation,
-upgrade migration, public Developer ID trust, notarization, and release-mode
-soak measurements remain Stage 5 work.
+[Experiment 0020](experiments/0020-stage-4-closure.md). Stage 5 now adds
+packaged installation, reinstall and upgrade recovery, release-mode
+Attach/soak measurement, and strict signing/notarization tooling. Fedora release
+evidence and public Developer ID trust remain pending.
 
 ### Stage 5: Release Candidate
 
 Target: 2026-12-21 to 2026-12-24
+Status: In progress on 2026-11-06; release package, installer, upgrade,
+macOS release-mode benchmark, and strict signing/notarization gate implemented.
 
 - Run release-mode Attach latency, memory, and soak benchmarks.
 - Run full manual Neovim, htop, detach/attach, and job-control acceptance.
@@ -292,6 +294,27 @@ Target: 2026-12-21 to 2026-12-24
 
 Exit: all V0 gates pass with committed structured evidence; no open P0 design
 contradiction or unsupported capability is claimed as complete.
+
+Current implementation:
+
+- `just release-package` builds a checksummed native archive with all four
+  executables, a `qwe-release/v1` manifest, an offline-verifying installer,
+  and portable native service templates.
+- `just release-acceptance` installs into an isolated home, verifies versions
+  and service templates, preserves SQLite across in-place reinstall, verifies
+  worker adoption after supervisor restart, and migrates a disposable v9 store
+  to v10.
+- `just release-benchmark` exercises eight independent Sessions through the
+  real Attach channel in release mode, samples aggregate RSS, and runs a
+  configurable soak period.
+- `packaging/notarize_macos.sh` enforces Developer ID signatures, notary
+  acceptance, and Gatekeeper assessment without falling back to ad-hoc trust.
+- `just release-gate` currently combines the workspace/state gates, packaging,
+  installation/upgrade acceptance, and a 15-second release benchmark.
+- macOS ARM64 passes the new package, reinstall, adoption, migration, and
+  benchmark probes. Fedora validation, full manual release acceptance, public
+  Developer ID signing/notarization, final POC audit disposition, and final V0
+  freeze remain open.
 
 ## Test and Delivery Gates
 
@@ -323,9 +346,13 @@ just cross-uid-smoke
 Still planned:
 
 ```text
-just state-matrix
-just release-gate
+just release-gate                 # remaining supported target
+just release-public-gate ARTIFACT # requires selected Developer ID and profile
 ```
+
+`just state-matrix`, `just release-gate`, `just release-package`,
+`just release-package-signed`, `just release-acceptance`,
+`just release-benchmark`, and `just release-public-gate` are implemented.
 
 The new recipes must use real processes, sockets, PTYs, SQLite, and platform
 services. They must not simulate successful behavior.

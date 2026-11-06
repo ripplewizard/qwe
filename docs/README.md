@@ -34,6 +34,8 @@
 - [Testing Strategy](testing-strategy.md): layers, commands, and acceptance.
 - [Test Matrices](test-matrices.md): stable authorization, liveness, Attach,
   object-model, and idempotency case IDs.
+- [Release](release.md): release gates, supported platforms, packaging, and
+  public-distribution boundaries.
 - [Workflow](development-workflow.md): branch, commit, and evidence rules.
 - [Stage 2 Manual TUI Review](../scripts/manual-stage2-tui/README.md):
   reproducible Fedora/macOS scripts and checklists for T03/T04/T08/T11.
@@ -75,6 +77,8 @@
   signed Keychain ACL, locked-Keychain behavior, and binary replacement.
 - [Experiment 0020](experiments/0020-stage-4-closure.md): final Stage 4
   cross-platform gate and second-UID rejection evidence.
+- [Experiment 0021](experiments/0021-stage5-release-foundation.md): packaged
+  installation, upgrade migration, and release-mode benchmark foundation.
 
 ## Reading Order
 

@@ -1,7 +1,29 @@
 # QWE service packaging
 
-These files are installation assets. They are not installed or enabled by the
-development build or test suite.
+These files are installation and release assets. The development test suite
+does not install or enable a user service.
+
+## Release package
+
+Build the native release binaries and package the four executables, service
+assets, checksums, and release manifest:
+
+```sh
+just release-build
+just release-package
+```
+
+Generated packages are written under the ignored `dist/` directory. Install
+from an unpacked package with:
+
+```sh
+./install.py
+```
+
+The installer verifies `SHA256SUMS`, writes executables to `~/.local/bin`, and
+writes the native service asset. It does not start or enable the service.
+Use `--prefix` to test against an isolated home without touching the current
+account.
 
 ## systemd user service
 
@@ -26,10 +48,10 @@ files, logs, or SQLite.
 
 ## launchd user agent
 
-Install `qwed`, `qwe-worker`, and `qwe-session-exec` in `~/.local/bin`. Copy
-the plist to
-`~/Library/LaunchAgents/com.qwe.qwed.plist`, replace `REPOSITORY_ROOT` with an
-absolute checkout path, and load it with:
+The release installer places `qwed`, `qwe`, `qwe-worker`,
+`qwe-session-exec`, and the launchd wrapper in `~/.local/bin`. It renders the
+installed plist at `~/Library/LaunchAgents/com.qwe.qwed.plist`; no checkout
+path is required. Load it with:
 
 ```sh
 launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.qwe.qwed.plist"
@@ -48,8 +70,24 @@ swap, task-count, and CPU-bandwidth controls. macOS uses libproc monitoring and
 reports `monitored` enforcement with bounded polling overshoot.
 
 Local signed Keychain ACL, locked-Keychain fail-closed behavior, and
-binary replacement pass. Public Developer ID trust/notarization remains a
-release-identity requirement.
+binary replacement pass. Public Developer ID signing and notarization use a
+separate strict gate:
+
+```sh
+python3 packaging/build_release.py \
+  --sign-identity "$QWE_DEVELOPER_ID" --force
+QWE_DEVELOPER_ID="$QWE_DEVELOPER_ID" \
+QWE_NOTARY_PROFILE="$QWE_NOTARY_PROFILE" \
+  packaging/notarize_macos.sh dist/qwe-0.1.0-macos-arm64.tar.gz
+```
+
+The equivalent `just` entry points are
+`just release-package-signed "$QWE_DEVELOPER_ID"` and
+`just release-public-gate dist/qwe-0.1.0-macos-arm64.tar.gz`.
+
+The notarization gate fails if the identity, Apple notary profile, signatures,
+notary acceptance, or Gatekeeper assessment is unavailable. It never replaces
+these checks with an ad-hoc signature.
 
 ## Cross-UID security test
 

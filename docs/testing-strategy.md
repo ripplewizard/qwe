@@ -1,7 +1,7 @@
 # Testing Strategy
 
-Status: Active
-Date: 2026-11-05
+Status: Active; Stage 5 release gates in progress
+Date: 2026-11-06
 
 ## Test Layers
 
@@ -174,7 +174,31 @@ trust/distribution remains Stage 5 release packaging.
 owner-only directory and socket semantics used by the service assets. It
 requires the unprivileged `qwe-probe` account and one narrow sudoers rule
 documented in `packaging/README.md`. It does not install or package QWE;
-packaged installation and migration acceptance remain Stage 5 gates.
+packaged installation is covered by the Stage 5 release gate below.
+
+## Stage 5 Release Gate
+
+`just release-gate` combines the workspace and persisted state-matrix gates
+with a release profile build, native package, isolated installation, upgrade
+recovery, and release-mode performance probe.
+
+The release probes exercise:
+
+- SHA-256 package verification and version/protocol reporting for all four
+  executables.
+- Installation into an isolated home without modifying service-manager state
+  or SQLite.
+- Native service-template rendering with no checkout-path dependency.
+- In-place reinstall, SQLite preservation, qwed crash/restart, and worker/task
+  adoption through the installed sibling executables.
+- SQLite v9-to-v10 startup migration without resetting state.
+- Eight independent Sessions, real Attach handshakes and snapshots, aggregate
+  RSS sampling, and a configurable sustained soak.
+
+Public macOS distribution is a separate strict gate. Developer ID signing,
+notary acceptance, and Gatekeeper assessment must pass; a local certificate or
+ad-hoc signature is not accepted as public trust. `just release-gate` does not
+claim public distribution success on a host without the selected identity.
 
 ## ADR 0012-0015 Contract Matrices
 

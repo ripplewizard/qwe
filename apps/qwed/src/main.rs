@@ -50,6 +50,7 @@ static SIGCHLD_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Parser)]
+#[command(version, about = "QWE durable terminal supervisor")]
 struct Args {
     #[arg(long)]
     socket: String,

@@ -1,7 +1,7 @@
 # Development Roadmap
 
-Status: Active
-Date: 2026-11-04
+Status: Active; Stage 5 in progress
+Date: 2026-11-06
 
 Detailed sequencing, estimates, staffing sensitivity, and release gates are in
 [Development Plan](development-plan.md).
@@ -66,6 +66,13 @@ Exit: lifecycle, negative-security, Linux credential injection, and a chosen
 macOS Secret Provider design pass on both platforms.
 
 ## Milestone D4: User-Facing V0
+
+Status: In progress. Stage 5 now has checksummed native packages, isolated
+installation and in-place reinstall acceptance, SQLite v9-to-v10 migration,
+worker adoption, release-mode eight-Session Attach/soak benchmarks, and a
+strict macOS Developer ID/notarization gate. Fedora release evidence, full
+manual release acceptance, public notarization, final audit disposition, and
+V0 scope freeze remain open. See Experiment 0021 and `docs/release.md`.
 
 - Build the first usable CLI/TUI vertical slice.
 - Run release-mode latency, memory, and soak benchmarks.
