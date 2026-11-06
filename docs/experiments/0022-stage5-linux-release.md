@@ -2,7 +2,7 @@
 
 Status: Automated Linux release gate passing; independent manual acceptance pending
 Date: 2026-11-06
-Commit: `5e3197a` with only the pre-existing untracked `.vscode/`
+Commit: `8d294df` with only the pre-existing untracked `.vscode/`
 Environment: Fedora Linux 35 x86_64, systemd user manager running
 
 ## Scope
@@ -37,7 +37,7 @@ performance, and TUI smoke.
 Linux release performance:
 
 ```json
-{"case":"PERF-001","build_profile":"release","sessions":8,"attach_requests":504,"soak_seconds":15.0,"p50_ms":10.77,"p95_ms":26.259,"p99_ms":26.545,"max_ms":26.724,"max_rss_bytes":154079232,"max_p95_ms":1000,"max_p99_ms":2000,"max_rss_limit_bytes":536870912}
+{"case":"PERF-001","build_profile":"release","sessions":8,"attach_requests":552,"soak_seconds":15.0,"p50_ms":8.384,"p95_ms":26.14,"p99_ms":26.504,"max_ms":26.809,"max_rss_bytes":153911296,"max_p95_ms":1000,"max_p99_ms":2000,"max_rss_limit_bytes":536870912}
 ```
 
 Neovim, htop, and job-control smoke passed:
@@ -62,7 +62,7 @@ forced teardown, idempotency, and a real second-UID application rejection
 (peer UID 977).
 
 The generated Linux archive SHA-256 was
-`89b53822144ea26d35a6d3b7001073d3ad520cfb6cc7386df2f70f54d47c1514`.
+`7835ddc5a23e8c85be88b01051b6415493d34b6b09b5231084ea3e704cc681bf`.
 The source was marked dirty only because `.vscode/` is untracked; tracked and
 staged diffs were clean.
 

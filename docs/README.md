@@ -94,6 +94,8 @@
   the Linux release candidate.
 - [Experiment 0023](experiments/0023-v0-evidence-audit.md): final disposition
   for the historical POC T03/T04/T08/T11/T12 evidence.
+- [Experiment 0024](experiments/0024-linux-oom-event-retention.md): Linux
+  cgroup OOM event-retention regression and five-run verification.
 
 ## Reading Order
 
