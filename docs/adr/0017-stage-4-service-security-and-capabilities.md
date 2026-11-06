@@ -4,8 +4,9 @@ Status: Accepted
 Date: 2026-11-05
 Implementation state: Core runtime behavior, capability reporting, service
 assets, managed crash-restart/stop lifecycle, local signed Keychain ACL,
-and binary-replacement restart are implemented. Installed cross-UID acceptance
-and public Developer ID distribution remain open.
+binary-replacement restart, and real second-UID rejection are implemented and
+accepted on macOS and Fedora. Public Developer ID distribution, packaged
+installation, and upgrade migration remain Stage 5 release work.
 
 The initial per-process Pane resource contract is superseded by
 [ADR 0018](0018-pane-resource-enforcement.md); secret, service, and teardown
@@ -103,7 +104,9 @@ descriptor, not durable secret storage.
 
 ## Acceptance Required
 
-- Verify a real cross-UID client rejection in the installed socket layout.
+- Closed by [Experiment 0020](../experiments/0020-stage-4-closure.md): a real
+  second UID was denied by the private runtime socket and rejected by qwed's
+  application peer-UID check after a temporary ACL bypass.
 
 Resource-enforcement acceptance now follows ADR 0018.
 Public Developer ID trust and notarized release packaging are Stage 5 gates.

@@ -1,7 +1,7 @@
 # QWE IPC Protocol
 
-Status: Stages 1-3 validated; Stage 4 core capabilities implemented on macOS
-Date: 2026-11-05
+Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64
+Date: 2026-11-06
 
 This document describes the currently implemented request/response protocol.
 The accepted V0 Attach frames and state contracts are canonical in

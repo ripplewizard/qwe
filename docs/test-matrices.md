@@ -1,8 +1,7 @@
 # V0 Contract Test Matrices
 
-Status: Stages 1-3 validated on macOS ARM64 and Fedora Linux x86_64; Stage 4
-core capabilities are in progress
-Date: 2026-11-05
+Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64
+Date: 2026-11-06
 
 These IDs are stable contract identifiers. An implementation test may be
 named after an ID only after it exercises the complete row with real sockets,
@@ -159,7 +158,7 @@ its named command has evidence on both required platforms.
 | SEC-001 | Send malformed JSON in a valid-length client frame | Close that client connection and keep qwed healthy |
 | SEC-002 | Send a client frame header above 8 MiB | Reject before reading or allocating the payload and keep qwed healthy |
 | SEC-003 | Send control input over 1 MiB | Return `input_too_large` without forwarding input to the worker |
-| SEC-004 | Compare matching and mismatched socket peer UIDs | Match is accepted; mismatch returns the `unauthorized_peer` policy error; a real cross-UID process launch remains a release-platform check |
+| SEC-004 | Compare matching and mismatched socket peer UIDs | The private runtime socket denies a second UID; a temporary ACL bypass permits connection; qwed then rejects the client with the `unauthorized_peer` policy error |
 | CRED-001 | Load a credential from a private regular file and reject missing, insecure, symlink, and oversized sources | Only the private regular file is loaded; failures return `credential_unavailable` |
 | CRED-002 | Consume a credential in a real PTY child through the inherited descriptor contract | Secret bytes match exactly and do not appear in argv, environment, protocol status, terminal output, logs, or SQLite |
 | CRED-003 | Use an explicitly signed qwed binary against an ACL-bound temporary Keychain | Trusted code signature reads the item; locking the Keychain fails closed without UI; unlocking restores access; public Developer ID distribution remains a release-identity requirement |
@@ -212,7 +211,7 @@ real-process probes covering attach, grace, hold, Lease, close/task-stop,
 control input, orphan/conflict, identity mismatch, duplicate workers, and
 exited-worker health. The Stage 1-3 audit passes on both required platforms.
 
-## Stage 4 Progress Evidence
+## Stage 4 Completion Evidence
 
 macOS ARM64 and Fedora Linux x86_64 currently pass `just stage4-check`:
 
@@ -230,10 +229,13 @@ macOS ARM64 and Fedora Linux x86_64 currently pass `just stage4-check`:
 - Binary path replacement before managed restart, with worker adoption.
 - Local signed Keychain ACL, locked-Keychain fail-closed, and unlock
   recovery with no background password dialog.
+- Real second-UID socket denial and application peer-UID rejection on macOS
+  and Fedora.
 
-The following Stage 4 gates remain open:
-
-- A real cross-UID client launch under the final installation layout.
+All Stage 4 rows are closed. See
+[Experiment 0020](experiments/0020-stage-4-closure.md) for the closure record.
 
 Public Developer ID trust and notarized distribution are Stage 5 release
-packaging gates; local signed ACL and locked/unlocked Keychain behavior pass.
+packaging gates. Local signed ACL and locked/unlocked Keychain behavior pass.
+Final packaged installation, upgrade migration, and release-mode soak
+measurements are also Stage 5 gates.

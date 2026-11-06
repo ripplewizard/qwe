@@ -62,3 +62,7 @@ huangjian ALL=(qwe-probe) NOPASSWD: /tmp/qwe-cross-uid-client.py
 
 Use the corresponding current username on other hosts. The helper only runs as
 the unprivileged `qwe-probe` account. Do not grant `NOPASSWD: ALL`.
+
+The probe uses an isolated runtime directory with owner-only directory and
+socket permissions rather than installing these assets. Packaged installation,
+upgrade migration, and public distribution signing remain Stage 5 acceptance.

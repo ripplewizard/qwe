@@ -139,9 +139,10 @@ audit is recorded in [Experiment 0009](experiments/0009-stages-1-3-audit.md).
 ## Stage 4 Gate
 
 `just stage4-check` runs the workspace gate, service-manifest validation, a
-real launchd/systemd lifecycle probe, the Stage 4 capability probe, and durable
-idempotency recovery. The probes start qwed, workers, PTYs, and child processes
-against real control sockets and SQLite.
+real launchd/systemd lifecycle probe, the Stage 4 capability probe, a real
+second-UID socket probe, and durable idempotency recovery. The probes start
+qwed, workers, PTYs, and child processes against real control sockets and
+SQLite.
 
 It covers:
 
@@ -162,14 +163,18 @@ It covers:
   terminal Session/Task state.
 - Binary path replacement before a managed restart, plus local signed Keychain
   ACL, locked-Keychain fail-closed, and unlock recovery on macOS.
+- A second UID is denied by the private runtime socket; after a temporary ACL
+  bypass, qwed still rejects the connected peer through its application-level
+  UID check.
 
-The gate passes on macOS ARM64 and Fedora Linux x86_64. It does not replace a
-real cross-UID launch, which remains the final Stage 4 gate. Public Developer
-ID trust/distribution remains Stage 5 release packaging.
+The gate passes on macOS ARM64 and Fedora Linux x86_64. Public Developer ID
+trust/distribution remains Stage 5 release packaging.
 
-`just cross-uid-smoke` is the installed-layout security probe. It requires the
-unprivileged `qwe-probe` account and one narrow sudoers rule documented in
-`packaging/README.md`.
+`just cross-uid-smoke` verifies an isolated runtime directory with the same
+owner-only directory and socket semantics used by the service assets. It
+requires the unprivileged `qwe-probe` account and one narrow sudoers rule
+documented in `packaging/README.md`. It does not install or package QWE;
+packaged installation and migration acceptance remain Stage 5 gates.
 
 ## ADR 0012-0015 Contract Matrices
 

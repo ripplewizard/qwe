@@ -1,7 +1,7 @@
 # Development Readiness
 
-Status: Stages 1, 2, and 3 complete; Stage 4 in progress
-Date: 2026-11-05
+Status: Stages 1, 2, 3, and 4 complete
+Date: 2026-11-06
 
 ## Decision
 
@@ -87,14 +87,16 @@ These are implementation work, not reasons to delay development:
 - systemd and launchd real crash-restart, worker adoption, binary replacement,
   and graceful stop cleanup pass on Fedora Linux and macOS.
 - Malformed frames, oversized frames, oversized input, and peer-UID policy are
-  covered. A real cross-UID client launch under the installed layout remains
-  open.
+  covered. A real second-UID client is denied by the private runtime socket and
+  then rejected by the application peer-UID check after a temporary ACL bypass.
+  Final packaged installation and migration acceptance belongs to Stage 5.
 - Release-mode soak and larger-concurrency measurements remain pending.
 - API Key Manager, tree-scoped resource policy, and forced teardown are
   implemented and pass `just stage4-check` on macOS and Fedora. Linux provides
   hard cgroup v2 limits; macOS reports monitored enforcement with bounded
-  polling overshoot. Signed-build macOS Keychain ACL/locked-keychain validation
-  remains open.
+  polling overshoot. Local signed macOS Keychain ACL, locked-keychain failure,
+  and unlock recovery pass. Public Developer ID trust remains a Stage 5
+  release-identity requirement.
 - Attach queue overflow is covered by a real slow-client reconnect test on both
   platforms. Concurrent independent queues cannot be observed in V0 because
   exclusive Attach rejects a second live client; queue-state isolation remains
@@ -124,10 +126,12 @@ Stages 0-3 automated acceptance and Stage 2 independent manual TUI sign-off are
 complete. The `poc` branch is read-only historical evidence and must not be
 used as the active development branch.
 
-Stage 4 core capabilities pass `just stage4-check` on macOS ARM64 and Fedora
-Linux x86_64, including real launchd/systemd crash-restart, worker adoption,
-graceful stop cleanup, hard Linux resource scopes, macOS resource monitoring,
-and dynamic policy updates. Stage 4 is not closed only on the installed
-cross-UID rejection test. Local signed Keychain ACL and locked/unlocked
-behavior pass; public Developer ID trust/distribution belongs to Stage 5
-release packaging.
+Stage 4 passes `just stage4-check` on macOS ARM64 and Fedora Linux x86_64,
+including real launchd/systemd crash-restart, worker adoption, graceful stop
+cleanup, hard Linux resource scopes, macOS resource monitoring, dynamic policy
+updates, local signed Keychain ACL behavior, and real second-UID rejection.
+Structured closure evidence is in
+[Experiment 0020](experiments/0020-stage-4-closure.md).
+
+Public Developer ID trust, notarization, packaged installation, upgrade
+migration, and release-mode soak measurements belong to Stage 5.

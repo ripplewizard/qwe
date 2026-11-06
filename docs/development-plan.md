@@ -233,7 +233,7 @@ Current implementation:
 ### Stage 4: Services, Security, and V0 Capabilities
 
 Target: 2026-12-07 to 2026-12-18
-Status: In progress on 2026-11-05.
+Status: Complete on 2026-11-06.
 
 - Add systemd user-service and launchd integration.
 - Verify worker orphan cleanup and supervisor upgrade behavior.
@@ -268,10 +268,15 @@ Current implementation:
   pass with real service-manager jobs on both platforms.
 - Managed binary-path replacement before restart preserves and re-adopts the
   live worker.
+- A real second UID is denied by the private socket and rejected by qwed's
+  peer-UID check after a temporary ACL bypass.
 - `just stage4-check` passes on macOS ARM64 and Fedora Linux x86_64.
 
-Open: real cross-UID installation check remains. Local signed Keychain ACL,
-locked/unlocked behavior, and binary-replacement restart pass.
+Local signed Keychain ACL, locked/unlocked behavior, and binary-replacement
+restart pass. See
+[Experiment 0020](experiments/0020-stage-4-closure.md). Packaged installation,
+upgrade migration, public Developer ID trust, notarization, and release-mode
+soak measurements remain Stage 5 work.
 
 ### Stage 5: Release Candidate
 
@@ -312,13 +317,13 @@ just service-config-check
 just stage4-capabilities
 just stage4-check
 just credential-smoke
+just cross-uid-smoke
 ```
 
 Still planned:
 
 ```text
 just state-matrix
-just service-lifecycle-smoke
 just release-gate
 ```
 

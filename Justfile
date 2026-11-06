@@ -884,6 +884,7 @@ stage4-check:
     just --justfile "{{ justfile() }}" service-lifecycle-smoke
     just --justfile "{{ justfile() }}" keychain-smoke
     just --justfile "{{ justfile() }}" stage4-capabilities
+    just --justfile "{{ justfile() }}" cross-uid-smoke
     just --justfile "{{ justfile() }}" stage3-idempotency
 
 stages-1-3-check:

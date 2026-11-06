@@ -73,6 +73,8 @@
   cgroup limits, macOS resource monitoring, and dynamic Pane policy.
 - [Experiment 0019](experiments/0019-keychain-acl-and-binary-upgrade.md): local
   signed Keychain ACL, locked-Keychain behavior, and binary replacement.
+- [Experiment 0020](experiments/0020-stage-4-closure.md): final Stage 4
+  cross-platform gate and second-UID rejection evidence.
 
 ## Reading Order
 

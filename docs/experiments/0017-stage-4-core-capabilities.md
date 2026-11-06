@@ -1,7 +1,7 @@
 # Experiment 0017: Stage 4 Core Capabilities
 
-Status: macOS and Fedora core and service-lifecycle slices passed; signed
-Keychain and installed cross-UID acceptance pending
+Status: Core and service-lifecycle slices passed. The acceptance items below
+were subsequently closed by Experiment 0020.
 Date: 2026-11-05
 Environment: macOS 26.5.1 arm64 and Fedora Linux 35 x86_64, Rust 1.99.1
 
@@ -76,3 +76,7 @@ No secret bytes appeared in test evidence.
 - Launch a real cross-UID client in the installed socket layout.
 - Validate public Developer ID trust and signed distribution. Local signed
   Keychain ACL and locked/unlocked behavior pass in Experiment 0019.
+
+The cross-UID item is closed by
+[Experiment 0020](0020-stage-4-closure.md) using an isolated private runtime
+layout. Public Developer ID trust remains Stage 5 release packaging.
