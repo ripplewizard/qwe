@@ -156,6 +156,8 @@ def main():
                 "bin_dir": str(bin_dir),
                 "service_assets": not args.no_service_assets,
                 "dry_run": args.dry_run,
+                "distribution_profile": manifest["distribution"]["profile"],
+                "public_trust": manifest["distribution"]["public_trust"],
                 "installed": installed,
             },
             separators=(",", ":"),

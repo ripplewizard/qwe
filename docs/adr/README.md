@@ -23,3 +23,4 @@ that links to the replaced decision.
 | [0016](0016-stage-3-retention-and-clock-policy.md) | Stage 3 Lease clock, TTL, and retention | Accepted |
 | [0017](0017-stage-4-service-security-and-capabilities.md) | Stage 4 service, secret, resource, and teardown contracts | Accepted |
 | [0018](0018-pane-resource-enforcement.md) | Pane resource enforcement tiers and dynamic limits | Accepted |
+| [0019](0019-temporary-macos-local-signing.md) | Temporary local self-signed macOS distribution | Accepted temporarily |

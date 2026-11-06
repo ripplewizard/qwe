@@ -95,6 +95,10 @@ These are implementation work, not reasons to delay development:
   isolated-home installation, in-place reinstall, SQLite v9-to-v10 migration,
   worker adoption, and an eight-Session release-mode Attach/soak benchmark are
   implemented. macOS ARM64 and Fedora Linux x86_64 pass these probes.
+- macOS releases temporarily use a local self-signed identity under ADR 0019.
+  The package is marked `local-self-signed` with `public_trust: false`; public
+  binary distribution remains unavailable until Developer ID and
+  notarization pass.
 - API Key Manager, tree-scoped resource policy, and forced teardown are
   implemented and pass `just stage4-check` on macOS and Fedora. Linux provides
   hard cgroup v2 limits; macOS reports monitored enforcement with bounded

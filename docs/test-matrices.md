@@ -1,7 +1,7 @@
 # V0 Contract Test Matrices
 
 Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64; Stage 5
-foundation passing on macOS ARM64
+foundation passing on both, with macOS temporarily local-self-signed
 Date: 2026-11-06
 
 These IDs are stable contract identifiers. An implementation test may be
@@ -245,6 +245,7 @@ measurements are also Stage 5 gates.
 
 | ID | Case | Expected result |
 |---|---|---|
+| MAC-001 | Create, use, expose, and remove the temporary local signing identity | Dedicated Keychain signs all four executables; package records `local-self-signed` and `public_trust: false`; public gate rejects it; cleanup removes Keychain/trust and restores the user search list |
 | PACK-001 | Build a native release package | All four executables report the manifest version; payload paths are portable; a safely extractable archive, SHA-256 checksums, and `qwe-release/v1` metadata are present |
 | PACK-002 | Verify and install a package into an isolated prefix | Checksums pass, executable modes are correct, native service assets are rendered without a checkout path, and no service is started |
 | PACK-003 | Reinstall while preserving state, restart qwed, and migrate v9 state | SQLite is preserved during install; the same worker/task are adopted; startup migrates schema v9 to v10 |
@@ -255,3 +256,7 @@ Packaged installation, reinstall, worker adoption, schema migration, and
 release-mode performance pass on macOS ARM64 and Fedora Linux x86_64. Public
 macOS signing/notarization, full manual release acceptance, and final V0 freeze
 remain pending.
+
+The local signing lifecycle passes with an isolated create/sign/verify/remove
+probe on macOS ARM64. The temporary identity is marked non-public and is not
+committed.

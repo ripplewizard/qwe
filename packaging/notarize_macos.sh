@@ -29,6 +29,28 @@ done
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/qwe-notarize.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
+distribution_profile="$(
+  python3 - "$artifact" <<'PY'
+import json
+import sys
+import tarfile
+
+with tarfile.open(sys.argv[1], "r:gz") as archive:
+    for member in archive.getmembers():
+        if member.name.endswith("/release.json"):
+            manifest = json.load(archive.extractfile(member))
+            print(manifest["distribution"]["profile"])
+            break
+    else:
+        raise SystemExit("release archive does not contain release.json")
+PY
+)"
+if [ "$distribution_profile" != "developer-id-unnotarized" ]; then
+  printf 'archive distribution profile is %s, not a Developer ID build\n' \
+    "$distribution_profile" >&2
+  exit 1
+fi
+
 submission="$(
   xcrun notarytool submit "$artifact" \
     --keychain-profile "$profile" \

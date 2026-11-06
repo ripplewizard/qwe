@@ -908,8 +908,55 @@ state-matrix:
 release-build:
     cargo build --release --workspace
 
+macos-local-identity-create:
+    python3 "{{ justfile_directory() }}/packaging/macos_local_signature.py" create
+
+macos-local-identity-status:
+    python3 "{{ justfile_directory() }}/packaging/macos_local_signature.py" status
+
+macos-local-identity-remove:
+    python3 "{{ justfile_directory() }}/packaging/macos_local_signature.py" remove
+
+macos-local-signing-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Darwin" ] || {
+      printf 'macOS local signing smoke must run on Darwin\n' >&2
+      exit 2
+    }
+    cargo build --release -p qwe
+    scratch="$(mktemp -d /tmp/qwe-local-signing-smoke.XXXXXX)"
+    export QWE_LOCAL_SIGNING_HOME="$scratch/state"
+    original_keychains="$(security list-keychains -d user)"
+    cleanup_local_signing() {
+      python3 "{{ justfile_directory() }}/packaging/macos_local_signature.py" \
+        remove >/dev/null 2>&1 || true
+      find "$scratch" -mindepth 1 -type f -delete 2>/dev/null || true
+      find "$scratch" -mindepth 1 -depth -type d -delete 2>/dev/null || true
+    }
+    trap cleanup_local_signing EXIT
+    python3 "{{ justfile_directory() }}/packaging/macos_local_signature.py" create |
+      jq -e '.configured == true and .public_trust == false' >/dev/null
+    cp target/release/qwe "$scratch/qwe"
+    python3 "{{ justfile_directory() }}/packaging/macos_local_signature.py" \
+      sign "$scratch/qwe" |
+      jq -e '.signing_mode == "self-signed" and .public_trust == false' >/dev/null
+    codesign --verify --strict "$scratch/qwe"
+    codesign -dv --verbose=4 "$scratch/qwe" 2>&1 |
+      grep -F 'Authority=QWE Local Release Signing' >/dev/null
+    python3 "{{ justfile_directory() }}/packaging/macos_local_signature.py" remove |
+      jq -e '.local_signing_identity == "removed"' >/dev/null
+    [ "$(security list-keychains -d user)" = "$original_keychains" ]
+    printf '{"case":"MAC-001","identity_lifecycle":"pass","codesign_verify":"pass","public_trust":false}\n'
+
 release-package:
     python3 "{{ justfile_directory() }}/packaging/build_release.py" --force
+
+release-package-self-signed:
+    cargo build --release --workspace
+    python3 "{{ justfile_directory() }}/packaging/build_release.py" \
+      --self-signed \
+      --force
 
 release-package-signed identity:
     cargo build --release --workspace
@@ -945,8 +992,13 @@ release-gate:
     just --justfile "{{ justfile() }}" check-qwe
     just --justfile "{{ justfile() }}" state-matrix
     just --justfile "{{ justfile() }}" release-build
+    signing_args=()
+    if [ "$(uname -s)" = "Darwin" ]; then
+      just --justfile "{{ justfile() }}" macos-local-signing-smoke
+      signing_args=(--self-signed)
+    fi
     package_json="$(
-      python3 packaging/build_release.py --force
+      python3 packaging/build_release.py "${signing_args[@]}" --force
     )"
     printf '%s\n' "$package_json"
     package="$(
@@ -960,6 +1012,19 @@ release-gate:
     python3 tests/fixtures/release_acceptance_probe.py \
       --package "$package" \
       --archive "$archive"
+    if [ "$(uname -s)" = "Darwin" ]; then
+      rejection_log="$root/dist/local-public-gate-rejection.txt"
+      set +e
+      QWE_DEVELOPER_ID=placeholder \
+      QWE_NOTARY_PROFILE=placeholder \
+        packaging/notarize_macos.sh "$archive" \
+        >"$root/dist/local-public-gate.stdout" 2>"$rejection_log"
+      rejection_status=$?
+      set -e
+      [ "$rejection_status" -eq 1 ]
+      grep -F 'archive distribution profile is local-self-signed' \
+        "$rejection_log" >/dev/null
+    fi
     just --justfile "{{ justfile() }}" release-benchmark 15
 
 stages-1-3-check:

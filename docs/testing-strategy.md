@@ -200,6 +200,13 @@ notary acceptance, and Gatekeeper assessment must pass; a local certificate or
 ad-hoc signature is not accepted as public trust. `just release-gate` does not
 claim public distribution success on a host without the selected identity.
 
+Until Developer ID is available, ADR 0019 permits a dedicated local
+self-signed package tier. It signs all four executables through an isolated
+Keychain, records `local-self-signed` and `public_trust: false`, adds the
+`-local` package suffix, and is rejected by the public gate before any Apple
+notary submission. `just macos-local-signing-smoke` separately verifies the
+create, sign, inspect, remove, and Keychain-search-list restoration lifecycle.
+
 ## ADR 0012-0015 Contract Matrices
 
 The corresponding ADRs are accepted. Every row has a stable ID in

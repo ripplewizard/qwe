@@ -9,7 +9,7 @@ V0 qualification currently targets these native development platforms:
 
 | Target | Status | Service manager | Resource enforcement | Credential provider |
 |---|---|---|---|---|
-| macOS ARM64 | Stage 4 qualified; Stage 5 release gates passing; manual/public gates pending | launchd user agent | libproc monitoring, explicitly monitored | macOS Keychain |
+| macOS ARM64 | Local self-signed package only; public binary distribution unavailable pending Developer ID | launchd user agent | libproc monitoring, explicitly monitored | macOS Keychain |
 | Fedora Linux x86_64 | Stage 4 qualified; Stage 5 release gates passing; manual gate pending | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
 | macOS x86_64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
 | Linux ARM64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
@@ -44,7 +44,7 @@ SQLite state, logs, and environment dumps remain local.
 The release directory and archive use:
 
 ```text
-qwe-VERSION-TARGET/
+qwe-VERSION-TARGET[-local]/
   README.md
   INSTALL.md
   SHA256SUMS
@@ -62,13 +62,51 @@ qwe-VERSION-TARGET/
 
 `release.json` uses schema `qwe-release/v1` and records product and IPC
 protocol versions, normalized target, source revision and dirty status,
-individual executable hashes, service assets, and the signing identity when
-one is selected. `SHA256SUMS` covers all payload files except itself and the
-manifest.
+individual executable hashes, service assets, signing mode and identity, and
+the distribution profile. Non-public macOS artifacts use the `-local` suffix
+and always record `distribution.public_trust: false`. `SHA256SUMS` covers every
+payload file except itself, including `release.json`.
 
 The installer validates checksums before replacing executables. It does not
 modify SQLite or start a service, so reinstall and binary replacement preserve
 Session state for supervised restart.
+
+## Temporary Local macOS Signing
+
+[ADR 0019](adr/0019-temporary-macos-local-signing.md) permits a temporary
+local-only macOS release path while the Developer Program account is pending.
+
+Create a dedicated local self-signed code-signing identity:
+
+```sh
+just macos-local-identity-create
+just macos-local-identity-status
+```
+
+The private key and random Keychain password stay under
+`~/Library/Application Support/QWE/local-signing` with owner-only permissions.
+The explicit setup command adds the `codeSign` trust setting for that local
+certificate. The certificate is not an Apple Developer ID and does not establish
+public trust.
+
+Build a local self-signed artifact:
+
+```sh
+just release-package-self-signed
+```
+
+The result is named `qwe-VERSION-macos-arm64-local.tar.gz`. Its manifest records
+`distribution.profile: local-self-signed` and `public_trust: false`.
+`just release-gate` uses this signing mode automatically on macOS.
+
+Remove the local identity and its trust setting when it is no longer needed:
+
+```sh
+just macos-local-identity-remove
+```
+
+This path is for the local machine and controlled testing. It is not a public
+distribution tier and does not replace the public gate below.
 
 ## Public macOS Distribution
 
@@ -88,6 +126,10 @@ The public gate is available as
 No public-trust claim is valid until the selected Developer ID, notary
 submission, and Gatekeeper checks pass. The current environment has no public
 Developer ID identity available.
+
+When the account is available, [ADR 0019](adr/0019-temporary-macos-local-signing.md)
+defines the restoration sequence. The public gate rejects local unsigned or
+self-signed profiles before contacting Apple.
 
 ## Stage 5 Remaining Gates
 

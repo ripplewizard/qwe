@@ -25,7 +25,7 @@ MATRIX_PATH = ROOT / "docs/test-matrices.md"
 PROTOCOL_SOURCE = ROOT / "crates/qwe-protocol/src/lib.rs"
 TEST_ID_PATTERN = re.compile(
     r"\b(?:AUTH|LIVE|ATTACH|OBJ|IDEMP|HIST|SVC|SEC|CRED|RES|KILL|"
-    r"PACK|PERF)-\d{3}\b"
+    r"PACK|PERF|MAC)-\d{3}\b"
 )
 
 

@@ -13,6 +13,10 @@ just release-build
 just release-package
 ```
 
+On macOS, unsigned builds are marked `local-unsigned` and receive a `-local`
+suffix. Use the local self-signed tier described below for the temporary
+release workflow.
+
 Generated packages are written under the ignored `dist/` directory. Install
 from an unpacked package with:
 
@@ -61,6 +65,21 @@ The wrapper stores SQLite state under `~/Library/Application Support/QWE`.
 Credentials use Keychain generic-password entries named
 `qwe.<CREDENTIAL_NAME>`.
 
+## Temporary macOS local signing
+
+Create the machine-local self-signed identity and build the explicitly
+non-public package:
+
+```sh
+just macos-local-identity-create
+just release-package-self-signed
+```
+
+The output is `qwe-VERSION-macos-arm64-local.tar.gz`. The installed public
+trust remains false, and the public gate rejects this profile. The identity
+uses a dedicated local Keychain and can be removed with
+`just macos-local-identity-remove`.
+
 ## Capability boundary
 
 `qwed` reports the active service manager and credential backend through
@@ -69,9 +88,9 @@ Session runs in a transient systemd user scope with hard cgroup v2 memory,
 swap, task-count, and CPU-bandwidth controls. macOS uses libproc monitoring and
 reports `monitored` enforcement with bounded polling overshoot.
 
-Local signed Keychain ACL, locked-Keychain fail-closed behavior, and
-binary replacement pass. Public Developer ID signing and notarization use a
-separate strict gate:
+Local signed Keychain ACL, locked-Keychain fail-closed behavior, binary
+replacement, and the temporary local self-signed package tier pass. Public
+Developer ID signing and notarization remain a separate strict gate:
 
 ```sh
 python3 packaging/build_release.py \

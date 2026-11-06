@@ -7,6 +7,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
@@ -77,6 +78,19 @@ def sign_binary(path, identity):
     run(["codesign", "--verify", "--strict", "--verbose=2", path])
 
 
+def sign_self_signed(paths):
+    return json.loads(
+        run(
+            [
+                sys.executable,
+                ROOT / "packaging/macos_local_signature.py",
+                "sign",
+                *paths,
+            ]
+        )
+    )
+
+
 def copy_file(source, destination, mode):
     if not source.is_file():
         raise SystemExit(f"required release input is missing: {source}")
@@ -121,7 +135,9 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
     parser.add_argument("--version")
     parser.add_argument("--target")
-    parser.add_argument("--sign-identity")
+    signing = parser.add_mutually_exclusive_group()
+    signing.add_argument("--sign-identity")
+    signing.add_argument("--self-signed", action="store_true")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
@@ -129,10 +145,27 @@ def main():
         workspace = tomllib.load(stream)
     version = args.version or workspace["workspace"]["package"]["version"]
     target = args.target or normalized_target()
+    is_macos = target.startswith("macos-")
+    if args.sign_identity and not is_macos:
+        raise SystemExit("--sign-identity is only supported for macOS targets")
+    if args.self_signed and not is_macos:
+        raise SystemExit("--self-signed is only supported for macOS targets")
+    if args.self_signed:
+        signing_mode = "self-signed"
+        distribution_profile = "local-self-signed"
+    elif args.sign_identity:
+        signing_mode = "developer-id"
+        distribution_profile = "developer-id-unnotarized"
+    else:
+        signing_mode = "unsigned"
+        distribution_profile = "local-unsigned" if is_macos else "unsigned"
+    artifact_suffix = (
+        "-local" if is_macos and distribution_profile != "developer-id-unnotarized" else ""
+    )
     commit, dirty = source_commit()
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    package_name = f"qwe-{version}-{target}"
+    package_name = f"qwe-{version}-{target}{artifact_suffix}"
 
     final_root = output_dir / package_name
     archive_path = output_dir / f"{package_name}.tar.gz"
@@ -157,8 +190,18 @@ def main():
             source = args.bin_dir / name
             destination = bin_dir / name
             copy_file(source, destination, 0o755)
-            if args.sign_identity:
-                sign_binary(destination, args.sign_identity)
+
+        signed_identity = None
+        if args.self_signed:
+            signing_result = sign_self_signed([bin_dir / name for name in BINARIES])
+            signed_identity = signing_result["identity"]
+        elif args.sign_identity:
+            for name in BINARIES:
+                sign_binary(bin_dir / name, args.sign_identity)
+            signed_identity = args.sign_identity
+
+        for name in BINARIES:
+            destination = bin_dir / name
             binary_records[name] = {
                 "bytes": destination.stat().st_size,
                 "sha256": sha256(destination),
@@ -210,7 +253,24 @@ def main():
             "source_commit": commit,
             "source_dirty": dirty,
             "built_at_utc": datetime.now(UTC).isoformat(),
-            "signed_identity": args.sign_identity,
+            "artifact_label": f"{target}{artifact_suffix}",
+            "signing_mode": signing_mode,
+            "signed_identity": signed_identity,
+            "distribution": {
+                "profile": distribution_profile,
+                "public_trust": False,
+                "notarized": False,
+                "warning": (
+                    "Developer ID signed but notarized public trust is not established"
+                    if distribution_profile == "developer-id-unnotarized"
+                    else (
+                        "Local/self-signed build only; not eligible for public "
+                        "macOS distribution"
+                        if is_macos
+                        else None
+                    )
+                ),
+            },
             "binaries": binary_records,
             "service_assets": [
                 "share/qwe/service/systemd/qwe.service",
@@ -243,7 +303,10 @@ def main():
                 "target": target,
                 "source_commit": commit,
                 "source_dirty": dirty,
-                "signed_identity": args.sign_identity,
+                "signing_mode": signing_mode,
+                "signed_identity": signed_identity,
+                "distribution_profile": distribution_profile,
+                "public_trust": False,
             },
             separators=(",", ":"),
         )

@@ -10,8 +10,10 @@ Active development starts on the `dev` branch. Stages 0-4 are complete;
 Stage 5 release-candidate work is in progress. The current slice adds
 checksummed native release packages, temporary-prefix installation,
 in-place upgrade acceptance, release-mode Attach/soak benchmarks, and a
-separate Developer ID notarization gate. Automated POC evidence is complete on
-Linux and macOS; final manual audit disposition remains Stage 5 work.
+separate Developer ID notarization gate. macOS binary distribution is
+temporarily limited to explicitly marked local self-signed packages under ADR
+0019. Automated POC evidence is complete on Linux and macOS; final manual audit
+disposition remains Stage 5 work.
 Implementation follows
 [`docs/design-baseline.md`](docs/design-baseline.md).
 

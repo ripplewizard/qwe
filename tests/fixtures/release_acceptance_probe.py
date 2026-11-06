@@ -191,6 +191,14 @@ def main():
     assert manifest["schema"] == "qwe-release/v1"
     assert manifest["version"]
     assert manifest["protocol_version"] == 1
+    distribution = manifest["distribution"]
+    assert distribution["public_trust"] is False
+    assert manifest["signing_mode"] in {"unsigned", "self-signed", "developer-id"}
+    if (
+        manifest["target"].startswith("macos-")
+        and manifest["signing_mode"] != "developer-id"
+    ):
+        assert package.name.endswith("-local")
     if args.archive is not None:
         verify_archive(args.archive.resolve(), manifest["version"])
 
@@ -248,6 +256,13 @@ def main():
         assert released["version"] == manifest["version"]
         assert released["protocol"] == manifest["protocol_version"]
         assert manifest["version"] in run([bin_dir / "qwed", "--version"]).stdout
+        if manifest["signing_mode"] == "self-signed":
+            for name in ("qwe", "qwed", "qwe-worker", "qwe-session-exec"):
+                signature = run(
+                    ["codesign", "-dv", "--verbose=4", bin_dir / name]
+                ).stderr
+                assert "Authority=QWE Local Release Signing" in signature
+                assert "TeamIdentifier=not set" in signature
 
         try:
             qwed_process = start_qwed(bin_dir / "qwed", socket_path, store_path)
@@ -339,6 +354,8 @@ def main():
                 "archive_extraction": (
                     "pass" if args.archive is not None else "not_requested"
                 ),
+                "distribution_profile": distribution["profile"],
+                "public_trust": distribution["public_trust"],
                 "temporary_home_install": "pass",
                 "service_assets": "pass",
                 "database_preserved_during_reinstall": "pass",

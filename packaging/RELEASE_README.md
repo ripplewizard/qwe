@@ -3,6 +3,11 @@
 This package contains the QWE V0 command-line client, supervisor, Session
 worker, resource-limit launcher, and native service assets.
 
+Packages whose names end in `-local` are not eligible for public macOS
+distribution. Check `release.json` for `distribution.profile` and
+`distribution.public_trust`; local unsigned and self-signed packages always
+report `false`.
+
 Install into the current user account:
 
 ```sh
@@ -23,4 +28,5 @@ credential setup.
 
 Every release archive is accompanied by `release.json`, which records the
 product version, IPC protocol version, target, source revision, dirty-source
-status, Developer ID identity when signed, and hashes of the four executables.
+status, signing mode and identity, distribution profile and public-trust
+status, and hashes of the four executables.

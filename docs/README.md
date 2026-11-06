@@ -24,6 +24,12 @@
   health states and startup reconciliation truth table.
 - [ADR 0016](adr/0016-stage-3-retention-and-clock-policy.md): accepted Lease
   clock/TTL and retention policy.
+- [ADR 0017](adr/0017-stage-4-service-security-and-capabilities.md): service,
+  credential broker, forced teardown, and resource contracts.
+- [ADR 0018](adr/0018-pane-resource-enforcement.md): Pane resource enforcement
+  tiers and dynamic policy updates.
+- [ADR 0019](adr/0019-temporary-macos-local-signing.md): temporary local
+  self-signed macOS releases until Developer ID is available.
 
 ## Development
 

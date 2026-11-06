@@ -310,12 +310,16 @@ Current implementation:
   configurable soak period.
 - `packaging/notarize_macos.sh` enforces Developer ID signatures, notary
   acceptance, and Gatekeeper assessment without falling back to ad-hoc trust.
+- ADR 0019 temporarily downgrades macOS binary distribution to a machine-local
+  self-signed package. Local artifacts carry `-local`, report
+  `public_trust: false`, and are rejected by the public notarization gate.
 - `just release-gate` currently combines the workspace/state gates, packaging,
   installation/upgrade acceptance, and a 15-second release benchmark.
 - macOS ARM64 and Fedora Linux x86_64 pass the package, reinstall, adoption,
-  migration, and benchmark probes. Full manual release acceptance, public
-  Developer ID signing/notarization, final POC audit disposition, and final V0
-  freeze remain open.
+  migration, and benchmark probes. macOS currently uses the local self-signed
+  tier. Full manual release acceptance, public Developer ID
+  signing/notarization, final POC audit disposition, and final V0 freeze remain
+  open.
 
 ## Test and Delivery Gates
 
@@ -352,8 +356,11 @@ just release-public-gate ARTIFACT # requires selected Developer ID and profile
 ```
 
 `just state-matrix`, `just release-gate`, `just release-package`,
-`just release-package-signed`, `just release-acceptance`,
-`just release-benchmark`, and `just release-public-gate` are implemented.
+`just release-package-self-signed`, `just macos-local-identity-create`,
+`just macos-local-identity-status`, `just macos-local-identity-remove`,
+`just macos-local-signing-smoke`, `just release-package-signed`,
+`just release-acceptance`, `just release-benchmark`, and
+`just release-public-gate` are implemented.
 
 The new recipes must use real processes, sockets, PTYs, SQLite, and platform
 services. They must not simulate successful behavior.

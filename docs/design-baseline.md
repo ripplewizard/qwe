@@ -110,3 +110,5 @@ events.
   checksummed native packages, isolated installation and upgrade recovery,
   strict macOS Developer ID/notarization gates, and an explicit supported
   platform matrix; public trust is not claimed before those gates pass.
+  ADR 0019 temporarily marks macOS binary distribution as
+  `local-self-signed`/non-public until a Developer ID identity is available.
