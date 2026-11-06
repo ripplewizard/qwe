@@ -1,11 +1,15 @@
+mod capabilities;
+mod credentials;
 mod worker_client;
 
+use capabilities::{matrix as capability_matrix, merge_resource_policy, validate_resource_policy};
 use clap::Parser;
+use credentials::CredentialProvider;
 use qwe_core::{
     AttachmentAuthority, AttachmentAuthorityState, AttachmentOperation, AuthorityCredentials,
     DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_LEASE_TTL_MS, PaneId, PaneRecord, ProcessIdentity,
-    ReclaimTokenHash, ReconciliationDisposition, SessionRecord, TaskId, TaskRecord, TaskState,
-    WorkerHealth,
+    ReclaimTokenHash, ReconciliationDisposition, ResourcePolicy, SessionRecord, TaskId, TaskRecord,
+    TaskState, WorkerHealth,
 };
 use qwe_protocol::{
     ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope,
@@ -19,18 +23,20 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicI32, AtomicI64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering as AtomicOrdering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use worker_client::{WorkerClient, WorkerEvent};
+use zeroize::Zeroizing;
 
 const WORKER_CALL_TIMEOUT: Duration = Duration::from_millis(500);
 const WORKER_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -38,8 +44,10 @@ const WORKER_MAINTENANCE_TIMEOUT: Duration = Duration::from_secs(5);
 const SAFETY_SCAN_INTERVAL: Duration = Duration::from_secs(2);
 const HISTORY_PRUNE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const WORKER_START_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_CONTROL_INPUT_BYTES: usize = 1024 * 1024;
 
 static SIGCHLD_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Parser)]
 struct Args {
@@ -47,10 +55,15 @@ struct Args {
     socket: String,
     #[arg(long)]
     store: Option<String>,
+    #[arg(long)]
+    credentials_dir: Option<PathBuf>,
+    #[arg(long)]
+    keychain_service_prefix: Option<String>,
 }
 
 struct Context {
     runtime_dir: PathBuf,
+    linux_scope_available: bool,
     store: Mutex<Store>,
     workers: Mutex<HashMap<String, Arc<WorkerHandle>>>,
     reconciliation_incidents: Mutex<ReconciliationIncidents>,
@@ -59,6 +72,7 @@ struct Context {
     creation_lock: Mutex<()>,
     idempotency_lock: Mutex<()>,
     attachment_lock: Mutex<()>,
+    credentials: CredentialProvider,
     _runtime_lock: File,
 }
 
@@ -379,6 +393,8 @@ fn spawn_worker(
     session_id: &str,
     program: &str,
     arguments: &[String],
+    resource_policy: &ResourcePolicy,
+    credential: Option<(&str, &Zeroizing<Vec<u8>>)>,
 ) -> Result<(WorkerHandle, Value), ProtocolErrorBody> {
     let socket = worker_socket(&context.runtime_dir, session_id);
     let attach_socket = worker_attach_socket(&context.runtime_dir, session_id);
@@ -400,9 +416,47 @@ fn spawn_worker(
     for argument in arguments {
         command.arg("--worker-arg").arg(argument);
     }
-    let mut child = command
+    if context.linux_scope_available {
+        command.arg("--worker-systemd-scope");
+    }
+    if let Some(seconds) = resource_policy.cpu_seconds {
+        command.arg("--worker-cpu-seconds").arg(seconds.to_string());
+    }
+    if let Some(percent) = resource_policy.cpu_quota_percent {
+        command
+            .arg("--worker-cpu-quota-percent")
+            .arg(percent.to_string());
+    }
+    if let Some(bytes) = resource_policy.memory_high_bytes {
+        command
+            .arg("--worker-memory-high-bytes")
+            .arg(bytes.to_string());
+    }
+    if let Some(bytes) = resource_policy.memory_max_bytes {
+        command.arg("--worker-memory-bytes").arg(bytes.to_string());
+    }
+    if let Some(bytes) = resource_policy.memory_swap_max_bytes {
+        command
+            .arg("--worker-memory-swap-max-bytes")
+            .arg(bytes.to_string());
+    }
+    if let Some(tasks) = resource_policy.tasks_max {
+        command.arg("--worker-tasks-max").arg(tasks.to_string());
+    }
+    let credential_fd = credential
+        .map(|(_, secret)| credential_pipe(secret))
+        .transpose()
+        .map_err(|failure| error("credential_injection_failed", failure.to_string()))?;
+    if let (Some((_name, _secret)), Some(fd)) = (credential, credential_fd.as_ref()) {
+        command
+            .arg("--worker-credential-fd")
+            .arg(fd.as_raw_fd().to_string());
+    }
+    let child = command
         .spawn()
         .map_err(|failure| error("worker_start_failed", failure.to_string()))?;
+    drop(credential_fd);
+    let mut child = child;
     let deadline = Instant::now() + WORKER_START_TIMEOUT;
     let mut last_failure = "worker did not create a control socket".to_string();
     while Instant::now() < deadline {
@@ -441,6 +495,22 @@ fn spawn_worker(
     let _ = fs::remove_file(&socket);
     let _ = fs::remove_file(&attach_socket);
     Err(error("worker_start_failed", last_failure))
+}
+
+fn credential_pipe(secret: &[u8]) -> std::io::Result<OwnedFd> {
+    let mut descriptors = [-1_i32; 2];
+    if unsafe { libc::pipe(descriptors.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut writer = unsafe { File::from_raw_fd(descriptors[1]) };
+    if let Err(failure) = writer.write_all(secret).and_then(|()| writer.flush()) {
+        unsafe {
+            libc::close(descriptors[0]);
+        }
+        return Err(failure);
+    }
+    drop(writer);
+    Ok(unsafe { OwnedFd::from_raw_fd(descriptors[0]) })
 }
 
 fn storage_error(failure: StorageError) -> ProtocolErrorBody {
@@ -551,7 +621,34 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let (handle, mut status) = spawn_worker(context, &session_id, program, &arguments)?;
+    let resource_policy = validate_resource_policy(&payload, context.linux_scope_available)?;
+    let credential_name = match payload.get("credential") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) if value.is_empty() => None,
+        Some(Value::String(value)) => Some(value.as_str()),
+        Some(_) => {
+            return Err(error("invalid_request", "credential must be a string"));
+        }
+    };
+    let credential = credential_name
+        .map(|name| {
+            context
+                .credentials
+                .read(name)
+                .map(|secret| (name.to_string(), secret))
+                .map_err(|failure| error("credential_unavailable", failure.to_string()))
+        })
+        .transpose()?;
+    let (handle, mut status) = spawn_worker(
+        context,
+        &session_id,
+        program,
+        &arguments,
+        &resource_policy,
+        credential
+            .as_ref()
+            .map(|(name, secret)| (name.as_str(), secret)),
+    )?;
     let now = now_ms();
     let running = status.get("running").and_then(Value::as_bool) == Some(true);
     let session_state = if running { "running" } else { "exited" };
@@ -574,6 +671,7 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
         let pane = PaneRecord {
             id: pane_id.clone(),
             session_id: session_id.clone(),
+            resource_policy: resource_policy.clone(),
             updated_at_ms: now,
         };
         let task = TaskRecord {
@@ -621,6 +719,7 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
         .insert(session_id, Arc::new(handle));
     status["task_id"] = json!(task_id);
     status["pane_id"] = json!(pane_id);
+    status["resource_policy"] = json!(resource_policy);
     if let Some(response) = status.as_object_mut() {
         response.remove("total_written");
         response.remove("truncated_from");
@@ -738,13 +837,43 @@ fn task_status(context: &Context, payload: &Value) -> Result<Value, ProtocolErro
             .ok_or_else(|| error("not_found", "task not found"))?
             .session_id
     };
-    let status = call_worker(
+    let status = match call_worker(
         context,
         &session_id,
         "SESSION_STATUS",
         json!({"session_id": session_id}),
         WORKER_REQUEST_TIMEOUT,
-    )?;
+    ) {
+        Ok(status) => status,
+        Err(failure) if failure.code == "terminal_lost" => {
+            let store = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let closed = store
+                .find_session(&session_id)
+                .map_err(storage_error)?
+                .is_some_and(|session| session.state == "closed");
+            if !closed {
+                return Err(failure);
+            }
+            let task = store
+                .find_task(&id)
+                .map_err(storage_error)?
+                .ok_or_else(|| error("not_found", "task not found"))?;
+            return Ok(json!({
+                "task": task_json(&task),
+                "terminal": {
+                    "session_id": task.session_id,
+                    "running": false,
+                    "state": "closed",
+                    "exit_code": task.exit_code,
+                    "exit_signal": task.exit_signal
+                }
+            }));
+        }
+        Err(failure) => return Err(failure),
+    };
     apply_status(context, &session_id, &status)?;
     let task = context
         .store
@@ -754,6 +883,106 @@ fn task_status(context: &Context, payload: &Value) -> Result<Value, ProtocolErro
         .map_err(storage_error)?
         .ok_or_else(|| error("persistence_failure", "task disappeared after update"))?;
     Ok(json!({"task": task_json(&task), "terminal": status}))
+}
+
+fn update_session_resources(
+    context: &Context,
+    payload: &Value,
+) -> Result<Value, ProtocolErrorBody> {
+    let session_id = required_string(payload, "session_id")?.to_string();
+    let update = payload
+        .get("resource_policy")
+        .ok_or_else(|| error("invalid_request", "missing resource_policy"))?;
+    let _authority_guard = context
+        .attachment_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (previous, next) = {
+        let mut store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        authorize_session_control(
+            &mut store,
+            &session_id,
+            payload,
+            AttachmentOperation::ResourcePolicy,
+            now_ms(),
+        )?;
+        let pane = store
+            .find_pane_for_session(&session_id)
+            .map_err(storage_error)?
+            .ok_or_else(|| error("not_found", "Pane not found"))?;
+        let next =
+            merge_resource_policy(&pane.resource_policy, update, context.linux_scope_available)?;
+        (pane.resource_policy, next)
+    };
+    let terminal = call_worker(
+        context,
+        &session_id,
+        "SESSION_RESOURCE_UPDATE",
+        json!({"session_id": session_id, "resource_policy": next}),
+        WORKER_MAINTENANCE_TIMEOUT,
+    )?;
+    let persisted = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .update_pane_resource_policy(&session_id, &next, now_ms())
+        .map_err(storage_error);
+    if let Err(failure) = persisted {
+        let _ = call_worker(
+            context,
+            &session_id,
+            "SESSION_RESOURCE_UPDATE",
+            json!({"session_id": session_id, "resource_policy": previous}),
+            WORKER_MAINTENANCE_TIMEOUT,
+        );
+        return Err(failure);
+    }
+    Ok(json!({
+        "session_id": session_id,
+        "resource_policy": next,
+        "terminal": terminal
+    }))
+}
+
+fn persisted_session_status(
+    context: &Context,
+    session_id: &str,
+) -> Result<Value, ProtocolErrorBody> {
+    let store = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let session = store
+        .find_session(session_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("not_found", "session not found"))?;
+    let task = store
+        .find_task_for_session(session_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("persistence_failure", "Session Task is missing"))?;
+    let pane = store
+        .find_pane_for_session(session_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("persistence_failure", "Session Pane is missing"))?;
+    Ok(json!({
+        "session_id": session.id,
+        "pid": session.identity.as_ref().map(|identity| identity.pid),
+        "pgid": session.identity.as_ref().map(|identity| identity.pgid),
+        "start_token": session.identity.as_ref().map(|identity| identity.start_token.as_str()),
+        "process_identity": session.identity,
+        "worker_pid": session.worker_identity.as_ref().map(|identity| identity.pid),
+        "worker_identity": session.worker_identity,
+        "running": false,
+        "state": session.state,
+        "exit_code": task.exit_code,
+        "exit_signal": task.exit_signal,
+        "task_id": task.id,
+        "pane_id": pane.id,
+        "resource_policy": pane.resource_policy
+    }))
 }
 
 fn authorize_session_control(
@@ -866,7 +1095,138 @@ fn task_stop(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorB
     Ok(task_json(&task))
 }
 
-fn close_session(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+fn task_kill_batch(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    let requested = payload
+        .get("task_ids")
+        .and_then(Value::as_array)
+        .ok_or_else(|| error("invalid_request", "missing task_ids"))?;
+    if requested.is_empty() || requested.len() > 100 {
+        return Err(error(
+            "invalid_request",
+            "task_ids must contain between 1 and 100 TaskIds",
+        ));
+    }
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for value in requested {
+        let raw = value
+            .as_str()
+            .ok_or_else(|| error("invalid_request", "task_ids entries must be strings"))?;
+        let id = TaskId::from_str(raw)
+            .map_err(|failure| error("invalid_request", failure.to_string()))?;
+        if seen.insert(id.to_string()) {
+            ids.push(id);
+        }
+    }
+    let mut killed = Vec::new();
+    let mut failures = Vec::new();
+    for id in ids {
+        let result = (|| {
+            let _authority_guard = context
+                .attachment_lock
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let task = {
+                let mut store = context
+                    .store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let task = store
+                    .find_task(&id)
+                    .map_err(storage_error)?
+                    .ok_or_else(|| error("not_found", "task not found"))?;
+                authorize_session_control(
+                    &mut store,
+                    &task.session_id,
+                    payload,
+                    AttachmentOperation::CloseTaskStop,
+                    now_ms(),
+                )?;
+                task
+            };
+            let status = match call_worker(
+                context,
+                &task.session_id,
+                "TASK_KILL",
+                json!({"session_id": task.session_id}),
+                WORKER_MAINTENANCE_TIMEOUT,
+            ) {
+                Ok(status) => status,
+                Err(_) if qwe_runtime::process_matches(&task.identity) => {
+                    unsafe {
+                        libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
+                    }
+                    json!({
+                        "session_id": task.session_id,
+                        "process_identity": task.identity,
+                        "running": false,
+                        "exit_code": Value::Null,
+                        "exit_signal": "SIGKILL"
+                    })
+                }
+                Err(failure) => return Err(failure),
+            };
+            let worker_identity = context
+                .workers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .get(&task.session_id)
+                .map(|handle| handle.worker_identity.clone())
+                .ok_or_else(|| error("terminal_lost", "session worker disappeared"))?;
+            let exit_code = status
+                .get("exit_code")
+                .and_then(Value::as_i64)
+                .map(|value| value as i32);
+            let exit_signal = status
+                .get("exit_signal")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let mut store = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            store
+                .update_task(
+                    &task.id,
+                    TaskState::Stopped,
+                    exit_code,
+                    exit_signal,
+                    Some(now_ms()),
+                )
+                .map_err(storage_error)?;
+            store
+                .upsert_session(&session_record(
+                    &task.session_id,
+                    &status,
+                    &worker_identity,
+                    "exited",
+                    now_ms(),
+                )?)
+                .map_err(storage_error)?;
+            store
+                .find_task(&task.id)
+                .map_err(storage_error)?
+                .map(|task| task_json(&task))
+                .ok_or_else(|| error("persistence_failure", "task disappeared after kill"))
+        })();
+        match result {
+            Ok(task) => killed.push(task),
+            Err(failure) => failures.push(json!({
+                "task_id": id,
+                "code": failure.code,
+                "message": failure.message
+            })),
+        }
+    }
+    Ok(json!({"tasks": killed, "failures": failures}))
+}
+
+fn teardown_session(
+    context: &Context,
+    payload: &Value,
+    worker_operation: &str,
+    forced: bool,
+) -> Result<Value, ProtocolErrorBody> {
     let session_id = required_string(payload, "session_id")?.to_string();
     let _authority_guard = context
         .attachment_lock
@@ -885,13 +1245,37 @@ fn close_session(context: &Context, payload: &Value) -> Result<Value, ProtocolEr
             now_ms(),
         )?;
     }
-    let result = call_worker(
+    let result = match call_worker(
         context,
         &session_id,
-        "SESSION_CLOSE",
+        worker_operation,
         payload.clone(),
         WORKER_MAINTENANCE_TIMEOUT,
-    )?;
+    ) {
+        Ok(result) => result,
+        Err(failure) if forced => {
+            if let Some(task) = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .find_task_for_session(&session_id)
+                .map_err(storage_error)?
+            {
+                if qwe_runtime::process_matches(&task.identity) {
+                    unsafe {
+                        libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
+                    }
+                }
+            }
+            json!({
+                "session_id": session_id,
+                "state": "closed",
+                "forced": true,
+                "worker_error": failure
+            })
+        }
+        Err(failure) => return Err(failure),
+    };
     let handle = context
         .workers
         .lock()
@@ -899,7 +1283,10 @@ fn close_session(context: &Context, payload: &Value) -> Result<Value, ProtocolEr
         .remove(&session_id);
     if let Some(handle) = &handle {
         unsafe {
-            libc::kill(handle.worker_pid as libc::pid_t, libc::SIGTERM);
+            libc::kill(
+                handle.worker_pid as libc::pid_t,
+                if forced { libc::SIGKILL } else { libc::SIGTERM },
+            );
         }
         let _ = fs::remove_file(&handle.socket);
         let _ = fs::remove_file(&handle.attach_socket);
@@ -940,6 +1327,162 @@ fn close_session(context: &Context, payload: &Value) -> Result<Value, ProtocolEr
         .write_attachment_authority(&session_id, &authority, now_ms())
         .map_err(storage_error)?;
     Ok(result)
+}
+
+fn close_session(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    teardown_session(context, payload, "SESSION_CLOSE", false)
+}
+
+fn kill_session(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    teardown_session(context, payload, "SESSION_KILL", true)
+}
+
+fn stop_all_sessions(context: &Context) -> Result<(Vec<String>, Vec<Value>), ProtocolErrorBody> {
+    let sessions = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .list_sessions()
+        .map_err(storage_error)?;
+    let mut closed = Vec::new();
+    let mut failures = Vec::new();
+    for session in sessions {
+        if session.state == "closed" {
+            continue;
+        }
+        let handle = context
+            .workers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&session.id);
+        let task = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .find_task_for_session(&session.id)
+            .map_err(storage_error)?;
+        let worker_result = handle.as_ref().and_then(|handle| {
+            handle.client.as_ref().and_then(|client| {
+                client
+                    .call(
+                        "SESSION_KILL",
+                        json!({"session_id": session.id}),
+                        WORKER_MAINTENANCE_TIMEOUT,
+                    )
+                    .ok()
+            })
+        });
+        if worker_result.is_none() {
+            if let Some(task) = &task {
+                if qwe_runtime::process_matches(&task.identity) {
+                    unsafe {
+                        libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
+                    }
+                }
+            }
+        }
+        if let Some(handle) = &handle {
+            unsafe {
+                libc::kill(handle.worker_pid as libc::pid_t, libc::SIGKILL);
+            }
+            let _ = fs::remove_file(&handle.socket);
+            let _ = fs::remove_file(&handle.attach_socket);
+        }
+        let now = now_ms();
+        let mut store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let persistence = (|| {
+            if let Some(task) = &task {
+                let exit_code = worker_result
+                    .as_ref()
+                    .and_then(|status| status.get("exit_code"))
+                    .and_then(Value::as_i64)
+                    .map(|value| value as i32);
+                let exit_signal = worker_result
+                    .as_ref()
+                    .and_then(|status| status.get("exit_signal"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| worker_result.is_none().then(|| "SIGKILL".to_string()));
+                store
+                    .update_task(
+                        &task.id,
+                        TaskState::Stopped,
+                        exit_code,
+                        exit_signal,
+                        Some(now),
+                    )
+                    .map_err(storage_error)?;
+            }
+            if let Some(mut session) = store.find_session(&session.id).map_err(storage_error)? {
+                session.state = "closed".into();
+                session.updated_at_ms = now;
+                store.upsert_session(&session).map_err(storage_error)?;
+            }
+            if let Some(lease) = store.get_lease(&session.id).map_err(storage_error)? {
+                if lease.released_at_ms.is_none() {
+                    store
+                        .release_lease(&session.id, &lease.owner, lease.generation, now)
+                        .map_err(storage_error)?;
+                }
+            }
+            let mut authority = store
+                .get_attachment_authority(&session.id)
+                .map_err(storage_error)?
+                .unwrap_or_else(AttachmentAuthority::unattached);
+            authority.release();
+            store
+                .write_attachment_authority(&session.id, &authority, now)
+                .map_err(storage_error)?;
+            Ok::<(), ProtocolErrorBody>(())
+        })();
+        match persistence {
+            Ok(()) => closed.push(session.id),
+            Err(failure) => failures.push(json!({
+                "session_id": session.id,
+                "code": failure.code,
+                "message": failure.message
+            })),
+        }
+    }
+    Ok((closed, failures))
+}
+
+fn kill_server(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    if payload.get("confirm").and_then(Value::as_bool) != Some(true) {
+        return Err(error(
+            "confirmation_required",
+            "kill-server requires confirm=true",
+        ));
+    }
+    let (closed, failures) = stop_all_sessions(context)?;
+    thread::spawn(|| {
+        thread::sleep(Duration::from_millis(300));
+        std::process::exit(0);
+    });
+    Ok(json!({
+        "daemon": "stopping",
+        "closed_sessions": closed,
+        "failures": failures
+    }))
+}
+
+fn graceful_shutdown(context: &Context, socket: &str) {
+    match stop_all_sessions(context) {
+        Ok((closed, failures)) => eprintln!(
+            "qwed stopping: closed {} Sessions, {} teardown failures",
+            closed.len(),
+            failures.len()
+        ),
+        Err(failure) => eprintln!(
+            "qwed stopping after teardown error: {}: {}",
+            failure.code, failure.message
+        ),
+    }
+    let _ = fs::remove_file(socket);
+    let _ = fs::remove_file(public_attach_socket(socket));
 }
 
 fn lease_operation(
@@ -1527,9 +2070,24 @@ fn control_status(context: &Context) -> Result<Value, ProtocolErrorBody> {
         .filter(|incident| incident.disposition == ReconciliationDisposition::Conflict)
         .map(runtime_incident_json)
         .collect::<Vec<_>>();
+    let credential_names = context.credentials.names();
+    let credential_error = credential_names.as_ref().err().map(ToString::to_string);
+    let credentials = credential_names.unwrap_or_default();
     Ok(json!({
         "daemon": "ok",
         "protocol": PROTOCOL_VERSION,
+        "capabilities": capability_matrix(context.linux_scope_available),
+        "credentials": {
+            "configured": context.credentials.backend().as_str() != "none",
+            "backend": context.credentials.backend().as_str(),
+            "available": credential_error.is_none(),
+            "error": credential_error,
+            "names": credentials
+        },
+        "limits": {
+            "control_frame_bytes": qwe_protocol::MAX_FRAME_BYTES,
+            "control_input_bytes": MAX_CONTROL_INPUT_BYTES
+        },
         "reconciliation": {
             "live_sessions": healthy_workers,
             "unreachable_sessions": unreachable_workers,
@@ -1578,7 +2136,9 @@ fn client_operation(
         "CONTROL_STATUS" => control_status(context),
         "SESSION_CREATE" => create_session(context, request.payload.clone()),
         "TASK_STATUS" => task_status(context, &request.payload),
+        "SESSION_RESOURCE_UPDATE" => update_session_resources(context, &request.payload),
         "TASK_STOP" => task_stop(context, &request.payload),
+        "TASK_KILL_BATCH" => task_kill_batch(context, &request.payload),
         "TASK_HISTORY" => {
             let store = context
                 .store
@@ -1597,8 +2157,24 @@ fn client_operation(
             lease_operation(context, &request.operation, &request.payload)
         }
         "SESSION_CLOSE" => close_session(context, &request.payload),
+        "SESSION_KILL" => kill_session(context, &request.payload),
+        "SERVER_KILL" => kill_server(context, &request.payload),
         "SESSION_INPUT" => {
             let session_id = required_string(&request.payload, "session_id")?;
+            let input_bytes = request
+                .payload
+                .get("data")
+                .and_then(Value::as_str)
+                .ok_or_else(|| error("invalid_request", "missing input data"))?
+                .len();
+            if input_bytes > MAX_CONTROL_INPUT_BYTES {
+                return Err(error(
+                    "input_too_large",
+                    format!(
+                        "control input is {input_bytes} bytes; maximum is {MAX_CONTROL_INPUT_BYTES}"
+                    ),
+                ));
+            }
             let _authority_guard = context
                 .attachment_lock
                 .lock()
@@ -1626,13 +2202,30 @@ fn client_operation(
         }
         "SESSION_STATUS" | "SESSION_ATTACH" => {
             let session_id = required_string(&request.payload, "session_id")?;
-            let status = call_worker(
+            let status = match call_worker(
                 context,
                 session_id,
                 &request.operation,
                 request.payload.clone(),
                 WORKER_REQUEST_TIMEOUT,
-            )?;
+            ) {
+                Ok(status) => status,
+                Err(failure)
+                    if request.operation == "SESSION_STATUS" && failure.code == "terminal_lost" =>
+                {
+                    return match persisted_session_status(context, session_id) {
+                        Ok(status)
+                            if status.get("state").and_then(Value::as_str) == Some("closed") =>
+                        {
+                            Ok(status)
+                        }
+                        Err(persisted) if persisted.code == "not_found" => Err(failure),
+                        Err(persisted) if persisted.code == "persistence_failure" => Err(persisted),
+                        _ => Err(failure),
+                    };
+                }
+                Err(failure) => return Err(failure),
+            };
             apply_status(context, session_id, &status)?;
             Ok(status)
         }
@@ -1646,9 +2239,13 @@ fn requires_idempotency(operation: &str) -> bool {
         "SESSION_CREATE"
             | "SESSION_DETACH"
             | "SESSION_INPUT"
+            | "SESSION_RESOURCE_UPDATE"
             | "SESSION_RESIZE"
             | "SESSION_CLOSE"
+            | "SESSION_KILL"
+            | "SERVER_KILL"
             | "TASK_STOP"
+            | "TASK_KILL_BATCH"
             | "LEASE_CLAIM"
             | "LEASE_TOUCH"
             | "LEASE_RELEASE"
@@ -1675,6 +2272,9 @@ fn replayable_result(result: &Result<Value, ProtocolErrorBody>) -> bool {
             failure.code.as_str(),
             "already_attached"
                 | "already_exists"
+                | "confirmation_required"
+                | "credential_unavailable"
+                | "input_too_large"
                 | "invalid_reclaim_token"
                 | "invalid_request"
                 | "not_attached"
@@ -1682,6 +2282,7 @@ fn replayable_result(result: &Result<Value, ProtocolErrorBody>) -> bool {
                 | "not_owner"
                 | "reclaim_expired"
                 | "unsupported_mode"
+                | "unsupported_capability"
                 | "unsupported_operation"
         ),
     }
@@ -1733,6 +2334,7 @@ fn recover_pending_create(
     })?;
     response["task_id"] = json!(task.id);
     response["pane_id"] = json!(pane.id);
+    response["resource_policy"] = json!(pane.resource_policy);
     response["running"] = json!(session.state == "running");
     response["state"] = json!(session.state);
     response["exit_code"] = json!(task.exit_code);
@@ -2416,6 +3018,25 @@ extern "C" fn sigchld_handler(_: libc::c_int) {
     }
 }
 
+extern "C" fn shutdown_handler(_: libc::c_int) {
+    SHUTDOWN_REQUESTED.store(true, AtomicOrdering::SeqCst);
+}
+
+fn install_shutdown_handler() -> Result<(), Box<dyn std::error::Error>> {
+    let mut action = unsafe { std::mem::zeroed::<libc::sigaction>() };
+    action.sa_sigaction = shutdown_handler as *const () as usize;
+    action.sa_flags = 0;
+    unsafe {
+        libc::sigemptyset(&mut action.sa_mask);
+    }
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        if unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
+    Ok(())
+}
+
 fn install_sigchld_monitor(
     event_sender: Sender<SupervisorEvent>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -2538,6 +3159,8 @@ fn start_monitor_threads(
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    install_shutdown_handler()?;
+    let linux_scope_available = qwe_runtime::systemd_scope_available();
     let runtime_dir = PathBuf::from(format!("{}.runtime", args.socket));
     let runtime_lock = acquire_runtime_lock(&runtime_dir)?;
     mark_subreaper();
@@ -2545,6 +3168,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .store
         .unwrap_or_else(|| format!("{}.sqlite", args.socket));
     let store = Store::open(&store_path)?;
+    let credentials_dir = args
+        .credentials_dir
+        .or_else(|| std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from));
+    let keychain_prefix = args
+        .keychain_service_prefix
+        .or_else(|| std::env::var("QWE_KEYCHAIN_SERVICE_PREFIX").ok())
+        .filter(|_| cfg!(target_os = "macos"));
     let (worker_event_tx, worker_event_rx) = mpsc::channel();
     let (supervisor_event_tx, supervisor_event_rx) = mpsc::channel();
     let bridge_sender = supervisor_event_tx.clone();
@@ -2557,6 +3187,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let context = Arc::new(Context {
         runtime_dir,
+        linux_scope_available,
         store: Mutex::new(store),
         workers: Mutex::new(HashMap::new()),
         reconciliation_incidents: Mutex::new(ReconciliationIncidents::default()),
@@ -2565,6 +3196,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         creation_lock: Mutex::new(()),
         idempotency_lock: Mutex::new(()),
         attachment_lock: Mutex::new(()),
+        credentials: CredentialProvider::new(credentials_dir, keychain_prefix),
         _runtime_lock: runtime_lock,
     });
     let report = startup_reconcile(&context)?;
@@ -2591,6 +3223,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::set_permissions(&args.socket, fs::Permissions::from_mode(0o600))?;
     let attach_listener = UnixListener::bind(&attach_path)?;
     fs::set_permissions(&attach_path, fs::Permissions::from_mode(0o600))?;
+    attach_listener.set_nonblocking(true)?;
 
     start_monitor_threads(&context, supervisor_event_rx, supervisor_event_tx)?;
 
@@ -2606,14 +3239,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
     });
-    for client in attach_listener.incoming() {
-        let context = Arc::clone(&context);
-        thread::spawn(move || {
-            if let Err(failure) = serve_attachment(client?, &context) {
-                eprintln!("attach proxy error: {failure}");
+    while !SHUTDOWN_REQUESTED.load(AtomicOrdering::SeqCst) {
+        match attach_listener.accept() {
+            Ok((client, _)) => {
+                client.set_nonblocking(false)?;
+                let context = Arc::clone(&context);
+                thread::spawn(move || {
+                    if let Err(failure) = serve_attachment(client, &context) {
+                        eprintln!("attach proxy error: {failure}");
+                    }
+                });
             }
-            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
-        });
+            Err(failure) if failure.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(failure) if failure.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(failure) => return Err(failure.into()),
+        }
     }
+    graceful_shutdown(&context, &args.socket);
     Ok(())
 }

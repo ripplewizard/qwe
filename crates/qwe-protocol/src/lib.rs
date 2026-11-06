@@ -551,6 +551,10 @@ fn socket_peer_uid(stream: &UnixStream) -> Result<u32, PeerError> {
 pub fn verify_same_uid(stream: &UnixStream) -> Result<(), PeerError> {
     let peer_uid = socket_peer_uid(stream)?;
     let current_uid = unsafe { libc::geteuid() };
+    authorize_peer_uid(peer_uid, current_uid)
+}
+
+fn authorize_peer_uid(peer_uid: u32, current_uid: u32) -> Result<(), PeerError> {
     if peer_uid == current_uid {
         Ok(())
     } else {
@@ -619,6 +623,18 @@ mod tests {
         assert!(matches!(
             validate_version(99),
             Err(FramingError::IncompatibleVersion { .. })
+        ));
+    }
+
+    #[test]
+    fn peer_uid_policy_rejects_cross_uid_clients() {
+        assert!(authorize_peer_uid(501, 501).is_ok());
+        assert!(matches!(
+            authorize_peer_uid(502, 501),
+            Err(PeerError::Unauthorized {
+                peer_uid: 502,
+                current_uid: 501
+            })
         ));
     }
 

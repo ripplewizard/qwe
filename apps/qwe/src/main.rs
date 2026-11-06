@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Args, Parser};
 use qwe_core::DEFAULT_LEASE_TTL_MS;
 use qwe_protocol::{
     ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope,
@@ -46,6 +46,15 @@ enum Command {
         #[command(subcommand)]
         command: TaskCommand,
     },
+    KillSession {
+        id: String,
+        #[arg(long)]
+        generation: Option<u64>,
+    },
+    KillServer {
+        #[arg(long)]
+        confirm: bool,
+    },
 }
 
 #[derive(Debug, Parser)]
@@ -54,8 +63,21 @@ enum SessionCommand {
         id: String,
         #[arg(default_value = "sh")]
         program: String,
+        #[arg(long)]
+        credential: Option<String>,
+        #[command(flatten)]
+        resources: ResourceArgs,
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
+    },
+    Limits {
+        id: String,
+        #[arg(long)]
+        generation: Option<u64>,
+        #[arg(long)]
+        clear: bool,
+        #[command(flatten)]
+        resources: ResourceArgs,
     },
     Status {
         id: String,
@@ -78,6 +100,59 @@ enum SessionCommand {
         #[arg(long)]
         generation: Option<u64>,
     },
+}
+
+#[derive(Debug, Args)]
+struct ResourceArgs {
+    #[arg(long)]
+    cpu_seconds: Option<u64>,
+    #[arg(long)]
+    cpu_quota_percent: Option<u32>,
+    #[arg(long)]
+    memory_high_bytes: Option<u64>,
+    #[arg(long = "memory-max", visible_alias = "memory-bytes")]
+    memory_max_bytes: Option<u64>,
+    #[arg(long)]
+    memory_swap_max_bytes: Option<u64>,
+    #[arg(long = "tasks-max", visible_alias = "process-limit")]
+    tasks_max: Option<u64>,
+}
+
+impl ResourceArgs {
+    fn policy_json(&self, clear: bool) -> Option<Value> {
+        let mut policy = serde_json::Map::new();
+        if clear {
+            for field in [
+                "cpu_seconds",
+                "cpu_quota_percent",
+                "memory_high_bytes",
+                "memory_max_bytes",
+                "memory_swap_max_bytes",
+                "tasks_max",
+            ] {
+                policy.insert(field.into(), Value::Null);
+            }
+        }
+        if let Some(value) = self.cpu_seconds {
+            policy.insert("cpu_seconds".into(), json!(value));
+        }
+        if let Some(value) = self.cpu_quota_percent {
+            policy.insert("cpu_quota_percent".into(), json!(value));
+        }
+        if let Some(value) = self.memory_high_bytes {
+            policy.insert("memory_high_bytes".into(), json!(value));
+        }
+        if let Some(value) = self.memory_max_bytes {
+            policy.insert("memory_max_bytes".into(), json!(value));
+        }
+        if let Some(value) = self.memory_swap_max_bytes {
+            policy.insert("memory_swap_max_bytes".into(), json!(value));
+        }
+        if let Some(value) = self.tasks_max {
+            policy.insert("tasks_max".into(), json!(value));
+        }
+        (!policy.is_empty()).then_some(Value::Object(policy))
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -121,6 +196,11 @@ enum TaskCommand {
         #[arg(long)]
         generation: Option<u64>,
     },
+    Kill {
+        task_ids: Vec<String>,
+        #[arg(long)]
+        generation: Option<u64>,
+    },
     History,
 }
 
@@ -148,7 +228,11 @@ fn call(socket: &str, operation: &str, payload: Value) -> Result<Value, Protocol
             | "SESSION_INPUT"
             | "SESSION_DETACH"
             | "SESSION_CLOSE"
+            | "SESSION_KILL"
+            | "SERVER_KILL"
+            | "SESSION_RESOURCE_UPDATE"
             | "TASK_STOP"
+            | "TASK_KILL_BATCH"
             | "LEASE_CLAIM"
             | "LEASE_TOUCH"
             | "LEASE_RELEASE"
@@ -607,11 +691,47 @@ fn main() -> ExitCode {
         Some(Command::Status) => call(&arguments.socket, "CONTROL_STATUS", json!({})),
         Some(Command::Ping) => call(&arguments.socket, "PING", json!({})),
         Some(Command::Session { command }) => match command {
-            SessionCommand::Create { id, program, args } => call(
-                &arguments.socket,
-                "SESSION_CREATE",
-                json!({"session_id": id, "program": program, "args": args}),
-            ),
+            SessionCommand::Create {
+                id,
+                program,
+                credential,
+                resources,
+                args,
+            } => {
+                let mut payload = json!({
+                    "session_id": id,
+                    "program": program,
+                    "args": args
+                });
+                if let Some(credential) = credential {
+                    payload["credential"] = json!(credential);
+                }
+                if let Some(policy) = resources.policy_json(false) {
+                    payload["resource_policy"] = policy;
+                }
+                call(&arguments.socket, "SESSION_CREATE", payload)
+            }
+            SessionCommand::Limits {
+                id,
+                generation,
+                clear,
+                resources,
+            } => {
+                let Some(policy) = resources.policy_json(clear) else {
+                    eprintln!("session limits requires at least one limit or --clear");
+                    return ExitCode::from(2);
+                };
+                call(
+                    &arguments.socket,
+                    "SESSION_RESOURCE_UPDATE",
+                    json!({
+                        "session_id": id,
+                        "owner": arguments.owner,
+                        "generation": generation,
+                        "resource_policy": policy
+                    }),
+                )
+            }
             SessionCommand::Status { id } => call(
                 &arguments.socket,
                 "SESSION_STATUS",
@@ -712,8 +832,34 @@ fn main() -> ExitCode {
                     "generation": generation
                 }),
             ),
+            TaskCommand::Kill {
+                task_ids,
+                generation,
+            } => call(
+                &arguments.socket,
+                "TASK_KILL_BATCH",
+                json!({
+                    "task_ids": task_ids,
+                    "owner": arguments.owner,
+                    "generation": generation
+                }),
+            ),
             TaskCommand::History => call(&arguments.socket, "TASK_HISTORY", json!({})),
         },
+        Some(Command::KillSession { id, generation }) => call(
+            &arguments.socket,
+            "SESSION_KILL",
+            json!({
+                "session_id": id,
+                "owner": arguments.owner,
+                "generation": generation
+            }),
+        ),
+        Some(Command::KillServer { confirm }) => call(
+            &arguments.socket,
+            "SERVER_KILL",
+            json!({"confirm": confirm}),
+        ),
     };
     match result {
         Ok(value) => {

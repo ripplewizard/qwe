@@ -1,6 +1,8 @@
+mod resources;
+
 use clap::Parser;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
-use qwe_core::ProcessIdentity;
+use qwe_core::{ProcessIdentity, ResourcePolicy};
 use qwe_protocol::{
     ATTACH_OUTPUT_QUEUE_BYTES, ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody,
     RequestEnvelope, ResponseEnvelope, attach, read_frame, validate_version, verify_same_uid,
@@ -17,12 +19,14 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::io::FromRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
+use zeroize::Zeroizing;
 
 const JOURNAL_LIMIT: usize = 16 * 1024 * 1024;
 const ATTACH_TAIL_BYTES: usize = 1024 * 1024;
@@ -42,12 +46,29 @@ struct Args {
     worker_program: String,
     #[arg(long = "worker-arg", hide = true, allow_hyphen_values = true)]
     worker_args: Vec<String>,
+    #[arg(long, hide = true)]
+    worker_cpu_seconds: Option<u64>,
+    #[arg(long, hide = true)]
+    worker_cpu_quota_percent: Option<u32>,
+    #[arg(long, hide = true)]
+    worker_memory_high_bytes: Option<u64>,
+    #[arg(long, hide = true)]
+    worker_memory_bytes: Option<u64>,
+    #[arg(long, hide = true)]
+    worker_memory_swap_max_bytes: Option<u64>,
+    #[arg(long, hide = true)]
+    worker_tasks_max: Option<u64>,
+    #[arg(long, hide = true)]
+    worker_credential_fd: Option<i32>,
+    #[arg(long, hide = true)]
+    worker_systemd_scope: bool,
 }
 
 struct WorkerSession {
     pid: u32,
     identity: ProcessIdentity,
     worker_identity: ProcessIdentity,
+    resources: resources::ResourceController,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     stream: Mutex<TerminalStream>,
@@ -95,6 +116,9 @@ struct AttachmentRegistration {
     accepted: attach::AttachAccepted,
     snapshot: attach::TerminalSnapshot,
 }
+
+type TopologyInfo = (u32, PathBuf);
+type TopologyReceiver = mpsc::Receiver<Result<TopologyInfo, String>>;
 
 fn error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
     ProtocolErrorBody {
@@ -272,10 +296,118 @@ fn protocol_snapshot(
     }
 }
 
+fn read_credential(fd: i32) -> std::io::Result<Zeroizing<Vec<u8>>> {
+    let file = unsafe { std::fs::File::from_raw_fd(fd) };
+    let mut secret = Zeroizing::new(Vec::new());
+    file.take(16 * 1024 + 1).read_to_end(&mut secret)?;
+    if secret.len() > 16 * 1024 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "credential exceeds the 16 KiB limit",
+        ));
+    }
+    Ok(secret)
+}
+
+fn start_credential_broker(
+    runtime_dir: &Path,
+    secret: Zeroizing<Vec<u8>>,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let mut random = [0_u8; 8];
+    getrandom::fill(&mut random).map_err(|failure| failure.to_string())?;
+    let path = runtime_dir.join(format!(
+        "cred-{}-{}.sock",
+        std::process::id(),
+        hex_encode(&random)
+    ));
+    let _ = fs::remove_file(&path);
+    let listener = UnixListener::bind(&path)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    listener.set_nonblocking(true)?;
+    let broker_path = path.clone();
+    thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.write_all(&secret);
+                    let _ = stream.flush();
+                    break;
+                }
+                Err(failure) if failure.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = fs::remove_file(&broker_path);
+    });
+    Ok(path)
+}
+
+fn start_topology_listener(
+    runtime_dir: &Path,
+) -> Result<(PathBuf, TopologyReceiver), Box<dyn std::error::Error>> {
+    let mut random = [0_u8; 8];
+    getrandom::fill(&mut random).map_err(|failure| failure.to_string())?;
+    let path = runtime_dir.join(format!(
+        "topology-{}-{}.sock",
+        std::process::id(),
+        hex_encode(&random)
+    ));
+    let _ = fs::remove_file(&path);
+    let listener = UnixListener::bind(&path)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    listener.set_nonblocking(true)?;
+    let (sender, receiver) = mpsc::channel();
+    let cleanup_path = path.clone();
+    thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let result = loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    break (|| {
+                        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+                        let mut payload = String::new();
+                        stream.read_to_string(&mut payload)?;
+                        let value: Value = serde_json::from_str(&payload)?;
+                        let pid = value
+                            .get("pid")
+                            .and_then(Value::as_u64)
+                            .and_then(|pid| u32::try_from(pid).ok())
+                            .ok_or_else(|| "topology response has no PID".to_string())?;
+                        let cgroup = value
+                            .get("cgroup")
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.is_empty())
+                            .ok_or_else(|| "topology response has no cgroup".to_string())?;
+                        Ok((pid, PathBuf::from(cgroup)))
+                    })()
+                    .map_err(|failure: Box<dyn std::error::Error>| failure.to_string());
+                }
+                Err(failure) if failure.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        break Err("topology handshake timed out".to_string());
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(failure) => break Err(failure.to_string()),
+            }
+        };
+        let _ = sender.send(result);
+        let _ = fs::remove_file(cleanup_path);
+    });
+    Ok((path, receiver))
+}
+
 impl WorkerSession {
     fn create(
         program: &str,
         arguments: &[String],
+        resource_policy: ResourcePolicy,
+        credential_fd: Option<i32>,
+        runtime_dir: &Path,
+        use_systemd_scope: bool,
     ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
         let pair = native_pty_system().openpty(PtySize {
             rows: 24,
@@ -283,22 +415,108 @@ impl WorkerSession {
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        let mut command = CommandBuilder::new(program);
-        command.args(arguments.iter());
+        let credential = credential_fd.map(read_credential).transpose()?;
+        let credential_socket = credential
+            .map(|secret| start_credential_broker(runtime_dir, secret))
+            .transpose()?;
+        let topology = if use_systemd_scope {
+            Some(start_topology_listener(runtime_dir)?)
+        } else {
+            None
+        };
+        let executable = std::env::current_exe()?.with_file_name("qwe-session-exec");
+        let mut command = if let Some((topology_socket, _)) = &topology {
+            let mut random = [0_u8; 8];
+            getrandom::fill(&mut random).map_err(|failure| failure.to_string())?;
+            let unit = format!("qwe-session-{}-{}", std::process::id(), hex_encode(&random));
+            let mut command = CommandBuilder::new("/usr/bin/systemd-run");
+            command.args(["--user", "--scope", "--quiet", "--collect", "--unit", &unit]);
+            command.args([
+                "--property=MemoryAccounting=yes",
+                "--property=TasksAccounting=yes",
+                "--property=CPUAccounting=yes",
+            ]);
+            if let Some(bytes) = resource_policy.memory_high_bytes {
+                command.arg(format!("--property=MemoryHigh={bytes}"));
+            }
+            if let Some(bytes) = resource_policy.memory_max_bytes {
+                command.arg(format!("--property=MemoryMax={bytes}"));
+            }
+            if let Some(bytes) = resource_policy.memory_swap_max_bytes {
+                command.arg(format!("--property=MemorySwapMax={bytes}"));
+            } else if resource_policy.memory_max_bytes.is_some()
+                || resource_policy.memory_high_bytes.is_some()
+            {
+                command.arg("--property=MemorySwapMax=0");
+            }
+            if let Some(tasks) = resource_policy.tasks_max {
+                command.arg(format!("--property=TasksMax={tasks}"));
+            }
+            if let Some(percent) = resource_policy.cpu_quota_percent {
+                command.arg(format!("--property=CPUQuota={percent}%"));
+            }
+            command.arg("--");
+            command.arg(executable);
+            command.arg("--topology-socket");
+            command.arg(topology_socket);
+            if let Some(socket) = &credential_socket {
+                command.arg("--credential-socket");
+                command.arg(socket);
+            }
+            command.arg(program);
+            command.args(arguments.iter());
+            command
+        } else if credential_socket.is_some() {
+            let mut command = CommandBuilder::new(executable);
+            if let Some(socket) = &credential_socket {
+                command.arg("--credential-socket");
+                command.arg(socket);
+            }
+            command.arg(program);
+            command.args(arguments.iter());
+            command
+        } else {
+            let mut command = CommandBuilder::new(program);
+            command.args(arguments.iter());
+            command
+        };
         command.env("TERM", "xterm-256color");
-        let mut child = pair.slave.spawn_command(command)?;
-        let pid = child
-            .process_id()
-            .ok_or("session process has no PID".to_string())?;
+        let child = pair.slave.spawn_command(command);
+        let mut child = child?;
+        let (pid, cgroup_dir) = if let Some((_, receiver)) = topology {
+            match receiver.recv_timeout(Duration::from_secs(3)) {
+                Ok(Ok((pid, cgroup))) => (pid, Some(cgroup)),
+                Ok(Err(failure)) => {
+                    let _ = child.kill();
+                    return Err(format!("Session topology handshake failed: {failure}").into());
+                }
+                Err(failure) => {
+                    let _ = child.kill();
+                    return Err(format!("Session topology handshake timed out: {failure}").into());
+                }
+            }
+        } else {
+            (
+                child
+                    .process_id()
+                    .ok_or("session process has no PID".to_string())?,
+                None,
+            )
+        };
         let identity = process_identity(pid)?;
+        let pgid = identity.pgid;
         drop(pair.slave);
         let writer = pair.master.take_writer()?;
         let mut reader = pair.master.try_clone_reader()?;
         let master = pair.master;
+        let initial_policy = resource_policy.clone();
+        let resources = resources::ResourceController::new(resource_policy, cgroup_dir);
+        resources.update(initial_policy)?;
         let session = Arc::new(Self {
             pid,
             identity,
             worker_identity: process_identity(std::process::id())?,
+            resources,
             writer: Mutex::new(writer),
             master: Mutex::new(master),
             stream: Mutex::new(TerminalStream::new(24, 80)?),
@@ -308,6 +526,7 @@ impl WorkerSession {
             exit_code: Mutex::new(None),
             exit_signal: Mutex::new(None),
         });
+        session.resources.start_monitor(pid, pgid);
         let reader_session = Arc::clone(&session);
         thread::spawn(move || {
             let mut buffer = [0_u8; 8192];
@@ -333,6 +552,8 @@ impl WorkerSession {
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) =
                     status.signal().map(str::to_string);
             }
+            reader_session.resources.capture_final_sample();
+            reader_session.resources.cleanup_cgroup();
             reader_session.running.store(false, Ordering::SeqCst);
             let exit_code = *reader_session
                 .exit_code
@@ -387,6 +608,8 @@ impl WorkerSession {
             "state": if self.running.load(Ordering::SeqCst) { "running" } else { "exited" },
             "exit_code": exit_code,
             "exit_signal": exit_signal,
+            "resource_policy": self.resources.policy_json(),
+            "resource_metrics": self.resources.metrics_json(),
             "truncated_from": stream.journal.truncated_from(),
             "total_written": stream.journal.total_written()
         })
@@ -414,7 +637,9 @@ impl WorkerSession {
             "running": running,
             "state": if running { "running" } else { "exited" },
             "exit_code": exit_code,
-            "exit_signal": exit_signal
+            "exit_signal": exit_signal,
+            "resource_policy": self.resources.policy_json(),
+            "resource_metrics": self.resources.metrics_json()
         })
     }
 
@@ -447,6 +672,8 @@ impl WorkerSession {
             "state": if running { "running" } else { "exited" },
             "exit_code": exit_code,
             "exit_signal": exit_signal,
+            "resource_policy": self.resources.policy_json(),
+            "resource_metrics": self.resources.metrics_json(),
             "screen": terminal.screen_text,
             "terminal": protocol_snapshot(terminal, stream.stream_offset()),
             "journal_hex": hex_encode(&tail),
@@ -461,11 +688,36 @@ impl WorkerSession {
             .get("data")
             .and_then(Value::as_str)
             .ok_or_else(|| error("invalid_request", "missing input data"))?;
+        if data.len() > 1024 * 1024 {
+            return Err(error(
+                "input_too_large",
+                "worker input exceeds the 1 MiB control limit",
+            ));
+        }
         self.writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .write_all(data.as_bytes())
             .map_err(|failure| error("internal", failure.to_string()))?;
+        Ok(self.status(session_id))
+    }
+
+    fn update_resources(
+        &self,
+        session_id: &str,
+        payload: &Value,
+    ) -> Result<Value, ProtocolErrorBody> {
+        let policy = payload
+            .get("resource_policy")
+            .cloned()
+            .ok_or_else(|| error("invalid_request", "missing resource_policy"))
+            .and_then(|value| {
+                serde_json::from_value::<ResourcePolicy>(value)
+                    .map_err(|failure| error("invalid_request", failure.to_string()))
+            })?;
+        self.resources
+            .update(policy)
+            .map_err(|failure| error("resource_apply_failed", failure.to_string()))?;
         Ok(self.status(session_id))
     }
 
@@ -686,6 +938,28 @@ impl WorkerSession {
             "exit_code": status.get("exit_code"),
             "exit_signal": status.get("exit_signal")
         }))
+    }
+
+    fn kill(&self, session_id: &str) -> Result<Value, ProtocolErrorBody> {
+        if self.process_group_exists() {
+            self.signal_process_group(libc::SIGKILL)?;
+            if !self.wait_for_process_group_exit(TASK_STOP_WAIT) {
+                return Err(error(
+                    "task_kill_timeout",
+                    format!(
+                        "task process group {} did not exit after SIGKILL",
+                        self.identity.pgid
+                    ),
+                ));
+            }
+        }
+        if !self.wait_for_exit(TASK_STOP_WAIT) {
+            return Err(error(
+                "task_status_timeout",
+                "task process group exited but terminal status did not settle",
+            ));
+        }
+        Ok(self.status(session_id))
     }
 }
 
@@ -1004,8 +1278,10 @@ fn worker_handle(
         "WORKER_HELLO" | "SESSION_STATUS" => Ok(session.status(session_id)),
         "SESSION_ATTACH" => Ok(session.snapshot(session_id)),
         "SESSION_INPUT" => session.input(session_id, payload),
+        "SESSION_RESOURCE_UPDATE" => session.update_resources(session_id, payload),
         "TASK_STOP" => session.stop_task(session_id),
         "SESSION_CLOSE" => session.close(session_id),
+        "TASK_KILL" | "SESSION_KILL" => session.kill(session_id),
         _ => Err(error("unsupported_operation", operation)),
     }
 }
@@ -1065,6 +1341,10 @@ fn serve_worker(stream: UnixStream, session: &Arc<WorkerSession>, session_id: &s
 fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let socket = args.worker_socket;
     let session_id = args.worker_session_id;
+    let runtime_dir = socket
+        .parent()
+        .expect("worker socket always has a runtime parent")
+        .to_path_buf();
     if UnixStream::connect(&socket).is_ok() {
         return Err(format!("session worker already running at {}", socket.display()).into());
     }
@@ -1082,7 +1362,21 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     let listener = UnixListener::bind(&socket)?;
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
-    let session = WorkerSession::create(&args.worker_program, &args.worker_args)?;
+    let session = WorkerSession::create(
+        &args.worker_program,
+        &args.worker_args,
+        ResourcePolicy {
+            memory_high_bytes: args.worker_memory_high_bytes,
+            memory_max_bytes: args.worker_memory_bytes,
+            memory_swap_max_bytes: args.worker_memory_swap_max_bytes,
+            tasks_max: args.worker_tasks_max,
+            cpu_quota_percent: args.worker_cpu_quota_percent,
+            cpu_seconds: args.worker_cpu_seconds,
+        },
+        args.worker_credential_fd,
+        &runtime_dir,
+        args.worker_systemd_scope,
+    )?;
     let control_session = Arc::clone(&session);
     thread::spawn(move || {
         for stream in listener.incoming() {

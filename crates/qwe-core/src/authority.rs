@@ -56,6 +56,7 @@ pub enum AttachmentOperation {
     ListStatus,
     Attach,
     InputResize,
+    ResourcePolicy,
     Detach,
     CloseTaskStop,
     LeaseClaimTakeover,
@@ -201,16 +202,20 @@ impl AttachmentAuthority {
                     .filter(|()| credentials.lease_generation == Some(self.generation))
                     .ok_or(AuthorityError::NotOwner),
             },
-            AttachmentOperation::InputResize
-            | AttachmentOperation::Detach
-            | AttachmentOperation::CloseTaskStop => match state {
+            AttachmentOperation::InputResize | AttachmentOperation::Detach => match state {
                 AttachmentAuthorityState::Active => self
                     .owner_matches(credentials.owner)
                     .then_some(())
                     .ok_or(AuthorityError::NotOwner),
-                AttachmentAuthorityState::Held
-                    if operation == AttachmentOperation::CloseTaskStop =>
-                {
+                _ => Err(AuthorityError::NotAttached),
+            },
+            AttachmentOperation::CloseTaskStop | AttachmentOperation::ResourcePolicy => match state
+            {
+                AttachmentAuthorityState::Active => self
+                    .owner_matches(credentials.owner)
+                    .then_some(())
+                    .ok_or(AuthorityError::NotOwner),
+                AttachmentAuthorityState::Held => {
                     self.owner_and_generation_match(credentials.owner, credentials.lease_generation)
                 }
                 _ => Err(AuthorityError::NotAttached),
@@ -490,27 +495,25 @@ mod tests {
             );
         }
 
-        assert_eq!(
-            unattached
-                .authorize(AttachmentOperation::CloseTaskStop, no_authority, NOW)
-                .unwrap_err(),
-            AuthorityError::NotAttached
-        );
-        assert!(
-            active
-                .authorize(AttachmentOperation::CloseTaskStop, active_owner, NOW)
-                .is_ok()
-        );
-        assert_eq!(
-            grace
-                .authorize(AttachmentOperation::CloseTaskStop, no_authority, NOW)
-                .unwrap_err(),
-            AuthorityError::NotAttached
-        );
-        assert!(
-            held.authorize(AttachmentOperation::CloseTaskStop, held_owner, NOW)
-                .is_ok()
-        );
+        for operation in [
+            AttachmentOperation::CloseTaskStop,
+            AttachmentOperation::ResourcePolicy,
+        ] {
+            assert_eq!(
+                unattached
+                    .authorize(operation, no_authority, NOW)
+                    .unwrap_err(),
+                AuthorityError::NotAttached
+            );
+            assert!(active.authorize(operation, active_owner, NOW).is_ok());
+            assert_eq!(
+                grace
+                    .authorize(operation, no_authority, NOW)
+                    .unwrap_err(),
+                AuthorityError::NotAttached
+            );
+            assert!(held.authorize(operation, held_owner, NOW).is_ok());
+        }
 
         assert!(
             unattached

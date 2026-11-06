@@ -1,12 +1,12 @@
 use qwe_core::{
     AttachmentAuthority, AttachmentAuthorityState, LeaseRecord, PaneId, PaneRecord,
-    ProcessIdentity, SessionRecord, TaskId, TaskRecord, TaskState,
+    ProcessIdentity, ResourcePolicy, SessionRecord, TaskId, TaskRecord, TaskState,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 10;
 pub const IDEMPOTENCY_RETENTION_MS: i64 = 24 * 60 * 60 * 1_000;
 pub const HISTORY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 pub const HISTORY_MAX_TERMINAL_SESSIONS: i64 = 10_000;
@@ -121,6 +121,12 @@ impl Store {
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL UNIQUE
                         REFERENCES sessions(id) ON DELETE RESTRICT,
+                    cpu_seconds INTEGER,
+                    memory_high_bytes INTEGER,
+                    memory_bytes INTEGER,
+                    memory_swap_max_bytes INTEGER,
+                    process_limit INTEGER,
+                    cpu_quota_percent INTEGER,
                     updated_at_ms INTEGER NOT NULL
                 );
                 CREATE TABLE leases (
@@ -153,7 +159,7 @@ impl Store {
                 );
                 CREATE INDEX idempotency_expiry
                     ON idempotency_records(expires_at_ms);
-                PRAGMA user_version = 8;
+                PRAGMA user_version = 10;
                 ",
             )?;
             transaction.commit()?;
@@ -361,6 +367,32 @@ impl Store {
                 CREATE INDEX idempotency_expiry
                     ON idempotency_records(expires_at_ms);
                 PRAGMA user_version = 8;
+                ",
+            )?;
+            transaction.commit()?;
+            current = 8;
+        }
+        if current == 8 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "
+                ALTER TABLE panes ADD COLUMN cpu_seconds INTEGER;
+                ALTER TABLE panes ADD COLUMN memory_bytes INTEGER;
+                ALTER TABLE panes ADD COLUMN process_limit INTEGER;
+                PRAGMA user_version = 9;
+                ",
+            )?;
+            transaction.commit()?;
+            current = 9;
+        }
+        if current == 9 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "
+                ALTER TABLE panes ADD COLUMN memory_high_bytes INTEGER;
+                ALTER TABLE panes ADD COLUMN memory_swap_max_bytes INTEGER;
+                ALTER TABLE panes ADD COLUMN cpu_quota_percent INTEGER;
+                PRAGMA user_version = 10;
                 ",
             )?;
             transaction.commit()?;
@@ -645,8 +677,23 @@ impl Store {
             ],
         )?;
         transaction.execute(
-            "INSERT INTO panes (id, session_id, updated_at_ms) VALUES (?1, ?2, ?3)",
-            params![pane.id.to_string(), pane.session_id, pane.updated_at_ms],
+            "
+            INSERT INTO panes (
+                id, session_id, cpu_seconds, memory_high_bytes, memory_bytes,
+                memory_swap_max_bytes, process_limit, cpu_quota_percent, updated_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ",
+            params![
+                pane.id.to_string(),
+                pane.session_id,
+                sqlite_limit(pane.resource_policy.cpu_seconds),
+                sqlite_limit(pane.resource_policy.memory_high_bytes),
+                sqlite_limit(pane.resource_policy.memory_max_bytes),
+                sqlite_limit(pane.resource_policy.memory_swap_max_bytes),
+                sqlite_limit(pane.resource_policy.tasks_max),
+                pane.resource_policy.cpu_quota_percent.map(i64::from),
+                pane.updated_at_ms
+            ],
         )?;
         transaction.commit()?;
         Ok(())
@@ -658,46 +705,64 @@ impl Store {
     ) -> Result<Option<PaneRecord>, StorageError> {
         self.connection
             .query_row(
-                "SELECT id, session_id, updated_at_ms FROM panes WHERE session_id = ?1",
+                "SELECT id, session_id, cpu_seconds, memory_high_bytes, memory_bytes,
+                        memory_swap_max_bytes, process_limit, cpu_quota_percent,
+                        updated_at_ms
+                 FROM panes WHERE session_id = ?1",
                 [session_id],
-                |row| {
-                    let id: String = row.get(0)?;
-                    Ok(PaneRecord {
-                        id: PaneId::from_str(&id).map_err(|failure| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                0,
-                                rusqlite::types::Type::Text,
-                                Box::new(failure),
-                            )
-                        })?,
-                        session_id: row.get(1)?,
-                        updated_at_ms: row.get(2)?,
-                    })
-                },
+                pane_from_row,
             )
             .optional()
             .map_err(StorageError::from)
     }
 
     pub fn list_panes(&self) -> Result<Vec<PaneRecord>, StorageError> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT id, session_id, updated_at_ms FROM panes ORDER BY session_id")?;
-        let rows = statement.query_map([], |row| {
-            let id: String = row.get(0)?;
-            Ok(PaneRecord {
-                id: PaneId::from_str(&id).map_err(|failure| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        0,
-                        rusqlite::types::Type::Text,
-                        Box::new(failure),
-                    )
-                })?,
-                session_id: row.get(1)?,
-                updated_at_ms: row.get(2)?,
-            })
-        })?;
+        let mut statement = self.connection.prepare(
+            "SELECT id, session_id, cpu_seconds, memory_high_bytes, memory_bytes,
+                    memory_swap_max_bytes, process_limit, cpu_quota_percent,
+                    updated_at_ms
+                 FROM panes ORDER BY session_id",
+        )?;
+        let rows = statement.query_map([], pane_from_row)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn update_pane_resource_policy(
+        &mut self,
+        session_id: &str,
+        policy: &ResourcePolicy,
+        updated_at_ms: i64,
+    ) -> Result<PaneRecord, StorageError> {
+        let changed = self.connection.execute(
+            "
+            UPDATE panes SET
+                cpu_seconds = ?2,
+                memory_high_bytes = ?3,
+                memory_bytes = ?4,
+                memory_swap_max_bytes = ?5,
+                process_limit = ?6,
+                cpu_quota_percent = ?7,
+                updated_at_ms = ?8
+            WHERE session_id = ?1
+            ",
+            params![
+                session_id,
+                sqlite_limit(policy.cpu_seconds),
+                sqlite_limit(policy.memory_high_bytes),
+                sqlite_limit(policy.memory_max_bytes),
+                sqlite_limit(policy.memory_swap_max_bytes),
+                sqlite_limit(policy.tasks_max),
+                policy.cpu_quota_percent.map(i64::from),
+                updated_at_ms
+            ],
+        )?;
+        if changed == 0 {
+            return Err(StorageError::Invariant(format!(
+                "Pane for Session '{session_id}' does not exist"
+            )));
+        }
+        self.find_pane_for_session(session_id)?
+            .ok_or_else(|| StorageError::Invariant("Pane disappeared after update".into()))
     }
 
     pub fn mark_sessions_missing(
@@ -1207,6 +1272,57 @@ fn task_from_row(row: &Row<'_>) -> rusqlite::Result<TaskRecord> {
     })
 }
 
+fn pane_from_row(row: &Row<'_>) -> rusqlite::Result<PaneRecord> {
+    let id: String = row.get(0)?;
+    Ok(PaneRecord {
+        id: PaneId::from_str(&id).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        session_id: row.get(1)?,
+        resource_policy: ResourcePolicy {
+            cpu_seconds: resource_limit_from_row(row, 2)?,
+            memory_high_bytes: resource_limit_from_row(row, 3)?,
+            memory_max_bytes: resource_limit_from_row(row, 4)?,
+            memory_swap_max_bytes: resource_limit_from_row(row, 5)?,
+            tasks_max: resource_limit_from_row(row, 6)?,
+            cpu_quota_percent: resource_limit_from_row(row, 7)?
+                .map(|value| {
+                    u32::try_from(value).map_err(|failure| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            7,
+                            rusqlite::types::Type::Integer,
+                            Box::new(failure),
+                        )
+                    })
+                })
+                .transpose()?,
+        },
+        updated_at_ms: row.get(8)?,
+    })
+}
+
+fn sqlite_limit(value: Option<u64>) -> Option<i64> {
+    value.and_then(|value| i64::try_from(value).ok())
+}
+
+fn resource_limit_from_row(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<u64>> {
+    row.get::<_, Option<i64>>(index)?
+        .map(|value| {
+            u64::try_from(value).map_err(|failure| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    index,
+                    rusqlite::types::Type::Integer,
+                    Box::new(failure),
+                )
+            })
+        })
+        .transpose()
+}
+
 fn lease_from_row(row: &Row<'_>) -> rusqlite::Result<LeaseRecord> {
     Ok(LeaseRecord {
         session_id: row.get(0)?,
@@ -1243,6 +1359,7 @@ mod tests {
         PaneRecord {
             id: PaneId::new(),
             session_id: session_id.into(),
+            resource_policy: ResourcePolicy::empty(),
             updated_at_ms: 10,
         }
     }
@@ -1331,15 +1448,42 @@ mod tests {
             }),
             updated_at_ms: 10,
         };
-        let created_pane = pane("one");
+        let mut created_pane = pane("one");
+        created_pane.resource_policy = ResourcePolicy {
+            memory_high_bytes: Some(64 * 1024 * 1024),
+            memory_max_bytes: Some(128 * 1024 * 1024),
+            memory_swap_max_bytes: Some(0),
+            tasks_max: Some(16),
+            cpu_quota_percent: Some(150),
+            cpu_seconds: Some(5),
+        };
         let created_task = task(TaskId::new(), "one");
         store
             .insert_created_session(&session, &created_pane, &created_task)
             .unwrap();
+        let stored_pane = store.find_pane_for_session("one").unwrap().unwrap();
+        assert_eq!(stored_pane.id, created_pane.id);
+        assert_eq!(stored_pane.resource_policy.cpu_seconds, Some(5));
         assert_eq!(
-            store.find_pane_for_session("one").unwrap().unwrap().id,
-            created_pane.id
+            stored_pane.resource_policy.memory_high_bytes,
+            Some(64 * 1024 * 1024)
         );
+        assert_eq!(stored_pane.resource_policy.tasks_max, Some(16));
+        assert_eq!(stored_pane.resource_policy.cpu_quota_percent, Some(150));
+        let updated = store
+            .update_pane_resource_policy(
+                "one",
+                &ResourcePolicy {
+                    memory_max_bytes: Some(256 * 1024 * 1024),
+                    tasks_max: Some(32),
+                    ..ResourcePolicy::empty()
+                },
+                20,
+            )
+            .unwrap();
+        assert_eq!(updated.resource_policy.memory_max_bytes, Some(256 << 20));
+        assert_eq!(updated.resource_policy.tasks_max, Some(32));
+        assert_eq!(updated.updated_at_ms, 20);
         assert_eq!(
             store.find_task_for_session("one").unwrap().unwrap().id,
             created_task.id
