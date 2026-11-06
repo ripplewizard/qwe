@@ -47,5 +47,18 @@ Session runs in a transient systemd user scope with hard cgroup v2 memory,
 swap, task-count, and CPU-bandwidth controls. macOS uses libproc monitoring and
 reports `monitored` enforcement with bounded polling overshoot.
 
-Signed-build Keychain ACL behavior, locked-keychain errors, and upgrade
-behavior under each real service manager still require release acceptance.
+Local signed Keychain ACL, locked-Keychain fail-closed behavior, and
+binary replacement pass. Public Developer ID trust/notarization remains a
+release-identity requirement.
+
+## Cross-UID security test
+
+The cross-UID probe intentionally uses a second local account with one tightly
+scoped sudoers command:
+
+```text
+huangjian ALL=(qwe-probe) NOPASSWD: /tmp/qwe-cross-uid-client.py
+```
+
+Use the corresponding current username on other hosts. The helper only runs as
+the unprivileged `qwe-probe` account. Do not grant `NOPASSWD: ALL`.
