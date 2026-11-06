@@ -15,7 +15,7 @@ Stage 6 starts from the `dev` integration branch with four adoption gates:
 | ID | Gate | Entry state |
 |---|---|---|
 | STAGE6-001 | Core CI runs formatting, Clippy, tests, protocol validation, and release builds | Pass on GitHub-hosted Linux and macOS at `66e05a8` |
-| STAGE6-002 | A Fedora x86_64 release gate repeats the complete qualification path | Pass in a clean worktree at `66e05a8` |
+| STAGE6-002 | A dedicated Fedora x86_64 runner executes `just release-gate` | Workflow implemented; runner registration and first workflow run pending |
 | STAGE6-003 | A clean-source Linux x86_64 package and checksum are published as a versioned release asset | Publication pending |
 | STAGE6-004 | Pilot reports are triaged, and no open Linux P0/P1 defect blocks `v0.1.x` | Pilot not started |
 
@@ -67,9 +67,10 @@ Release performance:
 {"case":"PERF-001","build_profile":"release","sessions":8,"attach_requests":560,"soak_seconds":15.0,"p50_ms":8.953,"p95_ms":25.632,"p99_ms":25.998,"max_ms":26.435,"max_rss_bytes":153763840}
 ```
 
-These results establish the Stage 6 CI and release-gate path. They do not pass
-STAGE6-003 or STAGE6-004: no release asset has been published and no user pilot
-has run.
+These results establish the Stage 6 CI and release-gate path. STAGE6-002 is
+still open because the clean Fedora gate ran through an SSH control session,
+not the dedicated repository runner. STAGE6-003 and STAGE6-004 are also open:
+no release asset has been published and no user pilot has run.
 
 ## Initial Scope
 
