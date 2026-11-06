@@ -96,6 +96,8 @@
   for the historical POC T03/T04/T08/T11/T12 evidence.
 - [Experiment 0024](experiments/0024-linux-oom-event-retention.md): Linux
   cgroup OOM event-retention regression and five-run verification.
+- [Experiment 0025](experiments/0025-stage5-linux-v0-closure.md): Linux-first
+  V0 closure, independent acceptance, and final release boundary.
 
 ## Reading Order
 

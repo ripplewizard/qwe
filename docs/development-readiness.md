@@ -1,13 +1,13 @@
 # Development Readiness
 
-Status: Stages 1, 2, 3, and 4 complete; Stage 5 in progress
+Status: Stages 1-5 complete for Linux-first V0; public macOS deferred post-V0
 Date: 2026-11-06
 
 ## Decision
 
-Rust development may start. Manual POC sign-off remains pending, but it is not
-a dependency for implementation. The project must not describe manual TUI
-quality or final POC audit as complete until review is signed.
+Linux-first V0 development and release acceptance are complete. The historical
+POC evidence audit and production Rust independent manual review are signed.
+macOS remains local/experimental until a public Developer ID milestone.
 
 ADRs 0011-0015 are accepted. qwed now directly supervises workers, and the
 pre-cutover Host path has been removed. The V0 runtime has one Pane and one
@@ -89,8 +89,8 @@ These are implementation work, not reasons to delay development:
 - Malformed frames, oversized frames, oversized input, and peer-UID policy are
   covered. A real second-UID client is denied by the private runtime socket and
   then rejected by the application peer-UID check after a temporary ACL bypass.
-  Packaged installation and migration pass on macOS; Fedora and public-release
-  acceptance remain Stage 5 gates.
+  Packaged installation and migration pass on macOS and Fedora. Public macOS
+  release acceptance is deferred post-V0.
 - The release package, offline installer, checksum and version checks,
   isolated-home installation, in-place reinstall, SQLite v9-to-v10 migration,
   worker adoption, and an eight-Session release-mode Attach/soak benchmark are
@@ -109,7 +109,7 @@ These are implementation work, not reasons to delay development:
   implemented and pass `just stage4-check` on macOS and Fedora. Linux provides
   hard cgroup v2 limits; macOS reports monitored enforcement with bounded
   polling overshoot. Local signed macOS Keychain ACL, locked-keychain failure,
-  and unlock recovery pass. Public Developer ID trust remains a Stage 5
+  and unlock recovery pass. Public Developer ID trust is a post-V0
   release-identity requirement.
 - Attach queue overflow is covered by a real slow-client reconnect test on both
   platforms. Concurrent independent queues cannot be observed in V0 because
@@ -150,7 +150,6 @@ Structured closure evidence is in
 [Experiment 0020](experiments/0020-stage-4-closure.md).
 
 Linux V0 release packaging, installation, reinstall, v9-to-v10 migration,
-systemd crash recovery, release-mode performance, TUI/job-control smoke, and
-historical evidence disposition are complete. The remaining Stage 5 gate is
-independent Linux manual acceptance, followed by merge and tag. Public macOS
-distribution is deferred post-V0 under ADR 0020.
+systemd crash recovery, release-mode performance, TUI/job-control smoke,
+historical evidence disposition, and independent manual acceptance are
+complete. Public macOS distribution is deferred post-V0 under ADR 0020.

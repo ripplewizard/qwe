@@ -1,7 +1,7 @@
 # V0 Contract Test Matrices
 
-Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64; Linux V0
-automated release gates pass, with independent manual acceptance pending
+Status: Stages 1-5 complete for Linux-first V0; Fedora Linux x86_64 supported;
+macOS ARM64 remains experimental/local
 Date: 2026-11-06
 
 These IDs are stable contract identifiers. An implementation test may be
@@ -236,10 +236,10 @@ macOS ARM64 and Fedora Linux x86_64 currently pass `just stage4-check`:
 All Stage 4 rows are closed. See
 [Experiment 0020](experiments/0020-stage-4-closure.md) for the closure record.
 
-Public Developer ID trust and notarized distribution are Stage 5 release
-packaging gates. Local signed ACL and locked/unlocked Keychain behavior pass.
-Final packaged installation, upgrade migration, and release-mode soak
-measurements are also Stage 5 gates.
+Public Developer ID trust and notarized distribution move to the post-V0 macOS
+milestone under ADR 0020. Local signed ACL and locked/unlocked Keychain behavior
+pass. Linux packaged installation, upgrade migration, and release-mode soak
+measurements pass.
 
 ## Stage 5 Release Candidate
 
@@ -253,10 +253,10 @@ measurements are also Stage 5 gates.
 | PACK-005 | Exercise the installed Linux service through systemd | The installed unit starts qwed; binary reinstall preserves state; SIGKILL restarts the service; the same worker/task are adopted; stop cleans processes and persists closed/stopped state |
 | PERF-001 | Run release-mode Attach and soak | Eight independent Sessions complete real Attach/snapshot/detach cycles within configured latency and aggregate-RSS limits throughout the soak |
 
-Packaged installation, reinstall, worker adoption, schema migration, and
-release-mode performance pass on macOS ARM64 and Fedora Linux x86_64. Public
-macOS signing/notarization, full manual release acceptance, and final V0 freeze
-remain pending.
+Packaged installation, reinstall, worker adoption, schema migration, release
+acceptance, and release-mode performance pass for Linux-first V0. Fedora
+Linux x86_64 is the supported V0 target. Public macOS signing/notarization is
+post-V0 work and is not claimed.
 
 The local signing lifecycle passes with an isolated create/sign/verify/remove
 probe on macOS ARM64. The temporary identity is marked non-public and is not

@@ -1,6 +1,6 @@
 # V0 Release
 
-Status: Stage 5 in progress
+Status: Linux-first V0 released; public macOS deferred post-V0
 Date: 2026-11-06
 
 ## Supported Platform Matrix
@@ -10,7 +10,7 @@ V0 qualification currently targets these native development platforms:
 | Target | Status | Service manager | Resource enforcement | Credential provider |
 |---|---|---|---|---|
 | macOS ARM64 | Experimental local self-signed only; public release deferred post-V0 | launchd user agent | libproc monitoring, explicitly monitored | macOS Keychain |
-| Fedora Linux x86_64 | V0 release candidate; supported after independent manual acceptance | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
+| Fedora Linux x86_64 | Supported for V0 | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
 | macOS x86_64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
 | Linux ARM64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
 | Other operating systems | Unsupported in V0 | unsupported claim | unsupported claim | unsupported claim |
@@ -136,13 +136,15 @@ sequence, and [ADR 0020](adr/0020-linux-first-v0-release.md) places the work in
 a separate post-V0 milestone. The public gate rejects local unsigned or
 self-signed profiles before contacting Apple.
 
-## Stage 5 Remaining Gates
+## Release Closure
 
-- Complete the independent Linux manual acceptance in
+- Stage 5 is complete for Linux-first V0.
+- Independent manual acceptance is recorded in
   [V0 Linux Manual Acceptance](v0-linux-manual-acceptance.md).
-- Merge the accepted Linux release branch and tag the frozen V0 revision.
-- Publish Linux V0 as supported and keep macOS explicitly local/experimental.
+- Linux V0 is published as supported; macOS remains local/experimental.
 
 The POC/manual audit disposition is complete in
-[Experiment 0023](experiments/0023-v0-evidence-audit.md). Public macOS signing
-and notarization are post-V0 work under ADR 0020.
+[Experiment 0023](experiments/0023-v0-evidence-audit.md), and the overall
+closure is recorded in
+[Experiment 0025](experiments/0025-stage5-linux-v0-closure.md). Public macOS
+signing and notarization are post-V0 work under ADR 0020.

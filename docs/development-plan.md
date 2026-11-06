@@ -1,6 +1,6 @@
 # QWE Development Plan
 
-Status: Active
+Status: Complete for Linux-first V0; post-V0 follow-ups listed
 Updated: 2026-11-06
 
 ## Planning Assumptions
@@ -33,13 +33,12 @@ Implemented with current repository evidence:
   release tombstones, and 24-hour durable idempotency.
 - 51 workspace tests pass, including five `vt100` capability probes.
 
-Not ready for V0:
+Post-V0 follow-ups:
 
-- Fedora release acceptance, public Developer ID signing/notarization, full
-  manual release acceptance, and final audit disposition remain Stage 5
-  work.
-- Historical cross-language POC manual disposition remains separate from the
-  completed production Rust Stage 2 sign-off.
+- Public macOS Developer ID signing, notarization, Gatekeeper acceptance, and
+  Apple-account-backed release distribution.
+- Issues found by Linux V0 users during the pilot period.
+- Any future extension work must receive a new accepted plan and ADR.
 
 ## Critical Path
 
@@ -273,17 +272,15 @@ Current implementation:
 
 Local signed Keychain ACL, locked/unlocked behavior, and binary-replacement
 restart pass. See
-[Experiment 0020](experiments/0020-stage-4-closure.md). Stage 5 now adds
-packaged installation, reinstall and upgrade recovery, release-mode
-Attach/soak measurement, and strict signing/notarization tooling. Fedora release
-evidence and public Developer ID trust remain pending.
+[Experiment 0020](experiments/0020-stage-4-closure.md). Stage 5 completed the
+Linux package, reinstall, upgrade recovery, release-mode Attach/soak path, and
+release evidence. Public Developer ID trust remains post-V0 work.
 
 ### Stage 5: Release Candidate
 
 Target: 2026-12-21 to 2026-12-24
-Status: In progress on 2026-11-06; Linux-first release packaging, installed
-systemd recovery, release benchmark, TUI/job-control smoke, and evidence audit
-are complete. Independent Linux manual acceptance and release tagging remain.
+Status: Complete on 2026-11-06. Linux-first V0 is independently accepted and
+released; public macOS is deferred post-V0.
 
 - Run release-mode Attach latency, memory, and soak benchmarks.
 - Run full manual Neovim, htop, detach/attach, and job-control acceptance.
@@ -321,9 +318,9 @@ Current implementation:
   worker/task adoption, and cleanup, then runs Neovim/htop TUI smoke.
 - Fedora Linux x86_64 passes package, reinstall, installed-systemd
   crash-restart, migration, benchmark, Neovim/htop, and job-control probes.
-  The final historical evidence disposition is complete. Independent Linux
-  manual acceptance, merge, tag, and V0 scope freeze remain open. macOS remains
-  frozen at the experimental local self-signed tier under ADR 0019/0020.
+  The final historical evidence disposition and independent manual acceptance
+  are complete. macOS remains frozen at the experimental local self-signed
+  tier under ADR 0019/0020.
 
 ## Test and Delivery Gates
 
@@ -352,10 +349,9 @@ just credential-smoke
 just cross-uid-smoke
 ```
 
-Still planned:
+Post-V0:
 
 ```text
-just release-gate                 # remaining supported target
 just release-public-gate ARTIFACT # requires selected Developer ID and profile
 ```
 

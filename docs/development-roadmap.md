@@ -1,6 +1,6 @@
 # Development Roadmap
 
-Status: Active; Stage 5 in progress
+Status: Active; Linux-first V0 complete; post-V0 macOS release deferred
 Date: 2026-11-06
 
 Detailed sequencing, estimates, staffing sensitivity, and release gates are in
@@ -68,16 +68,16 @@ macOS Secret Provider design pass on both platforms.
 
 ## Milestone D4: User-Facing V0
 
-Status: In progress. Stage 5 now has checksummed native packages, isolated
+Status: Complete for Linux-first V0. Stage 5 now has checksummed native packages, isolated
 installation and in-place reinstall acceptance, SQLite v9-to-v10 migration,
 worker adoption, release-mode eight-Session Attach/soak benchmarks, and a
 strict macOS Developer ID/notarization gate. Release gates pass on macOS and
 Fedora. macOS temporarily uses a local self-signed `-local` package under ADR
-0019 and is paused while Linux release acceptance proceeds. Fedora now passes
-installed-systemd crash-restart, TUI, and job-control smoke. Historical
-evidence disposition is complete. Independent Linux manual acceptance, merge,
-tag, and V0 scope freeze remain. Public macOS release is deferred under ADR
-0020. See Experiments 0021-0023 and `docs/release.md`.
+0019 and is paused after the Linux V0 release. Fedora passes installed-systemd
+crash-restart, TUI, job-control smoke, and independent manual acceptance.
+Historical evidence disposition and V0 scope freeze are complete. Public macOS
+release is deferred under ADR 0020. See Experiments 0021-0025 and
+`docs/release.md`.
 
 - Build the first usable CLI/TUI vertical slice.
 - Run release-mode latency, memory, and soak benchmarks.

@@ -1,6 +1,6 @@
 # V0 Linux Manual Acceptance
 
-Status: Operator verification PASS; independent human sign-off pending
+Status: Passed
 Date: 2026-11-06
 
 This is the final human gate for the Linux-first V0 release. Automated release
@@ -15,6 +15,8 @@ and security gates must pass before this review starts.
 - Archive SHA-256: `7835ddc5a23e8c85be88b01051b6415493d34b6b09b5231084ea3e704cc681bf`
 - Operator: Codex agent, under the user's explicit instruction
 - Operator independent from implementation: no
+- Reviewer and submitter: hjian
+- Reviewer independent from implementation: yes
 - Review date: 2026-11-06
 - Terminal environment: SSH + tmux, 100x30, resized to 120x35
 
@@ -78,13 +80,12 @@ Record only their local paths here.
 
 ```text
 Operator: Codex agent
-Independent human reviewer:
-Independent: pending
-Operator result: PASS
+Reviewer and submitter: hjian
+Independent: yes
+Result: PASS
 Reviewed commit: 8d294df
 Archive SHA-256: 7835ddc5a23e8c85be88b01051b6415493d34b6b09b5231084ea3e704cc681bf
 Date: 2026-11-06
 ```
 
-The functional manual confirmation is complete. Stage 5 cannot be formally
-closed until an independent human reviewer records a PASS in this section.
+The functional manual confirmation and independent sign-off are complete.
