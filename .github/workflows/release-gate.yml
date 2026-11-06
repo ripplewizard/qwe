@@ -21,7 +21,7 @@ jobs:
       - qwe-release
     timeout-minutes: 90
     env:
-      PATH: /home/.local/bin:/usr/local/rust/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin
+      PATH: /home/.local/bin:/usr/local/rust/bin:/usr/local/python/3.12/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin
 
     steps:
       - name: Check out source
