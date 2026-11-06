@@ -104,6 +104,17 @@ impl ResourceController {
 
     pub fn cleanup_cgroup(&self) {
         if let Some(cgroup) = &self.cgroup_dir {
+            if let Some(scope) = cgroup
+                .file_name()
+                .and_then(|value| value.to_str())
+                .filter(|value| value.ends_with(".scope"))
+            {
+                let _ = std::process::Command::new("/usr/bin/systemctl")
+                    .args(["--user", "reset-failed", scope])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
             let _ = std::fs::remove_dir(cgroup);
         }
     }
@@ -145,6 +156,7 @@ impl ResourceController {
             }
             thread::sleep(SAMPLE_INTERVAL);
         }
+        self.cleanup_cgroup();
     }
 
     #[cfg(target_os = "linux")]

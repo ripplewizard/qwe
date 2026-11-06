@@ -431,7 +431,7 @@ impl WorkerSession {
             getrandom::fill(&mut random).map_err(|failure| failure.to_string())?;
             let unit = format!("qwe-session-{}-{}", std::process::id(), hex_encode(&random));
             let mut command = CommandBuilder::new("/usr/bin/systemd-run");
-            command.args(["--user", "--scope", "--quiet", "--collect", "--unit", &unit]);
+            command.args(["--user", "--scope", "--quiet", "--unit", &unit]);
             command.args([
                 "--property=MemoryAccounting=yes",
                 "--property=TasksAccounting=yes",
@@ -554,7 +554,6 @@ impl WorkerSession {
                     status.signal().map(str::to_string);
             }
             reader_session.resources.capture_final_sample();
-            reader_session.resources.cleanup_cgroup();
             reader_session.running.store(false, Ordering::SeqCst);
             let exit_code = *reader_session
                 .exit_code
