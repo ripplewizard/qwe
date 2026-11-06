@@ -20,6 +20,8 @@ jobs:
       - fedora
       - qwe-release
     timeout-minutes: 90
+    env:
+      PATH: /home/.local/bin:/usr/local/rust/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin
 
     steps:
       - name: Check out source
@@ -89,6 +91,15 @@ jobs:
           PY
           sha256sum "$archive" > "$archive.sha256"
           cat "$archive.sha256"
+
+      - name: Preserve release candidate on runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_dir="$HOME/qwe-release-candidates/$GITHUB_SHA"
+          mkdir -p "$candidate_dir"
+          cp dist/qwe-*-linux-x86_64.tar.gz "$candidate_dir/"
+          cp dist/qwe-*-linux-x86_64.tar.gz.sha256 "$candidate_dir/"
 
       - name: Upload release-gate evidence
         uses: actions/upload-artifact@v4
