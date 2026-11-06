@@ -1,0 +1,73 @@
+name: Release Gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-gate
+  cancel-in-progress: false
+
+jobs:
+  fedora:
+    name: Fedora x86_64 release gate
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - fedora
+      - qwe-release
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Verify dedicated runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          . /etc/os-release
+          test "$ID" = fedora
+          command -v just
+          command -v systemctl
+          systemctl --user show-environment >/dev/null
+          printf 'Fedora %s release runner ready\n' "$VERSION_ID"
+
+      - name: Prepare protocol validation environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/qwe-ci-venv"
+          "$RUNNER_TEMP/qwe-ci-venv/bin/python" -m pip install \
+            -r scripts/requirements-protocol.txt
+          printf '%s\n' "$RUNNER_TEMP/qwe-ci-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Run complete release gate
+        run: just release-gate
+
+      - name: Record archive checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          archive="dist/qwe-${version}-linux-x86_64.tar.gz"
+          test -f "$archive"
+          sha256sum "$archive" > "$archive.sha256"
+          cat "$archive.sha256"
+
+      - name: Upload release-gate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwe-linux-x86_64-release-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/qwe-*-linux-x86_64.tar.gz
+            dist/qwe-*-linux-x86_64.tar.gz.sha256
+
