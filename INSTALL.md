@@ -20,14 +20,37 @@ just --version
 systemctl --user is-system-running
 ```
 
-## Build and install V0
+## Install the published Linux release
+
+The supported Fedora Linux x86_64 package is published on GitHub Releases.
+Download the archive and checksum from the `v0.1.1` release:
+
+```sh
+version=0.1.1
+base="https://github.com/ripplewizard/qwe/releases/download/v${version}"
+archive="qwe-${version}-linux-x86_64.tar.gz"
+
+curl --fail --location --remote-name "$base/$archive"
+curl --fail --location --remote-name "$base/$archive.sha256"
+sha256sum --check "$archive.sha256"
+tar -xzf "$archive"
+cd "qwe-${version}-linux-x86_64"
+./install.py
+```
+
+The installer verifies every payload against `SHA256SUMS` before replacing
+executables or service assets. It does not start or enable the service.
+
+## Build from source
+
+The source-build path remains available for development and review.
 
 Clone the stable branch and check out the current V0 tag:
 
 ```sh
 git clone git@github.com:ripplewizard/qwe.git
 cd qwe
-git checkout v0.1.0
+git checkout v0.1.1
 ```
 
 Gitee mirror:
@@ -46,16 +69,16 @@ just release-package
 The package is created under `dist/`:
 
 ```text
-dist/qwe-0.1.0-linux-x86_64.tar.gz
-dist/qwe-0.1.0-linux-x86_64/
+dist/qwe-0.1.1-linux-x86_64.tar.gz
+dist/qwe-0.1.1-linux-x86_64/
 ```
 
 Verify and install it:
 
 ```sh
-shasum -a 256 dist/qwe-0.1.0-linux-x86_64.tar.gz
-tar -xzf dist/qwe-0.1.0-linux-x86_64.tar.gz -C dist
-cd dist/qwe-0.1.0-linux-x86_64
+shasum -a 256 dist/qwe-0.1.1-linux-x86_64.tar.gz
+tar -xzf dist/qwe-0.1.1-linux-x86_64.tar.gz -C dist
+cd dist/qwe-0.1.1-linux-x86_64
 ./install.py
 ```
 

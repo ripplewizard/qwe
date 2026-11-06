@@ -9,10 +9,12 @@ local/experimental.
 
 ## Install and Use
 
-- [Install QWE](INSTALL.md): build/install the Linux V0 package and start the
-  systemd user service.
+- [Install QWE](INSTALL.md): download the published Linux V0 package or build
+  it from source, then start the systemd user service.
 - [Usage](USAGE.md): Sessions, Attach/detach, input, Leases, resources,
   credentials, and teardown.
+- [QWE 0.1.1 release](https://github.com/ripplewizard/qwe/releases/tag/v0.1.1):
+  Linux x86_64 package, checksum, and release notes.
 - [Release](docs/release.md): supported platforms, package contract, and known
   limitations.
 
