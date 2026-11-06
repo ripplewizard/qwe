@@ -46,6 +46,12 @@ Task and Lease history.
 
 ## Milestone D3: Service and Security
 
+Status: In progress. The runtime capability slice and service assets are
+implemented; real launchd/systemd crash-restart and stop lifecycle pass.
+Linux hard cgroup scopes, macOS monitoring, and dynamic policy updates pass.
+Binary-replacement upgrade, installed cross-UID acceptance, and signed macOS
+Keychain acceptance remain open. See ADRs 0017-0018 and `just stage4-check`.
+
 - Add systemd user-service and launchd integration.
 - Verify worker orphan cleanup and upgrade behavior.
 - Add unauthorized UID, stale epoch, malformed frame, and oversized input tests.

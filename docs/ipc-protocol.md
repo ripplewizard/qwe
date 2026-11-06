@@ -1,6 +1,6 @@
 # QWE IPC Protocol
 
-Status: Stages 1-3 implemented and validated on macOS and Linux
+Status: Stages 1-3 validated; Stage 4 core capabilities implemented on macOS
 Date: 2026-11-05
 
 This document describes the currently implemented request/response protocol.
@@ -68,15 +68,17 @@ conflicts are quarantined without resurrecting a closed or mismatched Session.
 ## 5. Session Worker Protocol
 
 Worker operations are `PING`, `WORKER_HELLO`, `SESSION_STATUS`,
-`SESSION_ATTACH`, `SESSION_INPUT`, `TASK_STOP`, and `SESSION_CLOSE`. The
+`SESSION_ATTACH`, `SESSION_INPUT`, `TASK_STOP`, `TASK_KILL`, `SESSION_CLOSE`,
+and `SESSION_KILL`. The
 request/response channel is persistent and supports concurrent in-flight
 requests keyed by `request_id`. `PING` is a lightweight probe and does not
 capture the terminal journal.
 
-`SESSION_INPUT`, `TASK_STOP`, and `SESSION_CLOSE` require the current Active
-owner. A Held Session requires the owner and Lease generation. Unattached and
-Reclaim Grace Sessions return `not_attached`. The CLI can set the logical owner
-with global `--owner` and provides `--generation` on close and task-stop.
+`SESSION_INPUT`, `TASK_STOP`, `TASK_KILL`, `SESSION_CLOSE`, and `SESSION_KILL`
+require the current Active owner. A Held Session requires the owner and Lease
+generation. Unattached and Reclaim Grace Sessions return `not_attached`. The
+CLI can set the logical owner with global `--owner` and provides `--generation`
+on close, task-stop, and forced teardown.
 Scripted `session input` establishes a temporary Active attachment rather than
 bypassing the matrix.
 
@@ -118,8 +120,54 @@ It returns `sessions`, `panes`, `tasks`, `workers`, and a `reconciliation`
 object containing current lost/unreachable and task terminal counts,
 structured orphan/conflict runtime entries, and `last_scan_ms`. Startup probes
 worker sockets before accepting clients; ambiguous workers are not adopted.
+It also returns `capabilities`, credential backend/names, and the control frame
+and input limits.
 
-## 6. Lease State Machine
+## 6. Stage 4 Capabilities
+
+`SESSION_CREATE` accepts optional `credential` and `resource_policy` fields.
+The credential name selects a private credential-directory entry or a macOS
+Keychain item named `<prefix>.<name>`. Secret bytes never appear in the
+request, response, environment, argv, logs, or SQLite. The final PTY child sees
+the secret through inherited descriptor 3 and `QWE_CREDENTIAL_FD=3`.
+
+`resource_policy` accepts:
+
+- `memory_high_bytes`
+- `memory_max_bytes`
+- `memory_swap_max_bytes`
+- `tasks_max`
+- `cpu_quota_percent`
+- `cpu_seconds`
+
+The legacy JSON names `memory_bytes` and `process_limit` are accepted as aliases
+for `memory_max_bytes` and `tasks_max`.
+
+Linux starts each Session in a transient systemd user scope and reports hard
+cgroup v2 memory, swap, task-count, and CPU-bandwidth controls. Cumulative CPU
+seconds are monitored. macOS reports libproc tree observation and monitored
+termination with bounded polling overshoot. Hard requests without the required
+platform tier return `unsupported_capability`.
+
+`SESSION_RESOURCE_UPDATE` patches the policy of a running Session. Fields
+omitted from `resource_policy` are unchanged; `null` clears a field. The request
+requires Active or Held authority, is idempotent, applies runtime policy before
+durably updating the Pane, and rolls the runtime back if persistence fails. Its
+response contains the durable policy and terminal status, including current and
+peak metrics. The CLI is `qwe session limits`.
+
+Forced teardown operations are:
+
+- `SESSION_KILL`: authorize like `SESSION_CLOSE`, then `SIGKILL` the Task
+  process group and persist `closed` history.
+- `TASK_KILL_BATCH`: accept 1-100 unique TaskIds, authorize each Session, and
+  return independent success/failure items.
+- `SERVER_KILL`: require `confirm=true`, force-kill every non-closed Session,
+  return the summary, and exit qwed.
+
+The CLI names are `kill-session`, `task kill`, and `kill-server`.
+
+## 7. Lease State Machine
 
 Leases use UTC wall-clock milliseconds and these states:
 
@@ -138,7 +186,7 @@ Lease and detached-hold TTLs are positive and at most 24 hours. A renewal uses
 not shorten the deadline. A forward jump may expire authority but never kills
 terminal work. ADR 0016 records the proposed defaults and retention policy.
 
-## 7. Idempotency
+## 8. Idempotency
 
 Mutating operations require a non-empty `idempotency_key` of at most 256 bytes.
 The key is scoped by the logical operation and canonical request payload.
@@ -154,15 +202,18 @@ The key is scoped by the logical operation and canonical request payload.
 - Other interrupted pending mutations return `idempotency_indeterminate` rather
   than automatically repeating a possibly applied effect.
 
-## 8. Backpressure
+## 9. Backpressure
 
 Each Session has one bounded 16 MiB journal. One-shot snapshot returns at most
 1 MiB of diagnostic journal tail. Each live attachment has an independent
 1 MiB output queue and closes only that channel on overflow; no silent output
 loss is permitted.
 
-## 9. Security Model
+## 10. Security Model
 
 Owner-only sockets prevent other UIDs from connecting at the OS layer.
 Application peer-UID checks remain defense in depth for misconfigured paths,
 future group-accessible sockets, and compromised file permissions.
+Client frames are limited to 8 MiB before payload allocation, and control
+input is limited to 1 MiB. Malformed and oversized frames close only the
+offending client connection.

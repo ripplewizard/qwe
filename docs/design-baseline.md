@@ -61,6 +61,15 @@ deferred scope:
 API Key injection must use an explicit broker or inherited file descriptor.
 Secrets must be removed from the child environment before exec.
 
+Stage 4 implementation uses a private credential source, zeroizing qwed
+memory, a one-shot broker socket, and final-child descriptor 3. CPU resource
+policy is tree-scoped. Linux uses per-Session cgroup v2 scopes for hard
+memory, task-count, and CPU controls. macOS uses libproc monitoring with
+explicit bounded-overshoot semantics. Limits can be changed while a Session is
+running under [ADR 0018](adr/0018-pane-resource-enforcement.md). Forced Session,
+batch Task, and server teardown are implemented under
+[ADR 0017](adr/0017-stage-4-service-security-and-capabilities.md).
+
 The journal may start mid-ANSI or mid-UTF-8 sequence. No feature may parse the
 journal to reconstruct terminal state. Recording or diff features require a
 separate gap-aware framing contract with VT state checkpoints.

@@ -67,6 +67,10 @@
   keyboard-protocol restoration fix and PTY regression gate.
 - [Experiment 0012](experiments/0012-stage-3-closure.md): final Stage 3 exit
   evidence, reliability observation, and Stage 4 isolation.
+- [Experiment 0017](experiments/0017-stage-4-core-capabilities.md): Stage 4
+  credentials, resource capability, security, and forced-teardown core slice.
+- [Experiment 0018](experiments/0018-pane-resource-enforcement.md): Linux hard
+  cgroup limits, macOS resource monitoring, and dynamic Pane policy.
 
 ## Reading Order
 

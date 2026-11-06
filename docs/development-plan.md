@@ -233,6 +233,7 @@ Current implementation:
 ### Stage 4: Services, Security, and V0 Capabilities
 
 Target: 2026-12-07 to 2026-12-18
+Status: In progress on 2026-11-05.
 
 - Add systemd user-service and launchd integration.
 - Verify worker orphan cleanup and supervisor upgrade behavior.
@@ -245,6 +246,30 @@ Target: 2026-12-07 to 2026-12-18
 
 Exit: D3 acceptance matrix passes on both platforms. Any unsupported platform
 capability is explicit and cannot be reported as implemented.
+
+Current implementation:
+
+- ADR 0017 fixes the secret, forced-teardown, and service-asset contracts;
+  ADR 0018 replaces its initial Pane resource contract.
+- API Key Manager loads private credential files or macOS Keychain items into
+  zeroizing memory, transfers them through a one-shot owner-only broker socket,
+  and exposes descriptor 3 as `QWE_CREDENTIAL_FD` to the PTY child.
+- Pane policy is persisted in SQLite v10. Linux uses one transient systemd
+  cgroup v2 scope per Session for hard tree memory, swap, task-count, and CPU
+  bandwidth controls. macOS uses libproc monitoring for current/peak memory,
+  task count, and CPU time with explicit monitored enforcement.
+- `SESSION_RESOURCE_UPDATE` changes limits on a running Active/Held Session;
+  runtime policy and SQLite are rolled back together on apply failure.
+- `SESSION_KILL`, `TASK_KILL_BATCH`, and confirmed `SERVER_KILL` force-kill real
+  process groups and retain durable terminal history.
+- Control input is limited to 1 MiB, client frames to 8 MiB, and
+  `CONTROL_STATUS` reports the active capability matrix and credential backend.
+- systemd and launchd crash-restart, worker adoption, and graceful stop cleanup
+  pass with real service-manager jobs on both platforms.
+- `just stage4-check` passes on macOS ARM64 and Fedora Linux x86_64.
+
+Open: binary-replacement service upgrade acceptance, real cross-UID
+installation checks, and signed macOS Keychain acceptance are not complete.
 
 ### Stage 5: Release Candidate
 
@@ -274,14 +299,22 @@ just t12-host-smoke
 just resilience-smoke
 ```
 
-New planned Justfile gates:
+Implemented Stage gates:
 
 ```text
 just protocol-check
 just attach-e2e
-just state-matrix
-just service-smoke
+just service-config-check
+just stage4-capabilities
+just stage4-check
 just credential-smoke
+```
+
+Still planned:
+
+```text
+just state-matrix
+just service-lifecycle-smoke
 just release-gate
 ```
 
