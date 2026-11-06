@@ -4,6 +4,21 @@ Quick Window Environment is a lightweight, durable developer task runtime
 built around terminal sessions, process groups, task history, and explicit
 extension boundaries.
 
+Fedora Linux x86_64 is the supported V0 target. macOS ARM64 remains
+local/experimental.
+
+## Install and Use
+
+- [Install QWE](INSTALL.md): build/install the Linux V0 package and start the
+  systemd user service.
+- [Usage](USAGE.md): Sessions, Attach/detach, input, Leases, resources,
+  credentials, and teardown.
+- [Release](docs/release.md): supported platforms, package contract, and known
+  limitations.
+
+Stable releases live on the GitHub `main` branch and are tagged. The `dev`
+branch is the integration branch for the next release.
+
 ## Current Phase
 
 Active development starts on the `dev` branch. Stages 0-5 are complete for the
@@ -31,6 +46,11 @@ gaps and the implementation start gate.
 - `crates/`: production Rust libraries
 - `apps/`: CLI, daemon, and durable host binaries
 - `../bianca-poc/poc/`: external cross-language POC harness and evidence
+
+Remote repositories:
+
+- GitHub: `git@github.com:ripplewizard/qwe.git`
+- Gitee: `git@gitee.com:uranus-yy/bianca.git`
 
 The working POC evidence checkout is
 `/Users/huangjian/project/uranus/bianca-poc` on branch `poc`. The `dev`

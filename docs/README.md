@@ -35,6 +35,10 @@
 
 ## Development
 
+- [Install](../INSTALL.md): Linux source build, package installation, service
+  startup, upgrade, and uninstall.
+- [Usage](../USAGE.md): CLI workflows, Sessions, Attach, Leases, resources,
+  credentials, and teardown.
 - [Development Plan](development-plan.md): delivery sequence, estimates,
   gates, risks, and scope controls.
 - [Readiness](development-readiness.md): known gaps and start gate.
