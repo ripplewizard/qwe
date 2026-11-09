@@ -1,7 +1,7 @@
 # Testing Strategy
 
-Status: Active; Stage 5 release gates in progress
-Date: 2026-11-06
+Status: Active; Stage 5 release gates complete; Stage 6.5 accepted
+Date: 2026-11-09
 
 ## Test Layers
 
@@ -214,11 +214,14 @@ evidence.
 inside rootless Podman images. It is a compatibility probe, not a substitute
 for installed-systemd, cgroup, migration, or manual release acceptance.
 
-Stage 7 will extend resource testing around the existing cgroup v2 controls:
-controller availability, profile validation, scope startup and cleanup under
-all crash paths, bounded enforcement events, 8/16-Session pressure runs, and a
-24-hour qualification on real installed-systemd Linux targets. Container
-compatibility tests cannot substitute for these gates.
+Stage 7 extends resource testing around the accepted Pane-first ResourceScope:
+controller availability, profile validation, Pane scope startup and cleanup
+under all crash paths, detached-job teardown, bounded enforcement events,
+8/16-Session pressure runs, and a 24-hour qualification on real
+installed-systemd Linux targets. SHARED-002 through SHARED-006 in the
+[Test Matrices](test-matrices.md) cover multi-Pane inventory, Pane-addressed
+Attach, schema v11, observer authorization, and complete scope cleanup.
+Container compatibility tests cannot substitute for these gates.
 
 Until Developer ID is available, ADR 0019 permits a dedicated local
 self-signed package tier. It signs all four executables through an isolated

@@ -28,9 +28,13 @@ Linux V0 adoption and stabilization. Completed work includes hosted core CI and
 the dedicated Fedora release-gate workflow. Clean-source publication, the real
 Linux pilot, and the first `v0.1.x` patch release remain open.
 
-Stage 7 is planned around Linux cgroup v2 resource governance for long-running
-Sessions. It extends QWE's existing `qwed`/PTY model and does not introduce a
-Docker runtime. See [Linux Resource Governance](docs/stage7-resource-governance.md).
+Stage 6.5 accepted the shared prerequisites for one worker per Pane,
+Pane-first ResourceScope, Pane-targeted channels, and the v10-to-v11 migration.
+Stage 7 is ready to start around Linux cgroup v2 resource governance for
+long-running Sessions. It extends QWE's existing `qwed`/PTY model and does not
+introduce a Docker runtime. See [ADR 0021](docs/adr/0021-shared-prerequisites.md),
+[Storage Migration](docs/storage-migration.md), and
+[Linux Resource Governance](docs/stage7-resource-governance.md).
 
 macOS binary distribution is deferred post-V0 under ADR 0020 and limited to
 explicitly marked local self-signed packages under ADR 0019. Fedora Linux

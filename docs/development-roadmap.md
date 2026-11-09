@@ -1,7 +1,8 @@
 # Development Roadmap
 
-Status: Active; Linux-first V0 complete; post-V0 macOS release deferred
-Date: 2026-11-06
+Status: Active; Linux-first V0 complete; shared prerequisites accepted; post-V0
+macOS release deferred
+Date: 2026-11-09
 
 Detailed sequencing, estimates, staffing sensitivity, and release gates are in
 [Development Plan](development-plan.md).
@@ -102,13 +103,32 @@ Exit: the Stage 6 exit criteria in
 [Development Plan](development-plan.md#stage-6-linux-v0-adoption-and-stabilization)
 pass without broadening unsupported platform or feature claims.
 
+## Pre-D6 Gate: Shared Prerequisites
+
+Status: Complete. Stage 6.4 passed its disposable-spike evidence and Stage 6.5
+accepted [ADR 0021](adr/0021-shared-prerequisites.md) on 2026-11-09. The
+accepted contract uses one worker per Pane, Pane-first ResourceScope, Pane
+keyed inventory and Attach, a qwed-owned read-only observer projection, schema
+v11, complete scope teardown, and the minimum Principal tombstone model.
+
+Production qwed multi-Pane inventory, public Attach routing, observer channel
+persistence, and schema v11 remain implementation work. Stage 7 is the next
+track. Session Layout is the default next feature track; Agent Execution may
+run in parallel only with its own accepted ADR and sufficient staffing.
+
+Exit: satisfied. The decision is recorded in
+[Development Plan](development-plan.md#stage-65-shared-prerequisites-decision-gate)
+and [Storage Migration](storage-migration.md).
+
 ## Milestone D6: Linux Resource Governance
 
-Status: Planned. Stage 7 productizes the existing Linux cgroup v2 resource
-controls for long-running Sessions. It is not a Docker or Podman runtime.
+Status: Ready to start. Stage 7 productizes Linux cgroup v2 resource controls
+as Pane-first ResourceScopes for long-running Sessions. It is not a Docker or
+Podman runtime.
 
 - Add reusable, opt-in resource profiles.
-- Harden systemd scope, controller detection, cleanup, and recovery.
+- Harden Pane systemd scope, controller detection, detached-process cleanup,
+  and recovery.
 - Expose bounded resource usage and enforcement events.
 - Pass a 24-hour multi-Session resource soak.
 - Validate installed systemd and cgroup behavior on each claimed Linux target.

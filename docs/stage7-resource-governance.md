@@ -1,13 +1,13 @@
 # Stage 7: Linux Resource Governance
 
-Status: Planned
-Date: 2026-11-06
+Status: Ready to start; shared prerequisites accepted
+Date: 2026-11-09
 
 ## Product Definition
 
-Stage 7 makes QWE safer for long-running terminal Sessions by using Linux
-cgroup v2 for tree-scoped resource accounting, enforcement, and visibility.
-It extends the existing terminal/session runtime; it does not introduce a
+Stage 7 makes QWE safer for long-running terminal Sessions and Panes by using
+Linux cgroup v2 for tree-scoped resource accounting, enforcement, and
+visibility. It extends the existing terminal runtime; it does not introduce a
 container runtime.
 
 The target positioning is:
@@ -17,10 +17,12 @@ The target positioning is:
 
 Desired characteristics:
 
-- A Session keeps its PTY, terminal state, process tree, and attach lifecycle.
-- Resource limits cover the complete Session process tree.
-- qwed remains responsive when one Session exhausts memory, forks excessively,
-  or consumes too much CPU.
+- A Session groups one or more Pane workers; V0 instantiates exactly one.
+- Each Pane keeps its PTY, terminal state, process tree, and attach lifecycle.
+- Resource limits cover the complete Pane process tree and support Session and
+  Task targets through the same ResourceScope interface.
+- qwed remains responsive when one Pane exhausts memory, forks excessively, or
+  consumes too much CPU.
 - Unsupported Linux environments fail explicitly instead of silently ignoring
   a requested limit.
 - Resource behavior and enforcement events are inspectable during long runs.
@@ -42,6 +44,12 @@ The V0 implementation already provides:
 - Worker and cgroup lifecycle tests covering process exit, OOM, task fan-out,
   qwed restart, and residual scope cleanup.
 
+Stage 6.4 validated a disposable one-worker-per-Pane topology and distinct
+cgroup v2 scopes in [Experiment 0028](experiments/0028-stage6-shared-prerequisites-spike.md).
+[ADR 0021](adr/0021-shared-prerequisites.md) accepts Pane-first enforcement.
+Production Pane-worker inventory, Attach routing, schema v11, and observer
+channels still require implementation and are not V0 claims.
+
 See [ADR 0018](adr/0018-pane-resource-enforcement.md), the
 [Technical Architecture](technical-architecture.md#10-resource-model), and
 [Experiment 0018](experiments/0018-pane-resource-enforcement.md).
@@ -53,8 +61,8 @@ This stage is about resource governance, not containerization.
 Cgroup limits:
 
 - bound CPU, memory, swap, and task count;
-- apply to every descendant of a Session process tree;
-- prevent one Session from exhausting the whole host;
+- apply to every descendant of a Pane process tree;
+- prevent one Pane from exhausting the whole host;
 - provide enforcement signals for diagnosis.
 
 They do not provide:
@@ -76,6 +84,8 @@ Priority: P0
 
 - Define stable resource profiles such as `interactive`, `batch`, `tight`, and
   `unlimited`.
+- Store requested policy against the ResourceScope target; the first delivery
+  creates Pane scopes with a logical Session parent.
 - Keep limits opt-in for existing users to avoid surprise terminations during
   upgrade.
 - Allow explicit fields to override a selected profile.
@@ -85,7 +95,7 @@ Priority: P0
 
 Exit:
 
-- A user can create a Session from a documented profile.
+- A user can create a Pane from a documented profile.
 - Unknown profiles, unsupported fields, and invalid limits fail with stable
   error codes.
 - Existing Sessions retain their policy across qwed restart.
@@ -97,20 +107,23 @@ Priority: P0
 - Detect cgroup v2, systemd user manager, and individual controllers robustly.
 - Verify `cpu`, `memory`, and `pids` controller availability before reporting
   hard enforcement.
-- Make the Session startup/topology handshake reliable for very short-lived
+- Make the Pane startup/topology handshake reliable for very short-lived
   programs.
 - Preserve the final Task PID/PGID and process-tree ownership contract.
 - Audit scope cleanup after normal exit, OOM, forced termination, worker crash,
   qwed crash/restart, and systemd manager restart.
 - Ensure failed policy application rolls back runtime and SQLite state.
-- Prevent stale, duplicate, or unowned Session scopes from accumulating.
-- Keep `qwe-session-*.scope` outside qwed's own service cgroup.
+- Prevent stale, duplicate, or unowned Pane scopes from accumulating.
+- Keep Pane scopes outside qwed's own service cgroup and make their names
+  derivable from stable Pane identity.
+- Tear down detached interactive job groups as part of the complete Pane
+  scope; process-group signaling alone is insufficient.
 
 Exit:
 
 - Controller absence returns `unsupported_capability`.
 - Repeated OOM and task-count violations do not destabilize qwed.
-- No residual Session scope remains after teardown or recovery tests.
+- No residual Pane scope remains after teardown or recovery tests.
 
 ### R3. Long-Run Visibility and Events
 
@@ -127,7 +140,7 @@ Priority: P0
 
 Exit:
 
-- `status` explains whether a Session is healthy, near a limit, or terminated
+- `status` explains whether a Pane is healthy, near a limit, or terminated
   by enforcement.
 - Long-running resource data does not grow without a documented bound.
 
@@ -135,12 +148,13 @@ Exit:
 
 Priority: P0
 
-- Run 8 and 16 Session release-mode soak profiles.
-- Keep Sessions alive through repeated attach/detach and input cycles.
+- Run 8 and 16 Session release-mode soak profiles with multiple Panes where
+  the qualification profile requires them.
+- Keep Panes alive through repeated attach/detach and input cycles.
 - Exercise process churn, memory growth, CPU load, and task fan-out.
 - Repeatedly restart qwed while Sessions and scopes remain live.
 - Trigger memory, CPU, and task limits independently and concurrently.
-- Verify qwed latency remains bounded while another Session is under pressure.
+- Verify qwed latency remains bounded while another Pane is under pressure.
 - Confirm no leaked workers, sockets, scopes, journals, or SQLite records.
 
 Exit:
@@ -187,10 +201,10 @@ No optional domain is silently approximated.
 
 | ID | Case |
 |---|---|
-| RG-001 | Create Sessions from resource profiles and verify requested/effective policy |
+| RG-001 | Create Panes from resource profiles and verify requested/effective policy |
 | RG-002 | Reject missing cgroup controllers and systemd capabilities without fallback |
-| RG-003 | Verify Session scope cleanup after exit, OOM, kill, and qwed/worker crashes |
-| RG-004 | Keep qwed responsive while a Session exceeds memory, CPU, and task limits |
+| RG-003 | Verify Pane scope cleanup after exit, OOM, kill, detached jobs, and qwed/worker crashes |
+| RG-004 | Keep qwed responsive while a Pane exceeds memory, CPU, and task limits |
 | RG-005 | Run installed-systemd resource gates on each claimed Linux distribution |
 | RG-006 | Bound policy-event and metric history during a long-running soak |
 
@@ -208,7 +222,9 @@ No optional domain is silently approximated.
 Recommended initial decision for the first decision:
 
 - Require systemd user service plus cgroup v2 for supported hard limits.
-- Keep Session limits opt-in.
+- Use Pane-level hard scopes with a logical Session parent; do not retain the
+  V0 per-Session limit as the long-term enforcement target.
+- Keep Pane limits opt-in.
 - Make only bounded enforcement events durable.
 - Defer I/O and CPU weight until the P0 kernel/resource lifecycle is stable.
 
@@ -225,7 +241,7 @@ Recommended initial decision for the first decision:
 
 Stage 7 is complete when:
 
-- resource profiles and observable policy are stable;
+- Pane-level ResourceScope profiles and observable policy are stable;
 - Linux cgroup lifecycle and failure paths pass;
 - a 24-hour soak has no supervisor instability or leaked scopes;
 - installed-systemd resource gates pass on every supported distribution;

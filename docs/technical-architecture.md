@@ -1,7 +1,7 @@
 # QWE Technical Architecture
 
 Status: Implementation Active
-Updated: 2026-11-05
+Updated: 2026-11-09
 
 ## 1. Process Model
 
@@ -12,16 +12,21 @@ Client
   v
 qwed supervisor ------------ SQLite WAL
   |
-  +-- session worker
-  |     +-- PTY and VT state
-  |     +-- qwe-session-exec -> systemd scope (Linux) / task process group
-  |     +-- bounded output journal
-  |
-  +-- session worker
-        +-- ...
+  +-- Session
+        +-- Pane worker
+        |     +-- PTY and VT state
+        |     +-- qwe-session-exec -> systemd scope (Linux) / task process group
+        |     +-- bounded output journal
+        |
+        +-- Pane worker
+              +-- ...
 ```
 
-The supervisor is replaceable. Session workers are the only owners of live
+The diagram shows the accepted multi-Pane topology from
+[ADR 0021](adr/0021-shared-prerequisites.md). V0 currently instantiates the
+one-Pane special case: one Session owns one Pane worker.
+
+The supervisor is replaceable. Pane workers are the only owners of live
 terminal and process resources. A client never owns a PTY or process group.
 
 The Attach data plane is:
@@ -70,27 +75,30 @@ and liveness matrix work is tracked in
 - Authorizes clients and manages leases.
 - Stores metadata, topology, and task history in SQLite.
 - Reconciles persisted state against worker inventory before accepting clients.
-- Starts and re-adopts workers, observes `SIGCHLD`/`waitpid` events and
-  persistent control EOF, and runs the bounded safety scan.
-- Authenticates and proxies the dedicated Attach socket directly to workers.
+- Starts and re-adopts Pane workers, observes `SIGCHLD`/`waitpid` events and
+  persistent control EOF, and runs the bounded safety scan. V0 addresses the
+  sole Pane through its Session; the accepted target keys inventory by Pane.
+- Authenticates and proxies the dedicated Attach socket to the selected Pane
+  worker. Observer access is a qwed-owned read-only projection.
 - Does not own PTYs or process groups.
 
 ### qwe-worker
 
-- One process per Session; owns the PTY, process group, VT state, and journal.
+- One process per Pane in the accepted target topology; V0 uses one process per
+  Session. It owns the PTY, process group, VT state, and journal.
 - Starts the session process through the internal `qwe-session-exec` launcher.
 - On Linux, starts `qwe-session-exec` inside a transient systemd user scope.
   The launcher reports the final task PID and cgroup path before exec.
 - Serves a persistent request/response control channel and a typed Attach
   channel over owner-only Unix sockets.
-- Survives qwed crashes; qwed re-adopts it by socket path, SessionId, worker PID,
-  and start token.
+- Survives qwed crashes; qwed re-adopts it by socket path, SessionId, PaneId,
+  worker PID, and start token. PaneId validation is added with schema v11.
 
-### Session worker
+### Pane worker
 
-The `qwe-worker` process is the Session worker. It calls `setsid`, owns one PTY,
-process group, VT state, and bounded journal, and never transfers those
-resources to qwed.
+The `qwe-worker` process is a Pane worker. It calls `setsid`, owns one PTY,
+process group, VT state, bounded journal, and Pane ResourceScope, and never
+transfers those resources to qwed.
 
 ## 3. Crate Graph
 
@@ -233,15 +241,18 @@ startup; only the matching token can resume the Session during that window.
 
 | State | Owner | Durable Storage |
 |---|---|---|
-| Live PTY and writer | Session worker | No |
-| VT screen and cursor | Session worker | No |
-| Recent terminal bytes | Session worker | No |
-| Task process group | Session worker | Identity mirrored to SQLite |
+| Live PTY and writer | Pane worker | No |
+| VT screen and cursor | Pane worker | No |
+| Recent terminal bytes | Pane worker | No |
+| Task process group | Pane worker | Identity mirrored to SQLite |
 | Session/Pane/TaskInstance metadata | `qwed` | SQLite |
+| Pane worker identity and lifecycle | `qwed` inventory | SQLite mirror keyed by Pane |
+| ResourceScope lifecycle and requested policy | `qwed` / backend | SQLite plus backend readback |
+| Principal and revocation epoch | `qwed` | SQLite tombstone |
 | Lease owner/deadline | `qwed` | SQLite |
-| Attachment authority | `qwed` | SQLite token hash, owner, generation, deadline |
+| Attachment authority | `qwed` | SQLite token hash, owner, generation, deadline; keyed by Pane after v11 |
 | Task history | `qwed` | SQLite |
-| Worker control, health, and inventory | `qwed` supervisor | Persistent channels, rebuilt by reconciliation |
+| Worker control, health, and inventory | `qwed` supervisor | Persistent channels keyed by Pane, rebuilt by reconciliation |
 | Configuration | Workspace files | Files |
 
 ## 7. Recovery Semantics
@@ -252,12 +263,13 @@ startup; only the matching token can resume the Session during that window.
 | `qwed` SIGKILL | All session workers continue |
 | `qwed` restart | Rediscover workers and reconcile SQLite inventory |
 | Corrupt SQLite | Fail explicitly; do not start with silent data loss |
-| Session worker SIGKILL | That Session is lost; return `terminal_lost` |
+| Pane worker SIGKILL | That Pane is lost; V0's one-Pane Session returns `terminal_lost`, while other Panes remain healthy after the multi-Pane migration |
 | OS reboot | No V0 recovery |
 
 On restart, qwed scans its runtime directory and reconnects workers after
-validating the expected socket path, SessionId, worker PID, and start token.
-Recovery never reconstructs a terminal by replaying an unbounded byte stream.
+validating the expected socket path, SessionId, PaneId, worker PID, and start
+token. Recovery never reconstructs a terminal by replaying an unbounded byte
+stream.
 
 ## 8. Task Identity
 
@@ -307,15 +319,22 @@ The process start token is mandatory. PID alone is never sufficient.
 - SQLite v10 enforces Session references and stores attachment authority,
   two-phase idempotency replay records, and optional Pane resource policy.
   `CONTROL_STATUS` returns Pane records alongside Sessions and Tasks.
+- Schema v11 removes the one-Pane/one-Task uniqueness assumptions and adds
+  Pane-worker, ResourceScope, and Principal records. The migration preserves
+  V0 identities and all durable authority/history records defined in
+  [Storage Migration](storage-migration.md).
 - Lease release writes a generation tombstone; expiration does not kill Tasks.
 
 ## 10. Resource Model
 
-- Each Pane/Session has a tree-scoped policy for memory high/max/swap,
+- ResourceScope targets Session, Pane, or Task. The first Stage 7 Linux
+  implementation targets the Pane; a Session is the logical parent.
+- Each Pane has a tree-scoped policy for memory high/max/swap,
   processes-plus-threads, CPU bandwidth, and cumulative CPU time.
-- Linux creates one transient systemd user scope per Session. `memory.max`,
-  `memory.swap.max`, `pids.max`, and `cpu.max` are hard limits; cumulative CPU
-  time is monitored. `memory.oom.group=1` treats the Session as one OOM unit.
+- V0 Linux creates one transient systemd user scope per Session. The accepted
+  target creates one hard scope per Pane. `memory.max`, `memory.swap.max`,
+  `pids.max`, and `cpu.max` are hard limits; cumulative CPU time is monitored.
+  `memory.oom.group=1` treats the selected ResourceScope as one OOM unit.
 - macOS traverses the task tree with `proc_listchildpids` and samples
   `proc_pid_rusage` every 100 ms. Memory, task-count, and CPU limits are
   `monitored`; a breach terminates the process group.
@@ -326,6 +345,9 @@ The process start token is mandatory. PID alone is never sufficient.
   or OOM immediately; lowering `pids.max` does not kill existing tasks but
   blocks new forks until usage falls below the limit.
 - V0 does not claim hard tree limits when systemd user scopes are unavailable.
+- Complete Pane-scope teardown must stop detached interactive job groups in
+  addition to the task process group. A scope is tombstoned only after the
+  backend confirms that no owned process or controller state remains.
 
 GPU-to-task attribution remains outside the Pane resource contract and is
 reported only when a reliable platform identifier exists.
@@ -333,7 +355,9 @@ reported only when a reliable platform identifier exists.
 ## 11. Security Baseline
 
 - One local OS user for V0.
-- One control client per Session.
+- V0 has one interactive control client per Session. The accepted target has
+  one interactive writer per Pane and a separate Session Lease for lifecycle
+  control.
 - No TCP listener.
 - Socket mode `0600`.
 - Peer-UID verification.
@@ -347,6 +371,11 @@ reported only when a reliable platform identifier exists.
   insecure, symlinked, or oversized sources fail closed.
 - Control input is limited to 1 MiB. Client request frames remain limited to
   8 MiB before payload allocation.
+- ChannelProfile separates projection and authorization from state ownership.
+  `human_observer` is a qwed read-only projection; it cannot acquire input,
+  resize, or lifecycle authority. AuthContext remains opaque to IPC clients.
+- Principal records use monotonic epochs and tombstones. They do not elevate
+  the V0 same-UID owner string into an authenticated identity.
 
 ## 12. Concurrency and Latency
 
@@ -370,11 +399,11 @@ reported only when a reliable platform identifier exists.
 
 ## 14. Open Decisions
 
-The Stage 0 design gate and automated Stage 1-3 acceptance are closed. These
-decisions remain open and must be recorded in ADRs before implementation:
+The Stage 0 design gate, automated Stage 1-3 acceptance, and Stage 6.5 shared
+prerequisites are closed. These decisions remain open and must be recorded in
+ADRs before implementation:
 
-1. Whether read-only observers are supported beyond the reserved Attach mode.
-2. Final VT engine after broader compatibility benchmarks.
-3. Exact idle-timeout defaults for non-terminal Sessions.
+1. Final VT engine after broader compatibility benchmarks.
+2. Exact idle-timeout defaults for non-terminal Sessions.
 
 These decisions must be recorded as accepted ADRs before their implementation.

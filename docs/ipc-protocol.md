@@ -1,10 +1,12 @@
 # QWE IPC Protocol
 
-Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64
-Date: 2026-11-06
+Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64. The
+accepted multi-Pane contract is documented but not implemented.
+Date: 2026-11-09
 
-This document describes the currently implemented request/response protocol.
-The accepted V0 Attach frames and state contracts are canonical in
+This document describes the currently implemented request/response protocol
+and the accepted Stage 6.5 target where explicitly labeled. The accepted V0
+Attach frames and state contracts are canonical in
 [`protocol/schema/qwe-v1.schema.json`](../protocol/schema/qwe-v1.schema.json).
 ADR [0011](adr/0011-consolidate-control-plane.md) defines the supervisor and
 persistent worker-control model. ADRs
@@ -14,7 +16,8 @@ persistent worker-control model. ADRs
 ## 1. Authority Boundaries
 
 - `qwed` is the sole authority for SQLite Sessions, Tasks, and Leases.
-- `qwed` owns live worker inventory, control channels, and health state.
+- `qwed` owns live worker inventory, control channels, and health state. V0
+  inventory is keyed by Session; the accepted multi-Pane target keys by Pane.
 - `qwe-worker` processes own PTYs, process groups, VT state, and journals.
 - Clients never connect directly to worker control sockets.
 - Clients connect to qwed's dedicated Attach socket. qwed proxies the channel
@@ -212,7 +215,59 @@ Each Session has one bounded 16 MiB journal. One-shot snapshot returns at most
 1 MiB output queue and closes only that channel on overflow; no silent output
 loss is permitted.
 
-## 10. Security Model
+## 10. Accepted Multi-Pane Contract (Not Implemented)
+
+[ADR 0021](adr/0021-shared-prerequisites.md) accepts Pane-targeted channels and
+Pane-keyed worker inventory. The canonical `qwe-v1` schema and current clients
+remain unchanged until schema v11 and the corresponding protocol version are
+implemented.
+
+### Target Selection
+
+- A Pane operation carries both `session_id` and `pane_id`.
+- qwed validates that the Pane belongs to the Session, resolves the Pane worker
+  from inventory, and rejects a missing, mismatched, lost, or unreachable Pane
+  before opening a worker channel.
+- Clients never supply a worker socket path or select a worker by Session
+  order.
+- Pane-scoped interactive and observer attachment state is durable. Session
+  Leases remain the fence for Session-wide lifecycle operations.
+
+### Channel Profiles
+
+The accepted profiles are `human_interactive`, `human_observer`, `agent_exec`,
+`agent_stream`, and `agent_observer`. Profile, projection, capability
+allowlist, replay/backpressure policy, and opaque AuthContext are channel
+inputs. The detailed profile table and authorization boundary are in
+[ADR 0021](adr/0021-shared-prerequisites.md).
+
+`human_observer` is a qwed-owned read-only projection over an exclusive
+internal worker Attach channel. It can subscribe to snapshot and output but
+cannot send input, resize, detach, or lifecycle control. qwed rejects those
+frames before they reach the worker. The worker does not need a native
+`read_only` Attach mode; V0 continues to reject that reserved mode with
+`unsupported_mode`.
+
+### Inventory, Recovery, and Resource Reporting
+
+- Worker discovery, adoption, health, loss, and cleanup are addressed by Pane.
+- A Pane worker loss does not mark unrelated Panes in the same Session lost.
+- Resource protocol fields expose target, requested/effective policy, bounded
+  usage, pressure, enforcement events, lifecycle, and cleanup state.
+- cgroup paths, systemd unit names, `/proc` details, and backend credentials
+  never become public fields.
+- Detached interactive job groups belong to the Pane scope and must be cleaned
+  before the scope is tombstoned.
+
+### Compatibility
+
+The future protocol change is additive at the object level but not wire
+compatible with a client that assumes one Session equals one worker. It must
+introduce a new negotiated protocol version, update
+[Storage Migration](storage-migration.md), and pass SHARED-002 through
+SHARED-006 before replacing the V0 path.
+
+## 11. Security Model
 
 Owner-only sockets prevent other UIDs from connecting at the OS layer.
 Application peer-UID checks remain defense in depth for misconfigured paths,

@@ -2,6 +2,9 @@
 
 Status: Accepted
 Date: 2026-11-05
+Amendment: [ADR 0021](0021-shared-prerequisites.md) accepts a Pane-first
+ResourceScope implementation for the multi-Pane target. The V0 Linux
+per-Session scope remains the current implementation until Stage 7 migrates it.
 
 ## Context
 
