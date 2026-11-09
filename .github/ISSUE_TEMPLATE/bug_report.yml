@@ -1,0 +1,74 @@
+name: Linux V0 bug report
+description: Report an installation, service, Session, Attach, resource, or upgrade defect.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove credentials, private paths, terminal captures, SQLite files, and
+        environment dumps before submitting. Report security-sensitive issues
+        privately instead of attaching secrets.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What failed, and what was the impact?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: QWE version
+      description: Paste the output of `qwe --version`.
+      placeholder: qwe 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Fedora version, architecture, terminal, and service manager state.
+      placeholder: Fedora 40 x86_64, kitty, systemd user manager running
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest deterministic command or interaction sequence.
+      placeholder: |
+        1. Install ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the stable error code and a sanitized JSON response if available.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Data safety
+      options:
+        - label: I removed credentials, raw terminal captures, SQLite state, and private environment data.
+          required: true
+

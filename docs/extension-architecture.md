@@ -103,7 +103,7 @@ Task
 
 ID	Extension	Priority	Current Status
 E01	QWE Mesh	High	Research
-E02	Resource Controller	High	Monitoring First
+E02	Resource Controller	High	V0 cgroup v2 controls implemented; Stage 7 hardening
 E03	Credential Broker	High	Research
 E04	Security Sandbox	Medium	Research
 E05	Agent Runtime	Medium	Research
@@ -234,6 +234,13 @@ mTLS 只解决传输层身份和加密问题，不等于应用层授权。
 ⸻
 
 5. E02 — Resource Controller
+
+Implementation note: QWE does not need to implement Docker or a container
+runtime to provide Linux resource isolation. V0 already uses per-Session
+systemd transient scopes and cgroup v2 for memory, swap, task-count, and CPU
+limits. Stage 7 focuses on profiles, lifecycle hardening, observability,
+long-run qualification, and careful expansion of controller support. See
+[Stage 7 Resource Governance](stage7-resource-governance.md).
 
 5.1 Objective
 

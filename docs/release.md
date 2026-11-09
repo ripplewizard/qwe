@@ -139,6 +139,8 @@ self-signed profiles before contacting Apple.
 ## Release Closure
 
 - Stage 5 is complete for Linux-first V0.
+- Stage 6 is in progress for Linux V0 distribution, CI, feedback triage, and
+  patch releases.
 - Independent manual acceptance is recorded in
   [V0 Linux Manual Acceptance](v0-linux-manual-acceptance.md).
 - Linux V0 is published as supported; macOS remains local/experimental.
@@ -148,3 +150,22 @@ The POC/manual audit disposition is complete in
 closure is recorded in
 [Experiment 0025](experiments/0025-stage5-linux-v0-closure.md). Public macOS
 signing and notarization are post-V0 work under ADR 0020.
+
+## Stage 6 Distribution Gate
+
+A published Linux V0 archive must be built from a clean release commit and pass
+the manual Fedora release workflow in
+`.github/workflows/release-gate.yml`. The release asset is accompanied by its
+SHA-256 and release notes. Its `release.json` must report the tagged commit,
+`source_dirty: false`, the expected version/target, and hashes for all four
+executables.
+
+Local archives under ignored `dist/` are evidence only. Do not publish one when
+its manifest refers to a different source commit or marks the source dirty.
+Hosted Ubuntu CI is compile/test coverage and does not expand the supported
+Fedora platform claim.
+
+Stage 6 closes only after real pilot reports are triaged and a `v0.1.x` patch
+release completes the same Fedora evidence path. See
+[Experiment 0026](experiments/0026-stage6-adoption-baseline.md) for the current
+entry state.

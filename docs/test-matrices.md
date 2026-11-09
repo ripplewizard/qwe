@@ -265,3 +265,69 @@ committed.
 The installed-systemd probe passes on Fedora Linux x86_64 with the installed
 unit, binary reinstall, supervisor crash-restart, worker/task adoption, and
 graceful stop persistence.
+
+## Stage 6 Adoption and Stabilization
+
+| ID | Case | Expected result |
+|---|---|---|
+| STAGE6-001 | Run hosted core CI | Formatting, Clippy, workspace tests, protocol validation, and release builds pass on Linux and macOS without creating a new platform-support claim |
+| STAGE6-002 | Run the release gate on the dedicated Fedora runner | The complete `just release-gate` passes on Fedora x86_64 with a live systemd user manager and uploads the archive plus SHA-256 |
+| STAGE6-003 | Publish a clean-source release | The release manifest names the tagged source commit with `source_dirty: false`; the archive hash, installation, and service recovery match the published evidence |
+| STAGE6-004 | Close the Linux pilot | Reports are triaged, no P0/P1 defect remains open, and at least one `v0.1.x` patch release path is exercised |
+
+STAGE6-001 passes at `66e05a8`. A clean Fedora control run also passed, but it
+did not execute through the dedicated repository runner, so STAGE6-002 remains
+open. The hosted run, control-run results, manifest, and archive checksum are
+recorded in
+[Experiment 0026](experiments/0026-stage6-adoption-baseline.md). STAGE6-002
+through STAGE6-004 close only when their linked runner, publication, and pilot
+evidence exists.
+
+## Linux Container Compatibility
+
+| ID | Case | Expected result |
+|---|---|---|
+| CONTAINER-001 | Run QWE Session operations in glibc-based Linux containers | Session creation, input, shell function output, snapshot, Task history, supervisor restart adoption, and clean server teardown pass |
+
+CONTAINER-001 passes for Ubuntu 22.04, Ubuntu 24.04, and Debian 12 in
+[Experiment 0027](experiments/0027-container-compatibility.md). This is
+compatibility smoke only and does not promote those distributions to supported
+release targets.
+
+## Stage 6.4 Spike and Stage 6.5 Decision
+
+| ID | Case | Expected result |
+|---|---|---|
+| SHARED-001 | Validate the ADR 0021 shared prerequisites in a disposable spike | Two to four Pane workers run under one logical Session with isolated terminal state, per-Pane cgroup scopes, Attach targeting, a read-only observer, migration preservation, recovery, health, and complete teardown |
+| SHARED-002 | Integrate multiple Pane workers through production qwed | qwed inventories workers by Pane and owns discovery, adoption, health, cleanup, Attach routing, and observer channel persistence |
+| SHARED-003 | Migrate a populated v10 database to schema v11 | Sessions, Panes, Tasks, Leases, attachment authority, idempotency records, policy, and history survive with stable identities |
+| SHARED-004 | Recover multiple Pane workers through production qwed | qwed discovers, adopts, reports health for, and routes operations by Pane; one Pane loss does not mark unrelated Panes lost |
+| SHARED-005 | Exercise interactive and observer channels on one Pane | Interactive authority is exclusive for that Pane; the qwed-owned observer receives snapshot/output only and cannot input, resize, or control |
+| SHARED-006 | Tear down a Pane ResourceScope with detached jobs | The complete Pane scope closes without residual processes or controller state, and the cleanup tombstone records success |
+
+SHARED-001 passes for two- and four-Pane runs on Fedora Linux x86_64 with
+systemd user cgroup v2 delegation in
+[Experiment 0028](experiments/0028-stage6-shared-prerequisites-spike.md). The
+result uses a spike-local supervisor and direct worker Attach. SHARED-002 is
+not run: production qwed multi-Pane integration is deferred implementation
+work, not a Stage 6.4 claim. Experiment 0028 recommended the accepted observer
+projection and complete-scope-teardown rules.
+
+Stage 6.5 accepted ADR 0021 on 2026-11-09 with Pane-first enforcement,
+Pane-keyed inventory and Attach, the qwed-owned observer projection, complete
+scope teardown, and the v11 migration invariants in
+[Storage Migration](storage-migration.md). SHARED-002 through SHARED-006 are
+planned for Stage 7 and are not passing implementation evidence.
+
+## Stage 7 Resource Governance
+
+| ID | Case | Expected result |
+|---|---|---|
+| RG-001 | Apply Pane resource profiles | Requested and effective policy are visible; explicit field overrides and invalid combinations are deterministic |
+| RG-002 | Detect Linux cgroup capabilities | Missing systemd user manager or controllers return `unsupported_capability`; no limit is silently ignored |
+| RG-003 | Exercise Pane scope lifecycle failures | Normal exit, OOM, forced kill, detached jobs, worker crash, and qwed restart leave no residual Pane scope |
+| RG-004 | Use a Pane under sustained pressure | Memory, CPU, and task limit violations affect that Pane while qwed remains responsive |
+| RG-005 | Qualify installed-systemd Linux targets | Packaged service, cgroup delegation, limits, recovery, and cleanup pass before support is claimed |
+| RG-006 | Retain long-run resource events | Enforcement and pressure history remains bounded with an explicit retention policy |
+
+These rows are planned. They pass only with linked real-process evidence.

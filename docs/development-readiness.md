@@ -1,7 +1,8 @@
 # Development Readiness
 
-Status: Stages 1-5 complete for Linux-first V0; public macOS deferred post-V0
-Date: 2026-11-06
+Status: Stages 1-5 complete; Stage 6 Linux adoption and stabilization in
+progress; Stage 6.5 shared prerequisites accepted
+Date: 2026-11-09
 
 ## Decision
 
@@ -153,3 +154,19 @@ Linux V0 release packaging, installation, reinstall, v9-to-v10 migration,
 systemd crash recovery, release-mode performance, TUI/job-control smoke,
 historical evidence disposition, and independent manual acceptance are
 complete. Public macOS distribution is deferred post-V0 under ADR 0020.
+
+Stage 6 starts with no new runtime capability. Its open gates are clean-source
+release publication, hosted core CI, a dedicated Fedora release-gate runner,
+real pilot feedback, and an exercised `v0.1.x` patch release. Until those
+gates close, existing `dist/` archives are local evidence rather than
+published release assets.
+
+Stage 6.5 accepts one worker per Pane, Pane-first ResourceScope, Pane-keyed
+inventory and Attach, the qwed-owned observer projection, complete scope
+teardown, and schema v11. Production multi-Pane behavior is not implemented by
+the decision gate; SHARED-002 through SHARED-006 remain Stage 7 work.
+
+Stage 7 is ready to start as Linux cgroup v2 resource governance for
+long-running Sessions. It moves the V0 per-Session scope to Pane-level
+ResourceScope and does not introduce a container runtime. The detailed scope
+and gates are in [Stage 7 Resource Governance](stage7-resource-governance.md).

@@ -1,7 +1,7 @@
 # Testing Strategy
 
-Status: Active; Stage 5 release gates in progress
-Date: 2026-11-06
+Status: Active; Stage 5 release gates complete; Stage 6.5 accepted
+Date: 2026-11-09
 
 ## Test Layers
 
@@ -202,6 +202,26 @@ Linux-first V0 is defined by ADR 0020. Independent Linux manual acceptance is
 the final human gate. Public macOS distribution is a separate post-V0 strict
 gate: Developer ID signing, notary acceptance, and Gatekeeper assessment must
 pass; a local certificate or ad-hoc signature is not accepted as public trust.
+
+Stage 6 adds two continuous feedback loops. Hosted Linux and macOS jobs repeat
+formatting, Clippy, workspace tests, protocol validation, and release builds on
+every integration change. A dedicated Fedora x86_64 runner separately repeats
+the complete `just release-gate`. The hosted jobs prove portability of the
+source checks; only the Fedora runner can produce supported V0 release
+evidence.
+
+`just container-smoke` runs the same real Session/input/snapshot/restart smoke
+inside rootless Podman images. It is a compatibility probe, not a substitute
+for installed-systemd, cgroup, migration, or manual release acceptance.
+
+Stage 7 extends resource testing around the accepted Pane-first ResourceScope:
+controller availability, profile validation, Pane scope startup and cleanup
+under all crash paths, detached-job teardown, bounded enforcement events,
+8/16-Session pressure runs, and a 24-hour qualification on real
+installed-systemd Linux targets. SHARED-002 through SHARED-006 in the
+[Test Matrices](test-matrices.md) cover multi-Pane inventory, Pane-addressed
+Attach, schema v11, observer authorization, and complete scope cleanup.
+Container compatibility tests cannot substitute for these gates.
 
 Until Developer ID is available, ADR 0019 permits a dedicated local
 self-signed package tier. It signs all four executables through an isolated

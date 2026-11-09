@@ -97,12 +97,12 @@ python3 packaging/build_release.py \
   --sign-identity "$QWE_DEVELOPER_ID" --force
 QWE_DEVELOPER_ID="$QWE_DEVELOPER_ID" \
 QWE_NOTARY_PROFILE="$QWE_NOTARY_PROFILE" \
-  packaging/notarize_macos.sh dist/qwe-0.1.0-macos-arm64.tar.gz
+  packaging/notarize_macos.sh dist/qwe-0.1.1-macos-arm64.tar.gz
 ```
 
 The equivalent `just` entry points are
 `just release-package-signed "$QWE_DEVELOPER_ID"` and
-`just release-public-gate dist/qwe-0.1.0-macos-arm64.tar.gz`.
+`just release-public-gate dist/qwe-0.1.1-macos-arm64.tar.gz`.
 
 The notarization gate fails if the identity, Apple notary profile, signatures,
 notary acceptance, or Gatekeeper assessment is unavailable. It never replaces

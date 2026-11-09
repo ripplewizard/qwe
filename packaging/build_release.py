@@ -5,18 +5,24 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARIES = ("qwe", "qwed", "qwe-worker", "qwe-session-exec")
+UTC = timezone.utc
 
 
 def run(arguments):
@@ -44,6 +50,21 @@ def normalized_target():
     if system == "Linux":
         return f"linux-{architecture}"
     raise SystemExit(f"unsupported release platform: {system} {machine}")
+
+
+def workspace_version():
+    cargo_toml = ROOT / "Cargo.toml"
+    with cargo_toml.open("rb") as stream:
+        if tomllib is not None:
+            return tomllib.load(stream)["workspace"]["package"]["version"]
+    text = cargo_toml.read_text(encoding="utf-8")
+    match = re.search(
+        r"(?ms)^\[workspace\.package\]\s*$.*?^version\s*=\s*\"([^\"]+)\"",
+        text,
+    )
+    if match is None:
+        raise SystemExit("workspace package version is missing from Cargo.toml")
+    return match.group(1)
 
 
 def sha256(path):
@@ -141,9 +162,7 @@ def main():
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    with (ROOT / "Cargo.toml").open("rb") as stream:
-        workspace = tomllib.load(stream)
-    version = args.version or workspace["workspace"]["package"]["version"]
+    version = args.version or workspace_version()
     target = args.target or normalized_target()
     is_macos = target.startswith("macos-")
     if args.sign_identity and not is_macos:

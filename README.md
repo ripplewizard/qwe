@@ -9,10 +9,12 @@ local/experimental.
 
 ## Install and Use
 
-- [Install QWE](INSTALL.md): build/install the Linux V0 package and start the
-  systemd user service.
+- [Install QWE](INSTALL.md): download the published Linux V0 package or build
+  it from source, then start the systemd user service.
 - [Usage](USAGE.md): Sessions, Attach/detach, input, Leases, resources,
   credentials, and teardown.
+- [QWE 0.1.1 notes](docs/releases/v0.1.1.md): current Linux x86_64 release
+  notes; artifact publication remains a Stage 6 gate.
 - [Release](docs/release.md): supported platforms, package contract, and known
   limitations.
 
@@ -21,15 +23,25 @@ branch is the integration branch for the next release.
 
 ## Current Phase
 
-Active development starts on the `dev` branch. Stages 0-5 are complete for the
-Linux-first V0 release. The release adds
-checksummed native release packages, temporary-prefix installation,
-in-place upgrade acceptance, release-mode Attach/soak benchmarks, and a
-separate Developer ID notarization gate. macOS binary distribution is
-deferred post-V0 under ADR 0020 and limited to explicitly marked local
-self-signed packages under ADR 0019. Fedora Linux x86_64 is the supported V0
-target; the final historical audit disposition and independent manual
-acceptance are complete.
+Stages 0-5 are complete for the Linux-first V0 release. Stage 6 is in progress:
+Linux V0 adoption and stabilization. Completed work includes hosted core CI and
+the dedicated Fedora release-gate workflow. Clean-source publication, the real
+Linux pilot, and the first `v0.1.x` patch release remain open.
+
+Stage 6.5 accepted the shared prerequisites for one worker per Pane,
+Pane-first ResourceScope, Pane-targeted channels, and the v10-to-v11 migration.
+Stage 7 is ready to start around Linux cgroup v2 resource governance for
+long-running Sessions. It extends QWE's existing `qwed`/PTY model and does not
+introduce a Docker runtime. See [ADR 0021](docs/adr/0021-shared-prerequisites.md),
+[Storage Migration](docs/storage-migration.md), and
+[Linux Resource Governance](docs/stage7-resource-governance.md).
+
+macOS binary distribution is deferred post-V0 under ADR 0020 and limited to
+explicitly marked local self-signed packages under ADR 0019. Fedora Linux
+x86_64 remains the only supported V0 target. New Mesh, sandbox, plugin, and
+remote-scheduling features remain out of scope until a separate accepted plan
+and ADR.
+
 Implementation follows
 [`docs/design-baseline.md`](docs/design-baseline.md).
 
@@ -70,6 +82,7 @@ just t12-host-smoke
 just resilience-smoke
 just stage4-check
 just release-gate
+just container-smoke
 ```
 
 Protocol schema validation uses

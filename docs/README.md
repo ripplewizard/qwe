@@ -7,6 +7,8 @@
 - [Technical Architecture](technical-architecture.md): process model, crate
   graph, state ownership, persistence, and security.
 - [IPC Protocol](ipc-protocol.md): field-level client, Host, and worker protocol.
+- [Storage Migration](storage-migration.md): accepted v10-to-v11 invariants for
+  Pane workers, ResourceScope, Principal, and multi-Pane authority.
 - [Protocol Schema](../protocol/schema/qwe-v1.schema.json): canonical Attach
   frames, payloads, limits, state machines, and stable test-ID manifest.
 - [Extension Architecture](extension-architecture.md): deferred capabilities
@@ -32,6 +34,8 @@
   self-signed macOS releases until Developer ID is available.
 - [ADR 0020](adr/0020-linux-first-v0-release.md): Linux-first V0 release with
   macOS public distribution deferred to a later milestone.
+- [ADR 0021](adr/0021-shared-prerequisites.md): accepted ResourceScope,
+  per-Pane worker topology, channel profiles, and minimum Principal model.
 
 ## Development
 
@@ -41,6 +45,9 @@
   credentials, and teardown.
 - [Development Plan](development-plan.md): delivery sequence, estimates,
   gates, risks, and scope controls.
+- [Stage 7 Resource Governance](stage7-resource-governance.md): cgroup v2
+  profiles, lifecycle hardening, observability, long-run soak, and Linux
+  qualification. This is not a container-runtime plan.
 - [Readiness](development-readiness.md): known gaps and start gate.
 - [Roadmap](development-roadmap.md): implementation milestones.
 - [Testing Strategy](testing-strategy.md): layers, commands, and acceptance.
@@ -102,11 +109,18 @@
   cgroup OOM event-retention regression and five-run verification.
 - [Experiment 0025](experiments/0025-stage5-linux-v0-closure.md): Linux-first
   V0 closure, independent acceptance, and final release boundary.
+- [Experiment 0026](experiments/0026-stage6-adoption-baseline.md): Stage 6
+  distribution, CI, and pilot entry state.
+- [Experiment 0027](experiments/0027-container-compatibility.md): rootless
+  Podman smoke on Ubuntu 22.04/24.04 and Debian 12.
+- [Experiment 0028](experiments/0028-stage6-shared-prerequisites-spike.md):
+  per-Pane workers, resource scopes, storage migration, Attach, observer,
+  recovery, and cleanup spike for ADR 0021.
 
 ## Reading Order
 
 1. Read Design Baseline.
-2. Read Technical Architecture and IPC Protocol.
+2. Read Technical Architecture, Storage Migration, and IPC Protocol.
 3. Read Readiness, Development Plan, Roadmap, Testing Strategy, and Workflow.
 4. Read the relevant ADR before changing an accepted decision.
 5. Use the POC Index only for historical evidence.

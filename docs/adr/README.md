@@ -17,11 +17,12 @@ that links to the replaced decision.
 | [0010](0010-product-capability-scope.md) | API keys, Pane limits, and forced teardown scope | Accepted |
 | [0011](0011-consolidate-control-plane.md) | Consolidate qwed and qwe-host | Accepted |
 | [0012](0012-terminal-attach-data-plane.md) | Terminal Attach data plane and snapshot handoff | Accepted |
-| [0013](0013-core-object-model.md) | V0 core object model and lifecycle | Accepted |
-| [0014](0014-attachment-ownership-authorization.md) | Attachment ownership and authorization | Accepted |
+| [0013](0013-core-object-model.md) | V0 core object model and lifecycle | Accepted; amended by 0021 |
+| [0014](0014-attachment-ownership-authorization.md) | Attachment ownership and authorization | Accepted; amended by 0021 |
 | [0015](0015-worker-liveness-reconciliation.md) | Worker liveness and reconciliation | Accepted |
 | [0016](0016-stage-3-retention-and-clock-policy.md) | Stage 3 Lease clock, TTL, and retention | Accepted |
 | [0017](0017-stage-4-service-security-and-capabilities.md) | Stage 4 service, secret, resource, and teardown contracts | Accepted |
-| [0018](0018-pane-resource-enforcement.md) | Pane resource enforcement tiers and dynamic limits | Accepted |
+| [0018](0018-pane-resource-enforcement.md) | Pane resource enforcement tiers and dynamic limits | Accepted; amended by 0021 |
 | [0019](0019-temporary-macos-local-signing.md) | Temporary local self-signed macOS distribution | Accepted temporarily |
 | [0020](0020-linux-first-v0-release.md) | Linux-first V0 release and deferred public macOS | Accepted |
+| [0021](0021-shared-prerequisites.md) | Shared prerequisites for Session layout and agent execution | Accepted |

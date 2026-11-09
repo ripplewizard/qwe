@@ -1,7 +1,8 @@
 # QWE Development Plan
 
-Status: Complete for Linux-first V0; post-V0 follow-ups listed
-Updated: 2026-11-06
+Status: Stage 6 in progress for Linux-first V0 adoption and stabilization;
+Stage 6.5 shared prerequisites accepted; Stage 7 ready to start
+Updated: 2026-11-09
 
 ## Planning Assumptions
 
@@ -322,6 +323,147 @@ Current implementation:
   are complete. macOS remains frozen at the experimental local self-signed
   tier under ADR 0019/0020.
 
+### Stage 6: Linux V0 Adoption and Stabilization
+
+Target: 2026-11-06 onward
+Status: In progress.
+
+- Publish a clean-source Fedora Linux x86_64 release artifact with a release
+  manifest, SHA-256, installation instructions, and release notes.
+- Run formatting, Clippy, workspace tests, protocol validation, and release
+  builds on hosted Linux and macOS runners.
+- Run the complete `just release-gate` on a dedicated Fedora x86_64
+  self-hosted runner before publishing or replacing a release artifact.
+- Collect real installation, service, Attach/TUI, resource-policy, and upgrade
+  feedback from Linux V0 users.
+- Triage pilot defects by severity and ship fixes through the `v0.1.x` patch
+  release process.
+- Promote another platform only after its complete release, service, resource,
+  migration, and manual acceptance gates pass.
+
+Exit: clean-source Linux V0 artifacts are published; core CI and the Fedora
+release gate are repeatable; the pilot has completed; no open Linux P0/P1
+defect remains; the supported-platform matrix matches tested evidence; and at
+least one `v0.1.x` patch-release path has been exercised.
+
+Stage 6 does not authorize public macOS distribution, QWE Mesh, sandboxing,
+plugin systems, remote scheduling, or a broader Linux support claim.
+
+### Stage 6.4: Shared-Prerequisites Spike
+
+Target: 2026-11-09 onward
+Status: Disposable spike complete; production qwed integration not exercised.
+
+This is a time-boxed design gate, not a production feature stage. It validates
+the proposed shared prerequisites in
+[ADR 0021](adr/0021-shared-prerequisites.md) before Stage 7 begins.
+
+- Create a disposable spike with 2-4 Pane workers in one Session.
+- Give each Pane its own PTY, VT parser, scrollback, journal, and
+  `ResourceScope`.
+- Verify qwed discovery, adoption, health, and cleanup for multiple workers in
+  one Session.
+- Verify per-Pane Linux cgroup v2 scope creation, effective-policy readback,
+  usage events, and teardown.
+- Exercise a storage-migration prototype from one Pane per Session to multiple
+  Panes while preserving an existing V0 database.
+- Verify Attach targeting for one Pane and a read-only observer path that does
+  not acquire write authority.
+- Record process count, memory, startup, recovery, and cleanup measurements.
+
+The spike must not merge production feature code. Its output is a short
+evidence report and a recommendation to accept, modify, or reject ADR 0021.
+
+Exit: the spike either validates the ADR 0021 topology and resource-scope
+interface or produces a concrete reason to revise the ADR. If it fails, Stage
+7 does not start.
+
+Evidence:
+[Experiment 0028](experiments/0028-stage6-shared-prerequisites-spike.md)
+passes the two- and four-Pane runs and classifies each requirement as spike
+complete or prototype only. The spike-local supervisor exercised discovery,
+adoption, health, Attach selection, and cleanup, but the production qwed
+multi-Pane inventory and public Attach path remain Stage 7 implementation and
+are not claimed by Stage 6.4. Stage 6.5 retained one worker per Pane, defined
+the observer as a qwed-owned read-only projection, and required complete scope
+teardown because process-group termination does not cover detached interactive
+job groups.
+
+### Stage 6.5: Shared-Prerequisites Decision Gate
+
+Target: after Stage 6.4
+Status: Complete on 2026-11-09. ADR 0021 accepted with the modifications from
+Experiment 0028.
+
+This is a documentation and decision gate. It converts spike evidence into an
+accepted contract or an explicit rejection; it does not add product features.
+
+- Accepted ADR 0021 with the evidence-driven modifications from Experiment
+  0028.
+- Selected Pane-level as the first `ResourceScope` implementation target while
+  retaining Session and Task targets in the interface.
+- Confirmed `ChannelProfile` and the opaque `AuthContext` boundary.
+- Confirmed the minimum `Principal` object and tombstone rule.
+- Triaged accepted, deferred, and rejected features for the next implementation
+  stage.
+- Selected Stage 7 first, Session Layout as the default next feature track,
+  and opt-in parallel Agent Execution only with an accepted ADR and adequate
+  staffing.
+- Recorded sandboxing as an external third-party integration and not a QWE core
+  prerequisite.
+- Updated the design baseline, technical architecture, IPC document, storage
+  migration plan, test matrices, roadmap, and this plan.
+
+Decision outcome:
+
+- One worker per Pane; qwed inventory, discovery, recovery, health, and cleanup
+  are addressed by Pane.
+- Linux enforcement starts at Pane-level ResourceScope. Session is the logical
+  parent, and the interface retains Task targets.
+- Interactive and observer attachment authority is Pane-scoped. Session-wide
+  Lease authority remains the lifecycle fence.
+- `human_observer` is a qwed-owned read-only projection over an exclusive
+  internal worker Attach channel. The worker does not need native `read_only`.
+- ResourceScope teardown must cover detached interactive job groups before the
+  scope is tombstoned.
+- ChannelProfile and opaque AuthContext, the minimum Principal tombstone model,
+  and the external-sandbox boundary are accepted.
+- Stage 7 is the next implementation track. Session Layout is the default next
+  feature track; Agent Execution may run in parallel only with an accepted ADR
+  and sufficient staffing.
+
+The v10-to-v11 invariants and migration procedure are in
+[Storage Migration](storage-migration.md). V0 runtime behavior and the canonical
+`qwe-v1` wire contract remain unchanged until Stage 7 implements the negotiated
+multi-Pane path.
+
+Exit: satisfied. ADR 0021 is accepted, the dependent documents are updated,
+SHARED-001 remains linked as spike evidence, and SHARED-002 through SHARED-006
+remain explicitly unimplemented until Stage 7.
+
+### Stage 7: Linux Resource Governance
+
+Target: Planning
+Status: Ready to start; Stage 6.4 and Stage 6.5 are complete.
+
+- Treat cgroup v2 as the Linux resource-control mechanism for Pane process
+  trees, not as a container runtime.
+- Implement the accepted Pane-first ResourceScope with a logical Session parent
+  and preserve Task targets in the interface.
+- Add reusable resource profiles and explicit requested/effective policy
+  reporting.
+- Harden controller detection, Pane scope startup, teardown, crash recovery,
+  detached-process cleanup, and residual-scope cleanup.
+- Expose bounded current/peak usage, pressure, and enforcement events.
+- Run installed-systemd resource qualification on Fedora, Ubuntu, and Debian
+  before making support claims.
+- Complete 8/16-Session short soak gates and a 24-hour release qualification.
+
+Exit: the Stage 7 gates in
+[Linux Resource Governance](stage7-resource-governance.md)
+pass. Docker/Podman execution, namespaces, container images, and GPU isolation
+remain outside this stage.
+
 ## Test and Delivery Gates
 
 Every merge:
@@ -349,6 +491,9 @@ just credential-smoke
 just cross-uid-smoke
 ```
 
+Stage 7 adds `just stage7-check` for profiles, controller failure handling,
+Pane scope cleanup, and the long-run resource gate.
+
 Post-V0:
 
 ```text
@@ -370,7 +515,7 @@ services. They must not simulate successful behavior.
 Do not implement during V0:
 
 - Multiple TaskInstances per Session.
-- Read-only observers beyond the reserved Attach mode.
+- Implemented observer channels beyond the V0 reserved Attach mode.
 - Multi-node Mesh, remote scheduling, sandbox profiles, plugin systems, or
   distributed consensus.
 - Unbounded terminal replay or journal parsing.

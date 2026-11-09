@@ -7,6 +7,10 @@ persisted authority record, reclaim-token hashes, restart grace, detached
 holds, and Lease-generation release on reattach. Close/task-stop and control
 input enforce the Active/Held owner and generation rules. The state policy and
 real-process probes pass on macOS ARM64 and Fedora Linux x86_64.
+Amendment: [ADR 0021](0021-shared-prerequisites.md) accepts Pane-scoped
+interactive and observer attachment authority for the multi-Pane target.
+Session-wide Lease authority remains the lifecycle fence. V0 keeps the
+Session-scoped permission matrix until schema v11 is implemented.
 
 ## Context
 

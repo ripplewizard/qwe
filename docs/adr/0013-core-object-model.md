@@ -5,6 +5,10 @@ Date: 2026-11-04
 Implementation state: Stage 1 cutover implemented for Session/Pane/
 TaskInstance 1:1 cardinality, unique persistence, and the single
 `session.create` path.
+Amendment: [ADR 0021](0021-shared-prerequisites.md) accepts one worker per Pane
+and multiple Panes per Session as the post-V0 target. The V0 1:1 cardinality
+and `session.create` contract remain unchanged until the schema-v11 migration
+is implemented.
 
 ## Context
 
