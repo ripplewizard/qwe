@@ -1,7 +1,7 @@
 # Stage 7: Linux Resource Governance
 
-Status: Ready to start; shared prerequisites accepted
-Date: 2026-11-09
+Status: In progress; shared prerequisites and deterministic P0 gates implemented
+Date: 2026-11-10
 
 ## Product Definition
 
@@ -17,7 +17,7 @@ The target positioning is:
 
 Desired characteristics:
 
-- A Session groups one or more Pane workers; V0 instantiates exactly one.
+- A Session groups one or more Pane workers.
 - Each Pane keeps its PTY, terminal state, process tree, and attach lifecycle.
 - Resource limits cover the complete Pane process tree and support Session and
   Task targets through the same ResourceScope interface.
@@ -29,13 +29,13 @@ Desired characteristics:
 
 ## Current Baseline
 
-The V0 implementation already provides:
+The implemented baseline provides:
 
-- One transient systemd user scope per Linux Session.
+- One transient systemd user scope per Linux Pane.
 - Hard `memory.max`, `memory.swap.max`, `pids.max`, and `cpu.max` controls.
 - `memory.high` reclaim/throttle threshold.
-- `memory.oom.group=1` Session-level OOM behavior.
-- Aggregate CPU-seconds monitoring with Session termination on violation.
+- `memory.oom.group=1` Pane-level OOM behavior.
+- Aggregate CPU-seconds monitoring with Pane termination on violation.
 - Dynamic policy updates on running Active or Held Sessions.
 - SQLite persistence of the requested Pane resource policy.
 - Current and peak memory/task metrics, CPU time, enforcement tier, and last
@@ -47,12 +47,98 @@ The V0 implementation already provides:
 Stage 6.4 validated a disposable one-worker-per-Pane topology and distinct
 cgroup v2 scopes in [Experiment 0028](experiments/0028-stage6-shared-prerequisites-spike.md).
 [ADR 0021](adr/0021-shared-prerequisites.md) accepts Pane-first enforcement.
-Production Pane-worker inventory, Attach routing, schema v11, and observer
-channels still require implementation and are not V0 claims.
+Production Pane-worker inventory, Pane-addressed control routing, schema v11,
+and multiple Panes per Session are implemented. The qwed-owned observer
+projection remains open.
 
 See [ADR 0018](adr/0018-pane-resource-enforcement.md), the
 [Technical Architecture](technical-architecture.md#10-resource-model), and
 [Experiment 0018](experiments/0018-pane-resource-enforcement.md).
+
+## Implementation Slices 1-2
+
+The first Stage 7 slice implements the deterministic P0 foundation:
+
+- Explicit `interactive`, `batch`, `tight`, and `unlimited` profiles.
+- `resource_profile` selection with `resource_policy` field overrides.
+- Stable `unknown_resource_profile`, `unsupported_resource_field`, and
+  `invalid_resource_policy` errors.
+- Per-controller Linux capability reporting and validation. Missing cgroup v2,
+  systemd user service, `cpu`, `memory`, or `pids` capability rejects the
+  affected limit with `unsupported_capability`.
+- Pane UUID-derived `qwe-pane-<pane-id>.scope` units, including teardown of
+  detached process sessions through the complete scope.
+- A topology acknowledgement blocks the user command until the worker has
+  installed the cgroup event watch and applied the initial policy, so
+  short-lived programs still have a reliable Pane ownership handshake.
+- Separate requested and effective policy status, current/peak/remaining
+  values, controller counters, PSI, health classification, and a 32-event
+  in-memory retention bound per Pane worker.
+- Linux cgroup event watches capture OOM, task-limit, and CPU-throttle changes
+  from transient scopes before systemd removes their control files.
+- `just stage7-check`, including a real-process probe for profiles, policy
+  errors, dynamic updates, qwed crash/restart recovery, bounded events, and
+  detached-job scope cleanup.
+- Schema v11 with stable v10 backup, Pane-worker, ResourceScope, Principal, and
+  Pane-keyed Task/attachment records.
+- Production multi-Pane inventory and recovery keyed by Pane, with
+  `PANE_CREATE`, `PANE_STATUS`, `PANE_ATTACH`, `PANE_CLOSE`, and `PANE_KILL`.
+- A real multi-Pane probe proving qwed adopts all Pane workers after SIGKILL
+  and that one worker crash does not mark unrelated Panes lost.
+- RG-004 concurrent memory, CPU-seconds, and pids.max pressure while 350+
+  qwed PING samples remain far below the 1-second p95 threshold.
+- A deterministic 8-Session x 2-Pane short soak with repeated qwed restarts,
+  Attach/detach, process churn, SQLite persistence, and scope cleanup.
+- `just stage7-qualification-node` and `just stage7-qualification-matrix` for
+  installed-systemd VM gates.
+
+The deterministic probes exercise RG-001 through RG-004 and RG-006. Local
+Fedora installed-systemd qualification passes. Ubuntu 22.04, Ubuntu 24.04, and
+Debian 12 qualification are blocked until real-VM targets are available; no
+container result is accepted as a substitute. The bounded five-hour soak remains open
+until its release-mode run finishes. Results and environment details are in
+[Experiment 0029](experiments/0029-stage7-multipane-pressure-and-qualification.md).
+
+### Resource Profiles
+
+Profiles are opt-in shorthands. The resolved policy is persisted; the profile
+name is not a second authority. Status classifies an exact policy match as the
+named profile and any override combination as `custom`. `unlimited` requests
+no limits, but explicit fields may still be supplied.
+
+| Profile | `memory.high` | `memory.max` | `swap.max` | `pids.max` | CPU quota |
+|---|---:|---:|---:|---:|---:|
+| `interactive` | 1 GiB | 2 GiB | 0 | 256 | 200% |
+| `batch` | 2 GiB | 4 GiB | 1 GiB | 512 | 400% |
+| `tight` | 192 MiB | 256 MiB | 0 | 64 | 100% |
+| `unlimited` | none | none | none | none | none |
+
+Memory limits are intentionally conservative for shell utilities and small
+coding agents, not compilers or large language-server processes. `batch`
+provides the broader default. Lowering `memory.max` without explicitly setting
+`memory.high` clamps the inherited high threshold to the new maximum.
+
+`qwe session create` and `qwe session limits` accept `--profile`. The control
+API accepts `resource_profile` plus an optional partial `resource_policy`
+object for explicit overrides.
+
+### Requested and Effective Policy
+
+`requested_resource_policy` is the persisted qwed authority. The worker reads
+the applied cgroup files into `effective_resource_policy`; the worker retains
+the last effective value through final sampling and scope cleanup.
+
+`resource_metrics` reports:
+
+- `health`: `healthy`, `near_limit`, `pressure`, or `enforced`;
+- current, peak, limit, and remaining memory/task values;
+- `memory.events`, `pids.events`, and `cpu.stat` counters;
+- memory and CPU PSI where available;
+- bounded `policy_update`, OOM, fork-limit, and CPU-throttle events.
+
+Resource events are not durable. Each Pane worker retains at most 32 events in
+memory and reports that retention policy explicitly. A worker replacement
+starts a new bounded event history.
 
 ## Scope Boundary
 
@@ -150,16 +236,20 @@ Priority: P0
 
 - Run 8 and 16 Session release-mode soak profiles with multiple Panes where
   the qualification profile requires them.
-- Keep Panes alive through repeated attach/detach and input cycles.
+- Keep Panes alive through repeated attach/detach, resize, input, and snapshot
+  cycles.
+- Exercise control inventory, task status/history, Lease status/touch, and
+  resource-policy updates during the same run.
 - Exercise process churn, memory growth, CPU load, and task fan-out.
 - Repeatedly restart qwed while Sessions and scopes remain live.
 - Trigger memory, CPU, and task limits independently and concurrently.
 - Verify qwed latency remains bounded while another Pane is under pressure.
 - Confirm no leaked workers, sockets, scopes, journals, or SQLite records.
+- Persist qwed logs and periodic progress records outside volatile `/tmp`.
 
 Exit:
 
-- A 24-hour qualification run passes on Fedora x86_64.
+- A five-hour operation-dense qualification run passes on Fedora x86_64.
 - A shorter deterministic soak is available for normal CI.
 
 ### R5. Linux Qualification Matrix
@@ -243,7 +333,7 @@ Stage 7 is complete when:
 
 - Pane-level ResourceScope profiles and observable policy are stable;
 - Linux cgroup lifecycle and failure paths pass;
-- a 24-hour soak has no supervisor instability or leaked scopes;
+- a five-hour soak has no supervisor instability or leaked scopes;
 - installed-systemd resource gates pass on every supported distribution;
 - documentation clearly distinguishes resource governance from containers and
   security sandboxes.

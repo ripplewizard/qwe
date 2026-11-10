@@ -1,8 +1,8 @@
 # QWE Development Plan
 
-Status: Stage 6 in progress for Linux-first V0 adoption and stabilization;
-Stage 6.5 shared prerequisites accepted; Stage 7 ready to start
-Updated: 2026-11-09
+Status: Stage 6 accepted for Linux-first V0 adoption and stabilization;
+Stage 6.5 shared prerequisites accepted; Stage 7 in progress
+Updated: 2026-11-10
 
 ## Planning Assumptions
 
@@ -443,8 +443,10 @@ remain explicitly unimplemented until Stage 7.
 
 ### Stage 7: Linux Resource Governance
 
-Target: Planning
-Status: Ready to start; Stage 6.4 and Stage 6.5 are complete.
+Target: Qualification
+Status: In progress; deterministic P0 gates, schema v11, multi-Pane inventory,
+RG-004 pressure, short soak, and local Fedora installed-systemd qualification
+pass. Ubuntu/Debian real-VM targets and the five-hour soak remain open.
 
 - Treat cgroup v2 as the Linux resource-control mechanism for Pane process
   trees, not as a container runtime.
@@ -457,7 +459,8 @@ Status: Ready to start; Stage 6.4 and Stage 6.5 are complete.
 - Expose bounded current/peak usage, pressure, and enforcement events.
 - Run installed-systemd resource qualification on Fedora, Ubuntu, and Debian
   before making support claims.
-- Complete 8/16-Session short soak gates and a 24-hour release qualification.
+- Complete 8/16-Session short soak gates and a five-hour operation-dense
+  release qualification.
 
 Exit: the Stage 7 gates in
 [Linux Resource Governance](stage7-resource-governance.md)

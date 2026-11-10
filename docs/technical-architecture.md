@@ -22,9 +22,9 @@ qwed supervisor ------------ SQLite WAL
               +-- ...
 ```
 
-The diagram shows the accepted multi-Pane topology from
-[ADR 0021](adr/0021-shared-prerequisites.md). V0 currently instantiates the
-one-Pane special case: one Session owns one Pane worker.
+The diagram shows the implemented multi-Pane topology from
+[ADR 0021](adr/0021-shared-prerequisites.md). A Session may own multiple Pane
+workers; existing one-Pane Sessions remain valid.
 
 The supervisor is replaceable. Pane workers are the only owners of live
 terminal and process resources. A client never owns a PTY or process group.
@@ -76,16 +76,15 @@ and liveness matrix work is tracked in
 - Stores metadata, topology, and task history in SQLite.
 - Reconciles persisted state against worker inventory before accepting clients.
 - Starts and re-adopts Pane workers, observes `SIGCHLD`/`waitpid` events and
-  persistent control EOF, and runs the bounded safety scan. V0 addresses the
-  sole Pane through its Session; the accepted target keys inventory by Pane.
+  persistent control EOF, and runs the bounded safety scan. Inventory,
+  recovery, health, and control routing are keyed by Pane.
 - Authenticates and proxies the dedicated Attach socket to the selected Pane
   worker. Observer access is a qwed-owned read-only projection.
 - Does not own PTYs or process groups.
 
 ### qwe-worker
 
-- One process per Pane in the accepted target topology; V0 uses one process per
-  Session. It owns the PTY, process group, VT state, and journal.
+- One process per Pane. It owns the PTY, process group, VT state, and journal.
 - Starts the session process through the internal `qwe-session-exec` launcher.
 - On Linux, starts `qwe-session-exec` inside a transient systemd user scope.
   The launcher reports the final task PID and cgroup path before exec.
@@ -316,13 +315,10 @@ The process start token is mandatory. PID alone is never sufficient.
 - `CONTROL_STATUS.reconciliation` is computed from current Sessions, Tasks, and
   worker health. `last_scan_ms` reports the latest completed safety scan rather
   than a static startup value.
-- SQLite v10 enforces Session references and stores attachment authority,
-  two-phase idempotency replay records, and optional Pane resource policy.
-  `CONTROL_STATUS` returns Pane records alongside Sessions and Tasks.
-- Schema v11 removes the one-Pane/one-Task uniqueness assumptions and adds
-  Pane-worker, ResourceScope, and Principal records. The migration preserves
-  V0 identities and all durable authority/history records defined in
-  [Storage Migration](storage-migration.md).
+- SQLite schema v11 removes the one-Pane/one-Task uniqueness assumptions and
+  stores Pane-worker, ResourceScope, and Principal records alongside
+  Pane-keyed Tasks and attachment authority. `CONTROL_STATUS` exposes all
+  inventory records.
 - Lease release writes a generation tombstone; expiration does not kill Tasks.
 
 ## 10. Resource Model
@@ -331,23 +327,33 @@ The process start token is mandatory. PID alone is never sufficient.
   implementation targets the Pane; a Session is the logical parent.
 - Each Pane has a tree-scoped policy for memory high/max/swap,
   processes-plus-threads, CPU bandwidth, and cumulative CPU time.
-- V0 Linux creates one transient systemd user scope per Session. The accepted
-  target creates one hard scope per Pane. `memory.max`, `memory.swap.max`,
-  `pids.max`, and `cpu.max` are hard limits; cumulative CPU time is monitored.
+- Linux creates one transient systemd user scope per Pane, named from the
+  stable Pane identity. V0 still instantiates one Pane per Session; the scope
+  boundary is already Pane-level. `memory.max`, `memory.swap.max`, `pids.max`,
+  and `cpu.max` are hard limits; cumulative CPU time is monitored.
   `memory.oom.group=1` treats the selected ResourceScope as one OOM unit.
+- The topology acknowledgement blocks command exec until the worker owns the
+  cgroup, has installed its event watch, and has applied the initial policy.
+  This preserves final PID/PGID and event ownership for very short-lived
+  programs.
 - macOS traverses the task tree with `proc_listchildpids` and samples
   `proc_pid_rusage` every 100 ms. Memory, task-count, and CPU limits are
   `monitored`; a breach terminates the process group.
 - Status reports requested/effective policy, current and peak memory/task
-  usage, cumulative CPU time, enforcement tier, and last violation.
+  usage, remaining limits, cumulative CPU time, enforcement tier, health,
+  controller counters, PSI, and bounded enforcement events.
+- Linux watches cgroup event files through inotify so OOM and fork-limit events
+  are retained before systemd removes a transient scope. Event history is
+  in-memory and capped per Pane worker.
 - Dynamic updates replace selected fields on a running Active/Held Session.
   Raising limits is immediate. Lowering a Linux hard memory limit can reclaim
   or OOM immediately; lowering `pids.max` does not kill existing tasks but
   blocks new forks until usage falls below the limit.
 - V0 does not claim hard tree limits when systemd user scopes are unavailable.
-- Complete Pane-scope teardown must stop detached interactive job groups in
-  addition to the task process group. A scope is tombstoned only after the
-  backend confirms that no owned process or controller state remains.
+- Complete Pane-scope teardown stops the systemd scope so detached interactive
+  job groups are removed in addition to the task process group. A scope is
+  tombstoned only after the backend confirms that no owned process or
+  controller state remains.
 
 GPU-to-task attribution remains outside the Pane resource contract and is
 reported only when a reliable platform identifier exists.

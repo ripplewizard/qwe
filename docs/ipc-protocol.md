@@ -197,6 +197,8 @@ terminal work. ADR 0016 records the proposed defaults and retention policy.
 Mutating operations require a non-empty `idempotency_key` of at most 256 bytes.
 The key is scoped by the logical operation and canonical request payload.
 
+- Read-only operations never create idempotency records, even if a key is
+  supplied.
 - Repeating the same request returns the persisted result, including after
   qwed restart.
 - Reusing the key for a different operation or payload returns
@@ -215,19 +217,20 @@ Each Session has one bounded 16 MiB journal. One-shot snapshot returns at most
 1 MiB output queue and closes only that channel on overflow; no silent output
 loss is permitted.
 
-## 10. Accepted Multi-Pane Contract (Not Implemented)
+## 10. Multi-Pane Contract
 
 [ADR 0021](adr/0021-shared-prerequisites.md) accepts Pane-targeted channels and
-Pane-keyed worker inventory. The canonical `qwe-v1` schema and current clients
-remain unchanged until schema v11 and the corresponding protocol version are
-implemented.
+Pane-keyed worker inventory. Schema v11 and qwed's Pane-keyed control operations
+are implemented. The public `qwe-v1` binary Attach frame remains Session
+addressed and resolves the Session's default Pane; a Pane-addressed streaming
+Attach version and observer projection remain future protocol work.
 
 ### Target Selection
 
-- A Pane operation carries both `session_id` and `pane_id`.
-- qwed validates that the Pane belongs to the Session, resolves the Pane worker
-  from inventory, and rejects a missing, mismatched, lost, or unreachable Pane
-  before opening a worker channel.
+- `PANE_CREATE` carries `session_id`; other Pane control operations carry
+  `pane_id`. qwed resolves the owning Session from durable state.
+- qwed resolves the Pane worker from inventory and rejects a missing, lost, or
+  unreachable Pane before opening a worker channel.
 - Clients never supply a worker socket path or select a worker by Session
   order.
 - Pane-scoped interactive and observer attachment state is durable. Session

@@ -38,6 +38,10 @@ enum Command {
         #[command(subcommand)]
         command: SessionCommand,
     },
+    Pane {
+        #[command(subcommand)]
+        command: PaneCommand,
+    },
     Lease {
         #[command(subcommand)]
         command: LeaseCommand,
@@ -102,8 +106,43 @@ enum SessionCommand {
     },
 }
 
+#[derive(Debug, Parser)]
+enum PaneCommand {
+    Create {
+        session_id: String,
+        #[arg(default_value = "sh")]
+        program: String,
+        #[arg(long)]
+        generation: Option<u64>,
+        #[arg(long)]
+        credential: Option<String>,
+        #[command(flatten)]
+        resources: ResourceArgs,
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
+    Status {
+        pane_id: String,
+    },
+    Snapshot {
+        pane_id: String,
+    },
+    Close {
+        pane_id: String,
+        #[arg(long)]
+        generation: Option<u64>,
+    },
+    Kill {
+        pane_id: String,
+        #[arg(long)]
+        generation: Option<u64>,
+    },
+}
+
 #[derive(Debug, Args)]
 struct ResourceArgs {
+    #[arg(long)]
+    profile: Option<String>,
     #[arg(long)]
     cpu_seconds: Option<u64>,
     #[arg(long)]
@@ -225,6 +264,9 @@ fn call(socket: &str, operation: &str, payload: Value) -> Result<Value, Protocol
     let mutating = matches!(
         operation,
         "SESSION_CREATE"
+            | "PANE_CREATE"
+            | "PANE_CLOSE"
+            | "PANE_KILL"
             | "SESSION_INPUT"
             | "SESSION_DETACH"
             | "SESSION_CLOSE"
@@ -698,6 +740,7 @@ fn main() -> ExitCode {
                 resources,
                 args,
             } => {
+                let profile = resources.profile.clone();
                 let mut payload = json!({
                     "session_id": id,
                     "program": program,
@@ -709,6 +752,9 @@ fn main() -> ExitCode {
                 if let Some(policy) = resources.policy_json(false) {
                     payload["resource_policy"] = policy;
                 }
+                if let Some(profile) = profile {
+                    payload["resource_profile"] = json!(profile);
+                }
                 call(&arguments.socket, "SESSION_CREATE", payload)
             }
             SessionCommand::Limits {
@@ -717,20 +763,28 @@ fn main() -> ExitCode {
                 clear,
                 resources,
             } => {
-                let Some(policy) = resources.policy_json(clear) else {
-                    eprintln!("session limits requires at least one limit or --clear");
+                let profile = resources.profile.clone();
+                if clear && profile.is_some() {
+                    eprintln!("session limits cannot combine --clear with --profile");
                     return ExitCode::from(2);
-                };
-                call(
-                    &arguments.socket,
-                    "SESSION_RESOURCE_UPDATE",
-                    json!({
-                        "session_id": id,
-                        "owner": arguments.owner,
-                        "generation": generation,
-                        "resource_policy": policy
-                    }),
-                )
+                }
+                let policy = resources.policy_json(clear);
+                if policy.is_none() && profile.is_none() {
+                    eprintln!("session limits requires --profile, at least one limit, or --clear");
+                    return ExitCode::from(2);
+                }
+                let mut payload = json!({
+                    "session_id": id,
+                    "owner": arguments.owner,
+                    "generation": generation
+                });
+                if let Some(policy) = policy {
+                    payload["resource_policy"] = policy;
+                }
+                if let Some(profile) = profile {
+                    payload["resource_profile"] = json!(profile);
+                }
+                call(&arguments.socket, "SESSION_RESOURCE_UPDATE", payload)
             }
             SessionCommand::Status { id } => call(
                 &arguments.socket,
@@ -756,6 +810,69 @@ fn main() -> ExitCode {
                 "SESSION_CLOSE",
                 json!({
                     "session_id": id,
+                    "owner": arguments.owner,
+                    "generation": generation
+                }),
+            ),
+        },
+        Some(Command::Pane { command }) => match command {
+            PaneCommand::Create {
+                session_id,
+                program,
+                generation,
+                credential,
+                resources,
+                args,
+            } => {
+                let profile = resources.profile.clone();
+                let mut payload = json!({
+                    "session_id": session_id,
+                    "program": program,
+                    "args": args,
+                    "owner": arguments.owner,
+                    "generation": generation
+                });
+                if let Some(credential) = credential {
+                    payload["credential"] = json!(credential);
+                }
+                if let Some(policy) = resources.policy_json(false) {
+                    payload["resource_policy"] = policy;
+                }
+                if let Some(profile) = profile {
+                    payload["resource_profile"] = json!(profile);
+                }
+                call(&arguments.socket, "PANE_CREATE", payload)
+            }
+            PaneCommand::Status { pane_id } => call(
+                &arguments.socket,
+                "PANE_STATUS",
+                json!({"pane_id": pane_id}),
+            ),
+            PaneCommand::Snapshot { pane_id } => call(
+                &arguments.socket,
+                "PANE_ATTACH",
+                json!({"pane_id": pane_id}),
+            ),
+            PaneCommand::Close {
+                pane_id,
+                generation,
+            } => call(
+                &arguments.socket,
+                "PANE_CLOSE",
+                json!({
+                    "pane_id": pane_id,
+                    "owner": arguments.owner,
+                    "generation": generation
+                }),
+            ),
+            PaneCommand::Kill {
+                pane_id,
+                generation,
+            } => call(
+                &arguments.socket,
+                "PANE_KILL",
+                json!({
+                    "pane_id": pane_id,
                     "owner": arguments.owner,
                     "generation": generation
                 }),

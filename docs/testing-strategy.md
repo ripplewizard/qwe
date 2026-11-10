@@ -217,11 +217,17 @@ for installed-systemd, cgroup, migration, or manual release acceptance.
 Stage 7 extends resource testing around the accepted Pane-first ResourceScope:
 controller availability, profile validation, Pane scope startup and cleanup
 under all crash paths, detached-job teardown, bounded enforcement events,
-8/16-Session pressure runs, and a 24-hour qualification on real
+8/16-Session pressure runs, and a five-hour operation-dense qualification on real
 installed-systemd Linux targets. SHARED-002 through SHARED-006 in the
 [Test Matrices](test-matrices.md) cover multi-Pane inventory, Pane-addressed
 Attach, schema v11, observer authorization, and complete scope cleanup.
 Container compatibility tests cannot substitute for these gates.
+
+The executable Stage 7 gates are `stage7-pressure`, `stage7-multi-pane`,
+`qwed-restart-volume`, `stage7-soak-short`, `stage7-soak`,
+`stage7-qualification-node`, and `stage7-qualification-matrix`. Qualification
+output records distribution and VM reachability explicitly; unavailable
+targets are `blocked`, never `pass`.
 
 Until Developer ID is available, ADR 0019 permits a dedicated local
 self-signed package tier. It signs all four executables through an isolated

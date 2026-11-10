@@ -166,7 +166,12 @@ inventory and Attach, the qwed-owned observer projection, complete scope
 teardown, and schema v11. Production multi-Pane behavior is not implemented by
 the decision gate; SHARED-002 through SHARED-006 remain Stage 7 work.
 
-Stage 7 is ready to start as Linux cgroup v2 resource governance for
-long-running Sessions. It moves the V0 per-Session scope to Pane-level
-ResourceScope and does not introduce a container runtime. The detailed scope
-and gates are in [Stage 7 Resource Governance](stage7-resource-governance.md).
+Stage 7 is in progress as Linux cgroup v2 resource governance for long-running
+Sessions. It moves the V0 per-Session scope to Pane-level ResourceScope and
+does not introduce a container runtime. Profiles, controller rejection,
+requested/effective policy, bounded events, and Pane scope teardown now have
+deterministic coverage. Schema v11, multi-Pane inventory/recovery, RG-004
+pressure, short soak, and local Fedora installed-systemd qualification pass.
+Ubuntu/Debian real-VM targets and the five-hour soak remain open. The detailed
+scope and gates are in
+[Stage 7 Resource Governance](stage7-resource-governance.md).

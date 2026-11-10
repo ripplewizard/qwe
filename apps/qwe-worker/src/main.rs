@@ -17,7 +17,7 @@ use qwe_runtime::{
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -43,6 +43,8 @@ struct Args {
     worker_socket: PathBuf,
     #[arg(long, hide = true)]
     worker_session_id: String,
+    #[arg(long, hide = true)]
+    worker_pane_id: Option<String>,
     #[arg(long, hide = true, default_value = "sh")]
     worker_program: String,
     #[arg(long = "worker-arg", hide = true, allow_hyphen_values = true)]
@@ -66,6 +68,7 @@ struct Args {
 }
 
 struct WorkerSession {
+    pane_id: String,
     pid: u32,
     identity: ProcessIdentity,
     worker_identity: ProcessIdentity,
@@ -118,7 +121,7 @@ struct AttachmentRegistration {
     snapshot: attach::TerminalSnapshot,
 }
 
-type TopologyInfo = (u32, PathBuf);
+type TopologyInfo = (u32, PathBuf, UnixStream);
 type TopologyReceiver = mpsc::Receiver<Result<TopologyInfo, String>>;
 
 fn error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
@@ -135,7 +138,15 @@ fn reclaim_token() -> Result<String, std::io::Error> {
     Ok(hex_encode(&bytes))
 }
 
-fn worker_attach_socket(runtime_dir: &Path, session_id: &str) -> PathBuf {
+fn worker_attach_socket(runtime_dir: &Path, pane_id: &str) -> PathBuf {
+    let compact = pane_id
+        .chars()
+        .filter(|value| value.is_ascii_hexdigit())
+        .collect::<String>();
+    runtime_dir.join(format!("p{compact}.a"))
+}
+
+fn legacy_worker_attach_socket(runtime_dir: &Path, session_id: &str) -> PathBuf {
     runtime_dir.join(format!("{}.a", hex_encode(session_id.as_bytes())))
 }
 
@@ -369,8 +380,9 @@ fn start_topology_listener(
                 Ok((mut stream, _)) => {
                     break (|| {
                         stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+                        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
                         let mut payload = String::new();
-                        stream.read_to_string(&mut payload)?;
+                        std::io::BufReader::new(&mut stream).read_line(&mut payload)?;
                         let value: Value = serde_json::from_str(&payload)?;
                         let pid = value
                             .get("pid")
@@ -382,7 +394,7 @@ fn start_topology_listener(
                             .and_then(Value::as_str)
                             .filter(|value| !value.is_empty())
                             .ok_or_else(|| "topology response has no cgroup".to_string())?;
-                        Ok((pid, PathBuf::from(cgroup)))
+                        Ok((pid, PathBuf::from(cgroup), stream))
                     })()
                     .map_err(|failure: Box<dyn std::error::Error>| failure.to_string());
                 }
@@ -403,6 +415,7 @@ fn start_topology_listener(
 
 impl WorkerSession {
     fn create(
+        pane_id: &str,
         program: &str,
         arguments: &[String],
         resource_policy: ResourcePolicy,
@@ -427,9 +440,7 @@ impl WorkerSession {
         };
         let executable = std::env::current_exe()?.with_file_name("qwe-session-exec");
         let mut command = if let Some((topology_socket, _)) = &topology {
-            let mut random = [0_u8; 8];
-            getrandom::fill(&mut random).map_err(|failure| failure.to_string())?;
-            let unit = format!("qwe-session-{}-{}", std::process::id(), hex_encode(&random));
+            let unit = qwe_runtime::pane_scope_unit(pane_id);
             let mut command = CommandBuilder::new("/usr/bin/systemd-run");
             command.args(["--user", "--scope", "--quiet", "--unit", &unit]);
             command.args([
@@ -484,9 +495,9 @@ impl WorkerSession {
         command.env("TERM", "xterm-256color");
         let child = pair.slave.spawn_command(command);
         let mut child = child?;
-        let (pid, cgroup_dir) = if let Some((_, receiver)) = topology {
+        let (pid, cgroup_dir, mut topology_stream) = if let Some((_, receiver)) = topology {
             match receiver.recv_timeout(Duration::from_secs(3)) {
-                Ok(Ok((pid, cgroup))) => (pid, Some(cgroup)),
+                Ok(Ok((pid, cgroup, stream))) => (pid, Some(cgroup), Some(stream)),
                 Ok(Err(failure)) => {
                     let _ = child.kill();
                     return Err(format!("Session topology handshake failed: {failure}").into());
@@ -502,6 +513,7 @@ impl WorkerSession {
                     .process_id()
                     .ok_or("session process has no PID".to_string())?,
                 None,
+                None,
             )
         };
         let identity = process_identity(pid)?;
@@ -512,8 +524,25 @@ impl WorkerSession {
         let master = pair.master;
         let initial_policy = resource_policy.clone();
         let resources = resources::ResourceController::new(resource_policy, cgroup_dir);
-        resources.update(initial_policy)?;
+        if let Err(failure) = resources.start_event_watcher() {
+            let _ = child.kill();
+            resources.cleanup_cgroup();
+            return Err(format!("failed to watch Pane resource events: {failure}").into());
+        }
+        if let Err(failure) = resources.update(initial_policy) {
+            let _ = child.kill();
+            resources.cleanup_cgroup();
+            return Err(format!("failed to apply Pane resource policy: {failure}").into());
+        }
+        if let Some(stream) = topology_stream.as_mut() {
+            if let Err(failure) = stream.write_all(b"1").and_then(|()| stream.flush()) {
+                let _ = child.kill();
+                resources.cleanup_cgroup();
+                return Err(format!("Session topology acknowledgement failed: {failure}").into());
+            }
+        }
         let session = Arc::new(Self {
+            pane_id: pane_id.to_string(),
             pid,
             identity,
             worker_identity: process_identity(std::process::id())?,
@@ -598,6 +627,7 @@ impl WorkerSession {
             .clone();
         json!({
             "session_id": session_id,
+            "pane_id": self.pane_id,
             "worker_pid": std::process::id(),
             "worker_identity": self.worker_identity,
             "pid": self.pid,
@@ -608,6 +638,8 @@ impl WorkerSession {
             "state": if self.running.load(Ordering::SeqCst) { "running" } else { "exited" },
             "exit_code": exit_code,
             "exit_signal": exit_signal,
+            "requested_resource_policy": self.resources.policy_json(),
+            "effective_resource_policy": self.resources.effective_policy_json(),
             "resource_policy": self.resources.policy_json(),
             "resource_metrics": self.resources.metrics_json(),
             "truncated_from": stream.journal.truncated_from(),
@@ -628,6 +660,7 @@ impl WorkerSession {
             .clone();
         json!({
             "session_id": session_id,
+            "pane_id": self.pane_id,
             "worker_pid": std::process::id(),
             "worker_identity": self.worker_identity,
             "pid": self.pid,
@@ -638,6 +671,8 @@ impl WorkerSession {
             "state": if running { "running" } else { "exited" },
             "exit_code": exit_code,
             "exit_signal": exit_signal,
+            "requested_resource_policy": self.resources.policy_json(),
+            "effective_resource_policy": self.resources.effective_policy_json(),
             "resource_policy": self.resources.policy_json(),
             "resource_metrics": self.resources.metrics_json()
         })
@@ -662,6 +697,7 @@ impl WorkerSession {
         let terminal = stream.terminal.snapshot();
         json!({
             "session_id": session_id,
+            "pane_id": self.pane_id,
             "worker_pid": std::process::id(),
             "worker_identity": self.worker_identity,
             "pid": self.pid,
@@ -672,6 +708,8 @@ impl WorkerSession {
             "state": if running { "running" } else { "exited" },
             "exit_code": exit_code,
             "exit_signal": exit_signal,
+            "requested_resource_policy": self.resources.policy_json(),
+            "effective_resource_policy": self.resources.effective_policy_json(),
             "resource_policy": self.resources.policy_json(),
             "resource_metrics": self.resources.metrics_json(),
             "screen": terminal.screen_text,
@@ -715,9 +753,13 @@ impl WorkerSession {
                 serde_json::from_value::<ResourcePolicy>(value)
                     .map_err(|failure| error("invalid_request", failure.to_string()))
             })?;
-        self.resources
-            .update(policy)
-            .map_err(|failure| error("resource_apply_failed", failure.to_string()))?;
+        if self.running.load(Ordering::SeqCst) {
+            self.resources
+                .update(policy)
+                .map_err(|failure| error("resource_apply_failed", failure.to_string()))?;
+        } else {
+            self.resources.update_requested(policy);
+        }
         Ok(self.status(session_id))
     }
 
@@ -1341,20 +1383,22 @@ fn serve_worker(stream: UnixStream, session: &Arc<WorkerSession>, session_id: &s
 fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let socket = args.worker_socket;
     let session_id = args.worker_session_id;
-    let runtime_dir = socket
-        .parent()
-        .expect("worker socket always has a runtime parent")
-        .to_path_buf();
+    let has_explicit_pane_id = args.worker_pane_id.is_some();
+    let pane_id = args
+        .worker_pane_id
+        .unwrap_or_else(|| format!("standalone-{}", std::process::id()));
     if UnixStream::connect(&socket).is_ok() {
         return Err(format!("session worker already running at {}", socket.display()).into());
     }
     let _ = fs::remove_file(&socket);
-    let attach_path = worker_attach_socket(
-        socket
-            .parent()
-            .expect("worker socket always has a runtime parent"),
-        &session_id,
-    );
+    let runtime_dir = socket
+        .parent()
+        .expect("worker socket always has a runtime parent");
+    let attach_path = if has_explicit_pane_id {
+        worker_attach_socket(runtime_dir, &pane_id)
+    } else {
+        legacy_worker_attach_socket(runtime_dir, &session_id)
+    };
     let _ = fs::remove_file(&attach_path);
     let session_result = unsafe { libc::setsid() };
     if session_result < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
@@ -1363,6 +1407,7 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let listener = UnixListener::bind(&socket)?;
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
     let session = WorkerSession::create(
+        &pane_id,
         &args.worker_program,
         &args.worker_args,
         ResourcePolicy {
@@ -1374,7 +1419,7 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             cpu_seconds: args.worker_cpu_seconds,
         },
         args.worker_credential_fd,
-        &runtime_dir,
+        runtime_dir,
         args.worker_systemd_scope,
     )?;
     let control_session = Arc::clone(&session);

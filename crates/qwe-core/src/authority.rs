@@ -57,6 +57,7 @@ pub enum AttachmentOperation {
     Attach,
     InputResize,
     ResourcePolicy,
+    PaneCreate,
     Detach,
     CloseTaskStop,
     LeaseClaimTakeover,
@@ -209,8 +210,9 @@ impl AttachmentAuthority {
                     .ok_or(AuthorityError::NotOwner),
                 _ => Err(AuthorityError::NotAttached),
             },
-            AttachmentOperation::CloseTaskStop | AttachmentOperation::ResourcePolicy => match state
-            {
+            AttachmentOperation::CloseTaskStop
+            | AttachmentOperation::ResourcePolicy
+            | AttachmentOperation::PaneCreate => match state {
                 AttachmentAuthorityState::Active => self
                     .owner_matches(credentials.owner)
                     .then_some(())

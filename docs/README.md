@@ -47,7 +47,8 @@
   gates, risks, and scope controls.
 - [Stage 7 Resource Governance](stage7-resource-governance.md): cgroup v2
   profiles, lifecycle hardening, observability, long-run soak, and Linux
-  qualification. This is not a container-runtime plan.
+  qualification. This is not a container-runtime plan. Current evidence is in
+  [Experiment 0029](experiments/0029-stage7-multipane-pressure-and-qualification.md).
 - [Readiness](development-readiness.md): known gaps and start gate.
 - [Roadmap](development-roadmap.md): implementation milestones.
 - [Testing Strategy](testing-strategy.md): layers, commands, and acceptance.

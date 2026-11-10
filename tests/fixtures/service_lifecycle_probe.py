@@ -59,10 +59,16 @@ class QweClient:
         self.socket_path = socket_path
 
     def run(self, *arguments):
-        completed = run(
-            [self.qwe, "--socket", self.socket_path, *arguments],
-            timeout=20,
-        )
+        try:
+            completed = run(
+                [self.qwe, "--socket", self.socket_path, *arguments],
+                timeout=20,
+            )
+        except subprocess.CalledProcessError as failure:
+            raise RuntimeError(
+                f"qwe command failed: stdout={failure.stdout!r} "
+                f"stderr={failure.stderr!r}"
+            ) from failure
         output = completed.stdout.strip()
         return json.loads(output) if output else {}
 
@@ -81,6 +87,8 @@ class QweClient:
             "create",
             "service-session",
             "sh",
+            "--profile",
+            "tight",
             "--",
             "-c",
             "sleep 60",
@@ -212,6 +220,8 @@ def probe_service(manager, client, socket_path, worker_pid, task_pid):
     assert status["running"] is True, status
     assert status["pid"] == task_pid, status
     assert status["worker_pid"] == worker_pid, status
+    assert status["requested_resource_policy"]["tasks_max"] == 64, status
+    assert status["effective_resource_policy"]["tasks_max"] == 64, status
 
     manager.stop()
     wait_process_gone(new_qwed, "stopped qwed")
@@ -228,7 +238,9 @@ def probe_service(manager, client, socket_path, worker_pid, task_pid):
             "SELECT state FROM sessions WHERE id = 'service-session'"
         ).fetchone()
         task_state = connection.execute(
-            "SELECT state FROM tasks WHERE session_id = 'service-session'"
+            "SELECT t.state FROM tasks t "
+            "JOIN panes p ON p.id = t.pane_id "
+            "WHERE p.session_id = 'service-session'"
         ).fetchone()
     assert session_state == ("closed",), session_state
     assert task_state == ("stopped",), task_state
@@ -268,6 +280,9 @@ def main():
             raise RuntimeError(f"unsupported service platform: {sys.platform}")
         manager.install()
         client.wait_ready()
+        capabilities = client.run("status")["capabilities"]["resources"]
+        if capabilities["cpu_quota"] != "hard":
+            raise RuntimeError(f"installed systemd resource capabilities: {capabilities}")
         created = client.create_session()
         worker_pid = created["worker_pid"]
         task_pid = created["pid"]
