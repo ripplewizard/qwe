@@ -2,14 +2,14 @@ mod capabilities;
 mod credentials;
 mod worker_client;
 
-use capabilities::{matrix as capability_matrix, merge_resource_policy, validate_resource_policy};
+use capabilities::{matrix as capability_matrix, merge_resource_policy, resolve_resource_policy};
 use clap::Parser;
 use credentials::CredentialProvider;
 use qwe_core::{
     AttachmentAuthority, AttachmentAuthorityState, AttachmentOperation, AuthorityCredentials,
-    DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_LEASE_TTL_MS, PaneId, PaneRecord, ProcessIdentity,
-    ReclaimTokenHash, ReconciliationDisposition, ResourcePolicy, SessionRecord, TaskId, TaskRecord,
-    TaskState, WorkerHealth,
+    DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_LEASE_TTL_MS, PaneId, PaneRecord, PaneWorkerRecord,
+    ProcessIdentity, ReclaimTokenHash, ReconciliationDisposition, ResourcePolicy, ResourceProfile,
+    ResourceScopeId, SessionRecord, TaskId, TaskRecord, TaskState, WorkerHealth,
 };
 use qwe_protocol::{
     ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope,
@@ -66,7 +66,7 @@ struct Args {
 
 struct Context {
     runtime_dir: PathBuf,
-    linux_scope_available: bool,
+    resource_support: qwe_runtime::ResourceSupport,
     store: Mutex<Store>,
     workers: Mutex<HashMap<String, Arc<WorkerHandle>>>,
     reconciliation_incidents: Mutex<ReconciliationIncidents>,
@@ -82,6 +82,8 @@ struct Context {
 struct WorkerHandle {
     socket: PathBuf,
     attach_socket: PathBuf,
+    pane_id: String,
+    session_id: String,
     worker_pid: u32,
     worker_identity: ProcessIdentity,
     client: Option<Arc<WorkerClient>>,
@@ -112,6 +114,7 @@ struct ReconciliationIncidents {
 #[derive(Debug, Clone)]
 struct RuntimeIncident {
     session_id: Option<String>,
+    pane_id: Option<String>,
     disposition: ReconciliationDisposition,
     health: WorkerHealth,
     socket: PathBuf,
@@ -141,22 +144,26 @@ fn hex_encode(bytes: &[u8]) -> String {
     output
 }
 
-fn hex_decode(value: &str) -> Option<String> {
-    if value.len() % 2 != 0 {
-        return None;
-    }
-    let bytes = (0..value.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(value.get(index..index + 2)?, 16).ok())
-        .collect::<Option<Vec<_>>>()?;
-    String::from_utf8(bytes).ok()
+fn worker_socket(runtime_dir: &Path, pane_id: &str) -> PathBuf {
+    runtime_dir.join(format!("p{}.sock", compact_pane_key(pane_id)))
 }
 
-fn worker_socket(runtime_dir: &Path, session_id: &str) -> PathBuf {
+fn worker_attach_socket(runtime_dir: &Path, pane_id: &str) -> PathBuf {
+    runtime_dir.join(format!("p{}.a", compact_pane_key(pane_id)))
+}
+
+fn compact_pane_key(pane_id: &str) -> String {
+    pane_id
+        .chars()
+        .filter(|value| value.is_ascii_hexdigit())
+        .collect()
+}
+
+fn legacy_worker_socket(runtime_dir: &Path, session_id: &str) -> PathBuf {
     runtime_dir.join(format!("{}.sock", hex_encode(session_id.as_bytes())))
 }
 
-fn worker_attach_socket(runtime_dir: &Path, session_id: &str) -> PathBuf {
+fn legacy_worker_attach_socket(runtime_dir: &Path, session_id: &str) -> PathBuf {
     runtime_dir.join(format!("{}.a", hex_encode(session_id.as_bytes())))
 }
 
@@ -221,6 +228,7 @@ fn parse_worker_identity(status: &Value) -> Result<(u32, ProcessIdentity), Proto
 
 fn validate_worker_status(
     session_id: &str,
+    pane_id: &str,
     expected_socket: &Path,
     status: &Value,
 ) -> Result<(u32, ProcessIdentity), ProtocolErrorBody> {
@@ -230,17 +238,33 @@ fn validate_worker_status(
             "worker reported the wrong SessionId",
         ));
     }
+    if let Some(reported_pane) = status.get("pane_id").and_then(Value::as_str) {
+        if reported_pane != pane_id {
+            return Err(error("worker_contract", "worker reported the wrong PaneId"));
+        }
+    }
     let (worker_pid, identity) = parse_worker_identity(status)?;
+    let runtime_dir = expected_socket
+        .parent()
+        .expect("worker socket has a runtime parent");
+    let expected_pane_socket = worker_socket(runtime_dir, pane_id);
+    let expected_legacy_socket = legacy_worker_socket(runtime_dir, session_id);
+    if expected_socket != expected_pane_socket && expected_socket != expected_legacy_socket {
+        return Err(error(
+            "worker_contract",
+            "worker socket path does not match the Pane or legacy Session",
+        ));
+    }
     let actual_socket = worker_socket(
         expected_socket
             .parent()
             .expect("worker socket has a runtime parent"),
-        session_id,
+        pane_id,
     );
-    if actual_socket != expected_socket {
+    if actual_socket != expected_socket && expected_socket != expected_legacy_socket {
         return Err(error(
             "worker_contract",
-            "worker socket path does not match the Session",
+            "worker socket path does not match the Pane",
         ));
     }
     if !qwe_runtime::process_matches(&identity) {
@@ -254,18 +278,38 @@ fn validate_worker_status(
 
 fn worker_handle(
     session_id: &str,
+    pane_id: &str,
     socket: PathBuf,
     status: &Value,
     client: Option<Arc<WorkerClient>>,
     health_client: Option<Arc<WorkerClient>>,
     health: WorkerHealth,
 ) -> Result<WorkerHandle, ProtocolErrorBody> {
-    let (worker_pid, worker_identity) = validate_worker_status(session_id, &socket, status)?;
-    Ok(WorkerHandle {
-        attach_socket: worker_attach_socket(
+    let (worker_pid, worker_identity) =
+        validate_worker_status(session_id, pane_id, &socket, status)?;
+    let reported_pane = status
+        .get("pane_id")
+        .and_then(Value::as_str)
+        .unwrap_or(pane_id);
+    let attach_socket = if socket
+        == legacy_worker_socket(
             socket.parent().expect("worker socket has a runtime parent"),
             session_id,
-        ),
+        ) {
+        legacy_worker_attach_socket(
+            socket.parent().expect("worker socket has a runtime parent"),
+            session_id,
+        )
+    } else {
+        worker_attach_socket(
+            socket.parent().expect("worker socket has a runtime parent"),
+            reported_pane,
+        )
+    };
+    Ok(WorkerHandle {
+        pane_id: reported_pane.to_string(),
+        session_id: session_id.to_string(),
+        attach_socket,
         socket,
         worker_pid,
         worker_identity,
@@ -289,23 +333,31 @@ fn worker_health(handle: &WorkerHandle) -> WorkerHealth {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn worker_json(session_id: &str, handle: &WorkerHandle) -> Value {
+fn worker_json(handle: &WorkerHandle) -> Value {
     json!({
-        "session_id": session_id,
+        "session_id": handle.session_id,
+        "pane_id": handle.pane_id,
         "pid": handle.worker_pid,
         "identity": handle.worker_identity,
         "health": worker_health(handle).as_str()
     })
 }
 
+fn cleanup_worker_scope(handle: &WorkerHandle) {
+    let _ = qwe_runtime::stop_pane_scope(&handle.pane_id);
+}
+
 fn unreachable_worker_handle(
     context: &Context,
-    session: &SessionRecord,
+    session_id: &str,
+    pane_id: &str,
+    worker_identity: ProcessIdentity,
 ) -> Option<Arc<WorkerHandle>> {
-    let worker_identity = session.worker_identity.clone()?;
-    let socket = worker_socket(&context.runtime_dir, &session.id);
+    let socket = worker_socket(&context.runtime_dir, pane_id);
     Some(Arc::new(WorkerHandle {
-        attach_socket: worker_attach_socket(&context.runtime_dir, &session.id),
+        pane_id: pane_id.to_string(),
+        session_id: session_id.to_string(),
+        attach_socket: worker_attach_socket(&context.runtime_dir, pane_id),
         worker_pid: worker_identity.pid,
         worker_identity,
         socket,
@@ -315,13 +367,18 @@ fn unreachable_worker_handle(
     }))
 }
 
-fn remember_unreachable(context: &Context, session: &SessionRecord) {
-    if let Some(handle) = unreachable_worker_handle(context, session) {
+fn remember_unreachable(
+    context: &Context,
+    session_id: &str,
+    pane_id: &str,
+    worker_identity: ProcessIdentity,
+) {
+    if let Some(handle) = unreachable_worker_handle(context, session_id, pane_id, worker_identity) {
         context
             .workers
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(session.id.clone(), handle);
+            .insert(pane_id.to_string(), handle);
     }
 }
 
@@ -332,13 +389,31 @@ fn call_worker(
     payload: Value,
     timeout: Duration,
 ) -> Result<Value, ProtocolErrorBody> {
+    let pane_id = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .find_pane_for_session(session_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("terminal_lost", "session has no Pane"))?
+        .id;
+    call_pane_worker(context, &pane_id.to_string(), operation, payload, timeout)
+}
+
+fn call_pane_worker(
+    context: &Context,
+    pane_id: &str,
+    operation: &str,
+    payload: Value,
+    timeout: Duration,
+) -> Result<Value, ProtocolErrorBody> {
     let handle = context
         .workers
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(session_id)
+        .get(pane_id)
         .cloned()
-        .ok_or_else(|| error("terminal_lost", "session has no live worker"))?;
+        .ok_or_else(|| error("terminal_lost", "Pane has no live worker"))?;
     if worker_health(&handle) == WorkerHealth::Unreachable {
         return Err(error(
             "worker_unreachable",
@@ -368,9 +443,10 @@ fn call_worker(
 fn connect_existing_worker(
     context: &Context,
     session_id: &str,
+    pane_id: &str,
     socket: PathBuf,
 ) -> Result<(Arc<WorkerClient>, Value), String> {
-    let client = WorkerClient::connect(&socket, session_id, context.worker_events.clone())
+    let client = WorkerClient::connect(&socket, session_id, pane_id, context.worker_events.clone())
         .map_err(|failure| failure.to_string())?;
     let status = client
         .call("WORKER_HELLO", json!({}), WORKER_CALL_TIMEOUT)
@@ -381,9 +457,10 @@ fn connect_existing_worker(
 fn connect_health_client(
     context: &Context,
     session_id: &str,
+    pane_id: &str,
     socket: &Path,
 ) -> Result<Arc<WorkerClient>, String> {
-    let client = WorkerClient::connect(socket, session_id, context.worker_events.clone())
+    let client = WorkerClient::connect(socket, session_id, pane_id, context.worker_events.clone())
         .map_err(|failure| failure.to_string())?;
     client
         .call("PING", json!({}), WORKER_CALL_TIMEOUT)
@@ -394,13 +471,15 @@ fn connect_health_client(
 fn spawn_worker(
     context: &Context,
     session_id: &str,
+    pane_id: &PaneId,
     program: &str,
     arguments: &[String],
     resource_policy: &ResourcePolicy,
     credential: Option<(&str, &Zeroizing<Vec<u8>>)>,
 ) -> Result<(WorkerHandle, Value), ProtocolErrorBody> {
-    let socket = worker_socket(&context.runtime_dir, session_id);
-    let attach_socket = worker_attach_socket(&context.runtime_dir, session_id);
+    let pane_key = pane_id.to_string();
+    let socket = worker_socket(&context.runtime_dir, &pane_key);
+    let attach_socket = worker_attach_socket(&context.runtime_dir, &pane_key);
     let _ = fs::remove_file(&socket);
     let _ = fs::remove_file(&attach_socket);
     let executable =
@@ -411,6 +490,8 @@ fn spawn_worker(
         .arg(&socket)
         .arg("--worker-session-id")
         .arg(session_id)
+        .arg("--worker-pane-id")
+        .arg(pane_id.to_string())
         .arg("--worker-program")
         .arg(program)
         .stdin(Stdio::null())
@@ -419,7 +500,7 @@ fn spawn_worker(
     for argument in arguments {
         command.arg("--worker-arg").arg(argument);
     }
-    if context.linux_scope_available {
+    if context.resource_support.hard_scope_available() {
         command.arg("--worker-systemd-scope");
     }
     if let Some(seconds) = resource_policy.cpu_seconds {
@@ -464,23 +545,26 @@ fn spawn_worker(
     let mut last_failure = "worker did not create a control socket".to_string();
     while Instant::now() < deadline {
         if let Ok(Some(status)) = child.try_wait() {
+            let _ = qwe_runtime::stop_pane_scope(&pane_id.to_string());
             return Err(error(
                 "worker_start_failed",
                 format!("worker exited during startup with {status}"),
             ));
         }
-        match connect_existing_worker(context, session_id, socket.clone()) {
+        match connect_existing_worker(context, session_id, &pane_key, socket.clone()) {
             Ok((client, status)) => {
-                let health_client = match connect_health_client(context, session_id, &socket) {
-                    Ok(client) => client,
-                    Err(failure) => {
-                        last_failure = failure;
-                        thread::sleep(Duration::from_millis(20));
-                        continue;
-                    }
-                };
+                let health_client =
+                    match connect_health_client(context, session_id, &pane_key, &socket) {
+                        Ok(client) => client,
+                        Err(failure) => {
+                            last_failure = failure;
+                            thread::sleep(Duration::from_millis(20));
+                            continue;
+                        }
+                    };
                 return worker_handle(
                     session_id,
+                    &pane_key,
                     socket,
                     &status,
                     Some(client),
@@ -495,6 +579,7 @@ fn spawn_worker(
     }
     let _ = child.kill();
     let _ = child.wait();
+    let _ = qwe_runtime::stop_pane_scope(&pane_id.to_string());
     let _ = fs::remove_file(&socket);
     let _ = fs::remove_file(&attach_socket);
     Err(error("worker_start_failed", last_failure))
@@ -562,6 +647,7 @@ fn task_json(task: &TaskRecord) -> Value {
     json!({
         "task_id": task.id,
         "session_id": task.session_id,
+        "pane_id": task.pane_id,
         "process_identity": task.identity,
         "state": task.state.as_str(),
         "exit_code": task.exit_code,
@@ -581,6 +667,30 @@ fn lease_json(lease: &LeaseRecord) -> Value {
         "released_at_ms": lease.released_at_ms,
         "state": if lease.released_at_ms.is_some() { "released" } else { "active" }
     })
+}
+
+fn resource_profile_name(policy: &ResourcePolicy) -> &'static str {
+    ResourceProfile::classify(policy).map_or_else(
+        || {
+            if policy.is_empty() {
+                "unlimited"
+            } else {
+                "custom"
+            }
+        },
+        ResourceProfile::as_str,
+    )
+}
+
+fn annotate_resource_status(status: &mut Value, requested: &ResourcePolicy) {
+    if status.get("effective_resource_policy").is_none()
+        || status.get("effective_resource_policy") == Some(&Value::Null)
+    {
+        status["effective_resource_policy"] = Value::Null;
+    }
+    status["resource_profile"] = json!(resource_profile_name(requested));
+    status["requested_resource_policy"] = json!(requested);
+    status["resource_policy"] = json!(requested);
 }
 
 fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolErrorBody> {
@@ -624,7 +734,7 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let resource_policy = validate_resource_policy(&payload, context.linux_scope_available)?;
+    let (_, resource_policy) = resolve_resource_policy(&payload, context.resource_support)?;
     let credential_name = match payload.get("credential") {
         None | Some(Value::Null) => None,
         Some(Value::String(value)) if value.is_empty() => None,
@@ -642,9 +752,11 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
                 .map_err(|failure| error("credential_unavailable", failure.to_string()))
         })
         .transpose()?;
+    let pane_id = PaneId::new();
     let (handle, mut status) = spawn_worker(
         context,
         &session_id,
+        &pane_id,
         program,
         &arguments,
         &resource_policy,
@@ -661,7 +773,6 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
         TaskState::Exited
     };
     let task_id = TaskId::new();
-    let pane_id = PaneId::new();
     let persisted = (|| {
         let identity = parse_process_identity(&status)?;
         let session = session_record(
@@ -674,12 +785,14 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
         let pane = PaneRecord {
             id: pane_id.clone(),
             session_id: session_id.clone(),
+            resource_scope_id: ResourceScopeId::new(),
             resource_policy: resource_policy.clone(),
             updated_at_ms: now,
         };
         let task = TaskRecord {
             id: task_id.clone(),
             session_id: session_id.clone(),
+            pane_id: pane_id.clone(),
             identity,
             state: task_state,
             exit_code: status
@@ -711,6 +824,7 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
         unsafe {
             libc::kill(handle.worker_pid as libc::pid_t, libc::SIGTERM);
         }
+        cleanup_worker_scope(&handle);
         let _ = fs::remove_file(&handle.socket);
         let _ = fs::remove_file(&handle.attach_socket);
         return Err(failure);
@@ -719,10 +833,160 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
         .workers
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(session_id, Arc::new(handle));
+        .insert(pane_id.to_string(), Arc::new(handle));
     status["task_id"] = json!(task_id);
     status["pane_id"] = json!(pane_id);
-    status["resource_policy"] = json!(resource_policy);
+    annotate_resource_status(&mut status, &resource_policy);
+    if let Some(response) = status.as_object_mut() {
+        response.remove("total_written");
+        response.remove("truncated_from");
+    }
+    Ok(status)
+}
+
+fn create_pane(context: &Context, payload: Value) -> Result<Value, ProtocolErrorBody> {
+    let _creation = context
+        .creation_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let session_id = required_string(&payload, "session_id")?.to_string();
+    {
+        let mut store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let session = store
+            .find_session(&session_id)
+            .map_err(storage_error)?
+            .ok_or_else(|| error("not_found", "Session not found"))?;
+        if matches!(session.state.as_str(), "closing" | "closed" | "lost") {
+            return Err(error(
+                "invalid_state",
+                format!("Session is '{}'", session.state),
+            ));
+        }
+        authorize_session_control(
+            &mut store,
+            &session_id,
+            &payload,
+            AttachmentOperation::PaneCreate,
+            now_ms(),
+        )?;
+    }
+    let program = payload
+        .get("program")
+        .and_then(Value::as_str)
+        .unwrap_or("sh");
+    let arguments = payload
+        .get("args")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let (_, resource_policy) = resolve_resource_policy(&payload, context.resource_support)?;
+    let credential_name = match payload.get("credential") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) if value.is_empty() => None,
+        Some(Value::String(value)) => Some(value.as_str()),
+        Some(_) => return Err(error("invalid_request", "credential must be a string")),
+    };
+    let credential = credential_name
+        .map(|name| {
+            context
+                .credentials
+                .read(name)
+                .map(|secret| (name.to_string(), secret))
+                .map_err(|failure| error("credential_unavailable", failure.to_string()))
+        })
+        .transpose()?;
+    let pane_id = PaneId::new();
+    let task_id = TaskId::new();
+    let (handle, mut status) = spawn_worker(
+        context,
+        &session_id,
+        &pane_id,
+        program,
+        &arguments,
+        &resource_policy,
+        credential
+            .as_ref()
+            .map(|(name, secret)| (name.as_str(), secret)),
+    )?;
+    let now = now_ms();
+    let running = status.get("running").and_then(Value::as_bool) == Some(true);
+    let pane = PaneRecord {
+        id: pane_id.clone(),
+        session_id: session_id.clone(),
+        resource_scope_id: ResourceScopeId::new(),
+        resource_policy: resource_policy.clone(),
+        updated_at_ms: now,
+    };
+    let worker = PaneWorkerRecord {
+        pane_id: pane_id.clone(),
+        identity: handle.worker_identity.clone(),
+        state: if running { "active" } else { "exited" }.into(),
+        updated_at_ms: now,
+    };
+    let persisted = (|| {
+        let identity = parse_process_identity(&status)?;
+        let task = TaskRecord {
+            id: task_id.clone(),
+            session_id: session_id.clone(),
+            pane_id: pane_id.clone(),
+            identity,
+            state: if running {
+                TaskState::Running
+            } else {
+                TaskState::Exited
+            },
+            exit_code: status
+                .get("exit_code")
+                .and_then(Value::as_i64)
+                .map(|value| value as i32),
+            exit_signal: status
+                .get("exit_signal")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            started_at_ms: now,
+            ended_at_ms: (!running).then_some(now),
+        };
+        context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert_created_pane(&pane, &worker, &task)
+            .map_err(storage_error)
+    })();
+    if let Err(failure) = persisted {
+        if let Some(client) = &handle.client {
+            let _ = client.call(
+                "SESSION_CLOSE",
+                json!({"session_id": session_id}),
+                WORKER_MAINTENANCE_TIMEOUT,
+            );
+        }
+        cleanup_worker_scope(&handle);
+        unsafe {
+            libc::kill(handle.worker_pid as libc::pid_t, libc::SIGTERM);
+        }
+        let _ = fs::remove_file(&handle.socket);
+        let _ = fs::remove_file(&handle.attach_socket);
+        return Err(failure);
+    }
+    context
+        .workers
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(pane_id.to_string(), Arc::new(handle));
+    status["session_id"] = json!(session_id);
+    status["pane_id"] = json!(pane_id);
+    status["task_id"] = json!(task_id);
+    annotate_resource_status(&mut status, &resource_policy);
     if let Some(response) = status.as_object_mut() {
         response.remove("total_written");
         response.remove("truncated_from");
@@ -782,7 +1046,8 @@ fn apply_status(
         .workers
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(session_id)
+        .values()
+        .find(|handle| handle.session_id == session_id)
         .cloned();
     let worker_identity = handle
         .as_ref()
@@ -822,6 +1087,41 @@ fn apply_status(
     Ok(())
 }
 
+fn apply_pane_status(
+    context: &Context,
+    pane_id: &PaneId,
+    status: &Value,
+) -> Result<(), ProtocolErrorBody> {
+    let session_id = required_string(status, "session_id")?.to_string();
+    let (_, worker_identity) = parse_worker_identity(status)?;
+    let running = status.get("running").and_then(Value::as_bool) == Some(true);
+    let mut store = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    store
+        .upsert_pane_worker(&qwe_core::PaneWorkerRecord {
+            pane_id: pane_id.clone(),
+            identity: worker_identity.clone(),
+            state: if running { "active" } else { "exited" }.into(),
+            updated_at_ms: now_ms(),
+        })
+        .map_err(storage_error)?;
+    store
+        .upsert_session(&session_record(
+            &session_id,
+            status,
+            &worker_identity,
+            if running { "running" } else { "exited" },
+            now_ms(),
+        )?)
+        .map_err(storage_error)?;
+    if let Some(task) = store.find_task_for_pane(pane_id).map_err(storage_error)? {
+        update_task_from_status(&mut store, &task, status)?;
+    }
+    Ok(())
+}
+
 fn task_status(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
     let id = payload
         .get("task_id")
@@ -829,20 +1129,20 @@ fn task_status(context: &Context, payload: &Value) -> Result<Value, ProtocolErro
         .ok_or_else(|| error("invalid_request", "missing task_id"))?;
     let id =
         TaskId::from_str(id).map_err(|failure| error("invalid_request", failure.to_string()))?;
-    let session_id = {
+    let (session_id, pane_id) = {
         let store = context
             .store
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        store
+        let task = store
             .find_task(&id)
             .map_err(storage_error)?
-            .ok_or_else(|| error("not_found", "task not found"))?
-            .session_id
+            .ok_or_else(|| error("not_found", "task not found"))?;
+        (task.session_id, task.pane_id)
     };
-    let status = match call_worker(
+    let status = match call_pane_worker(
         context,
-        &session_id,
+        &pane_id.to_string(),
         "SESSION_STATUS",
         json!({"session_id": session_id}),
         WORKER_REQUEST_TIMEOUT,
@@ -877,7 +1177,7 @@ fn task_status(context: &Context, payload: &Value) -> Result<Value, ProtocolErro
         }
         Err(failure) => return Err(failure),
     };
-    apply_status(context, &session_id, &status)?;
+    apply_pane_status(context, &pane_id, &status)?;
     let task = context
         .store
         .lock()
@@ -893,9 +1193,12 @@ fn update_session_resources(
     payload: &Value,
 ) -> Result<Value, ProtocolErrorBody> {
     let session_id = required_string(payload, "session_id")?.to_string();
-    let update = payload
-        .get("resource_policy")
-        .ok_or_else(|| error("invalid_request", "missing resource_policy"))?;
+    if payload.get("resource_profile").is_none() && payload.get("resource_policy").is_none() {
+        return Err(error(
+            "invalid_request",
+            "missing resource_profile or resource_policy",
+        ));
+    }
     let _authority_guard = context
         .attachment_lock
         .lock()
@@ -916,8 +1219,17 @@ fn update_session_resources(
             .find_pane_for_session(&session_id)
             .map_err(storage_error)?
             .ok_or_else(|| error("not_found", "Pane not found"))?;
-        let next =
-            merge_resource_policy(&pane.resource_policy, update, context.linux_scope_available)?;
+        let next = if payload.get("resource_profile").is_some() {
+            resolve_resource_policy(payload, context.resource_support)?.1
+        } else {
+            merge_resource_policy(
+                &pane.resource_policy,
+                payload
+                    .get("resource_policy")
+                    .ok_or_else(|| error("invalid_request", "missing resource_policy"))?,
+                context.resource_support,
+            )?
+        };
         (pane.resource_policy, next)
     };
     let terminal = call_worker(
@@ -943,11 +1255,16 @@ fn update_session_resources(
         );
         return Err(failure);
     }
-    Ok(json!({
+    let mut status = json!({
         "session_id": session_id,
         "resource_policy": next,
         "terminal": terminal
-    }))
+    });
+    annotate_resource_status(&mut status, &next);
+    if let Some(terminal) = status.get_mut("terminal") {
+        annotate_resource_status(terminal, &next);
+    }
+    Ok(status)
 }
 
 fn persisted_session_status(
@@ -970,7 +1287,7 @@ fn persisted_session_status(
         .find_pane_for_session(session_id)
         .map_err(storage_error)?
         .ok_or_else(|| error("persistence_failure", "Session Pane is missing"))?;
-    Ok(json!({
+    let mut status = json!({
         "session_id": session.id,
         "pid": session.identity.as_ref().map(|identity| identity.pid),
         "pgid": session.identity.as_ref().map(|identity| identity.pgid),
@@ -983,9 +1300,10 @@ fn persisted_session_status(
         "exit_code": task.exit_code,
         "exit_signal": task.exit_signal,
         "task_id": task.id,
-        "pane_id": pane.id,
-        "resource_policy": pane.resource_policy
-    }))
+        "pane_id": pane.id
+    });
+    annotate_resource_status(&mut status, &pane.resource_policy);
+    Ok(status)
 }
 
 fn authorize_session_control(
@@ -1005,6 +1323,26 @@ fn authorize_session_control(
             .write_attachment_authority(session_id, &authority, now_ms)
             .map_err(storage_error)?;
     }
+    if authority.state == AttachmentAuthorityState::Unattached
+        && matches!(
+            operation,
+            AttachmentOperation::PaneCreate
+                | AttachmentOperation::ResourcePolicy
+                | AttachmentOperation::CloseTaskStop
+        )
+    {
+        let owner = payload.get("owner").and_then(Value::as_str);
+        let generation = required_u64(payload, "generation").ok();
+        if let Some(lease) = store.get_lease(session_id).map_err(storage_error)? {
+            if owner == Some(lease.owner.as_str())
+                && generation == Some(lease.generation)
+                && lease.released_at_ms.is_none()
+                && lease.deadline_ms > now_ms
+            {
+                return Ok(());
+            }
+        }
+    }
     authority
         .authorize(
             operation,
@@ -1016,6 +1354,11 @@ fn authorize_session_control(
             now_ms,
         )
         .map_err(|failure| error(failure.code(), failure.to_string()))
+}
+
+fn required_pane_id(payload: &Value) -> Result<PaneId, ProtocolErrorBody> {
+    PaneId::from_str(required_string(payload, "pane_id")?)
+        .map_err(|failure| error("invalid_request", failure.to_string()))
 }
 
 fn task_stop(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
@@ -1047,9 +1390,10 @@ fn task_stop(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorB
         )?;
         task
     };
-    let status = call_worker(
+    let pane_key = task.pane_id.to_string();
+    let status = call_pane_worker(
         context,
-        &task.session_id,
+        &pane_key,
         "TASK_STOP",
         json!({"session_id": task.session_id}),
         WORKER_MAINTENANCE_TIMEOUT,
@@ -1066,7 +1410,7 @@ fn task_stop(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorB
         .workers
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&task.session_id)
+        .get(&pane_key)
         .map(|handle| handle.worker_identity.clone())
         .ok_or_else(|| error("terminal_lost", "session worker disappeared"))?;
     let mut store = context
@@ -1147,9 +1491,10 @@ fn task_kill_batch(context: &Context, payload: &Value) -> Result<Value, Protocol
                 )?;
                 task
             };
-            let status = match call_worker(
+            let pane_key = task.pane_id.to_string();
+            let status = match call_pane_worker(
                 context,
-                &task.session_id,
+                &pane_key,
                 "TASK_KILL",
                 json!({"session_id": task.session_id}),
                 WORKER_MAINTENANCE_TIMEOUT,
@@ -1173,7 +1518,7 @@ fn task_kill_batch(context: &Context, payload: &Value) -> Result<Value, Protocol
                 .workers
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .get(&task.session_id)
+                .get(&pane_key)
                 .map(|handle| handle.worker_identity.clone())
                 .ok_or_else(|| error("terminal_lost", "session worker disappeared"))?;
             let exit_code = status
@@ -1248,65 +1593,90 @@ fn teardown_session(
             now_ms(),
         )?;
     }
-    let result = match call_worker(
-        context,
-        &session_id,
-        worker_operation,
-        payload.clone(),
-        WORKER_MAINTENANCE_TIMEOUT,
-    ) {
-        Ok(result) => result,
-        Err(failure) if forced => {
-            if let Some(task) = context
-                .store
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .find_task_for_session(&session_id)
-                .map_err(storage_error)?
-            {
-                if qwe_runtime::process_matches(&task.identity) {
-                    unsafe {
-                        libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
-                    }
-                }
-            }
-            json!({
-                "session_id": session_id,
-                "state": "closed",
-                "forced": true,
-                "worker_error": failure
-            })
-        }
-        Err(failure) => return Err(failure),
-    };
-    let handle = context
-        .workers
+    let panes = context
+        .store
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .remove(&session_id);
-    if let Some(handle) = &handle {
-        unsafe {
-            libc::kill(
-                handle.worker_pid as libc::pid_t,
-                if forced { libc::SIGKILL } else { libc::SIGTERM },
-            );
+        .list_panes_for_session(&session_id)
+        .map_err(storage_error)?;
+    let mut pane_results = Vec::new();
+    for pane in &panes {
+        let pane_key = pane.id.to_string();
+        let result = match call_pane_worker(
+            context,
+            &pane_key,
+            worker_operation,
+            payload.clone(),
+            WORKER_MAINTENANCE_TIMEOUT,
+        ) {
+            Ok(result) => result,
+            Err(failure) if forced => {
+                if let Some(task) = context
+                    .store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .find_task_for_pane(&pane.id)
+                    .map_err(storage_error)?
+                {
+                    if qwe_runtime::process_matches(&task.identity) {
+                        unsafe {
+                            libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
+                        }
+                    }
+                }
+                json!({
+                    "session_id": session_id,
+                    "pane_id": pane.id,
+                    "state": "closed",
+                    "forced": true,
+                    "worker_error": failure
+                })
+            }
+            Err(failure) => return Err(failure),
+        };
+        pane_results.push(result);
+        let handle = context
+            .workers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&pane_key);
+        if let Some(handle) = &handle {
+            cleanup_worker_scope(handle);
+            unsafe {
+                libc::kill(
+                    handle.worker_pid as libc::pid_t,
+                    if forced { libc::SIGKILL } else { libc::SIGTERM },
+                );
+            }
+            let _ = fs::remove_file(&handle.socket);
+            let _ = fs::remove_file(&handle.attach_socket);
         }
-        let _ = fs::remove_file(&handle.socket);
-        let _ = fs::remove_file(&handle.attach_socket);
     }
     let mut store = context
         .store
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(task) = store
-        .find_task_for_session(&session_id)
-        .map_err(storage_error)?
-    {
-        if task.state == TaskState::Running {
-            store
-                .update_task(&task.id, TaskState::Stopped, None, None, Some(now_ms()))
-                .map_err(storage_error)?;
+    for pane in &panes {
+        if let Some(task) = store.find_task_for_pane(&pane.id).map_err(storage_error)? {
+            if task.state == TaskState::Running {
+                store
+                    .update_task(&task.id, TaskState::Stopped, None, None, Some(now_ms()))
+                    .map_err(storage_error)?;
+            }
         }
+        if let Some(mut worker) = store.find_pane_worker(&pane.id).map_err(storage_error)? {
+            worker.state = "closed".into();
+            worker.updated_at_ms = now_ms();
+            store.upsert_pane_worker(&worker).map_err(storage_error)?;
+        }
+        store
+            .update_resource_scope_state(
+                &pane.resource_scope_id,
+                qwe_core::ResourceScopeState::Closed,
+                Some("complete scope stopped"),
+                now_ms(),
+            )
+            .map_err(storage_error)?;
     }
     if let Some(mut session) = store.find_session(&session_id).map_err(storage_error)? {
         session.state = "closed".into();
@@ -1329,7 +1699,15 @@ fn teardown_session(
     store
         .write_attachment_authority(&session_id, &authority, now_ms())
         .map_err(storage_error)?;
-    Ok(result)
+    let mut response = pane_results
+        .first()
+        .cloned()
+        .unwrap_or_else(|| json!({"session_id": session_id}));
+    response["session_id"] = json!(session_id);
+    response["state"] = json!("closed");
+    response["running"] = json!(false);
+    response["panes"] = json!(pane_results);
+    Ok(response)
 }
 
 fn close_session(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
@@ -1338,6 +1716,143 @@ fn close_session(context: &Context, payload: &Value) -> Result<Value, ProtocolEr
 
 fn kill_session(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
     teardown_session(context, payload, "SESSION_KILL", true)
+}
+
+fn teardown_pane(
+    context: &Context,
+    payload: &Value,
+    worker_operation: &str,
+    forced: bool,
+) -> Result<Value, ProtocolErrorBody> {
+    let pane_id = required_pane_id(payload)?;
+    let pane_key = pane_id.to_string();
+    let pane = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .find_pane(&pane_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("not_found", "Pane not found"))?;
+    let mut worker_payload = payload.clone();
+    worker_payload["session_id"] = json!(pane.session_id);
+    let _authority_guard = context
+        .attachment_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    {
+        let mut store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        authorize_session_control(
+            &mut store,
+            &pane.session_id,
+            payload,
+            AttachmentOperation::CloseTaskStop,
+            now_ms(),
+        )?;
+    }
+    let mut result = match call_pane_worker(
+        context,
+        &pane_key,
+        worker_operation,
+        worker_payload,
+        WORKER_MAINTENANCE_TIMEOUT,
+    ) {
+        Ok(result) => result,
+        Err(failure) if forced => {
+            if let Some(task) = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .find_task_for_pane(&pane_id)
+                .map_err(storage_error)?
+            {
+                if qwe_runtime::process_matches(&task.identity) {
+                    unsafe {
+                        libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
+                    }
+                }
+            }
+            json!({
+                "session_id": pane.session_id,
+                "pane_id": pane_id,
+                "state": "closed",
+                "forced": true,
+                "worker_error": failure
+            })
+        }
+        Err(failure) => return Err(failure),
+    };
+    let handle = context
+        .workers
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&pane_key);
+    if let Some(handle) = &handle {
+        cleanup_worker_scope(handle);
+        unsafe {
+            libc::kill(
+                handle.worker_pid as libc::pid_t,
+                if forced { libc::SIGKILL } else { libc::SIGTERM },
+            );
+        }
+        let _ = fs::remove_file(&handle.socket);
+        let _ = fs::remove_file(&handle.attach_socket);
+    }
+    let now = now_ms();
+    let mut store = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(task) = store.find_task_for_pane(&pane_id).map_err(storage_error)? {
+        if task.state == TaskState::Running {
+            store
+                .update_task(&task.id, TaskState::Stopped, None, None, Some(now))
+                .map_err(storage_error)?;
+        }
+    }
+    if let Some(mut worker) = store.find_pane_worker(&pane_id).map_err(storage_error)? {
+        worker.state = "closed".into();
+        worker.updated_at_ms = now;
+        store.upsert_pane_worker(&worker).map_err(storage_error)?;
+    }
+    store
+        .update_resource_scope_state(
+            &pane.resource_scope_id,
+            qwe_core::ResourceScopeState::Closed,
+            Some("complete scope stopped"),
+            now,
+        )
+        .map_err(storage_error)?;
+    let any_active = store
+        .list_panes_for_session(&pane.session_id)
+        .map_err(storage_error)?
+        .into_iter()
+        .filter(|candidate| candidate.id != pane_id)
+        .any(|candidate| {
+            store
+                .find_pane_worker(&candidate.id)
+                .ok()
+                .flatten()
+                .is_some_and(|worker| worker.state == "active")
+        });
+    if !any_active {
+        if let Some(mut session) = store
+            .find_session(&pane.session_id)
+            .map_err(storage_error)?
+        {
+            if session.state == "running" {
+                session.state = "exited".into();
+                session.updated_at_ms = now;
+                store.upsert_session(&session).map_err(storage_error)?;
+            }
+        }
+    }
+    result["state"] = json!("closed");
+    result["running"] = json!(false);
+    result["pane_id"] = json!(pane_id);
+    Ok(result)
 }
 
 fn stop_all_sessions(context: &Context) -> Result<(Vec<String>, Vec<Value>), ProtocolErrorBody> {
@@ -1353,43 +1868,55 @@ fn stop_all_sessions(context: &Context) -> Result<(Vec<String>, Vec<Value>), Pro
         if session.state == "closed" {
             continue;
         }
-        let handle = context
-            .workers
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&session.id);
-        let task = context
+        let panes = context
             .store
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .find_task_for_session(&session.id)
+            .list_panes_for_session(&session.id)
             .map_err(storage_error)?;
-        let worker_result = handle.as_ref().and_then(|handle| {
-            handle.client.as_ref().and_then(|client| {
-                client
-                    .call(
-                        "SESSION_KILL",
-                        json!({"session_id": session.id}),
-                        WORKER_MAINTENANCE_TIMEOUT,
-                    )
-                    .ok()
-            })
-        });
-        if worker_result.is_none() {
-            if let Some(task) = &task {
-                if qwe_runtime::process_matches(&task.identity) {
-                    unsafe {
-                        libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
+        let mut pane_results = Vec::new();
+        for pane in &panes {
+            let pane_key = pane.id.to_string();
+            let handle = context
+                .workers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&pane_key);
+            let worker_result = handle.as_ref().and_then(|handle| {
+                handle.client.as_ref().and_then(|client| {
+                    client
+                        .call(
+                            "SESSION_KILL",
+                            json!({"session_id": session.id}),
+                            WORKER_MAINTENANCE_TIMEOUT,
+                        )
+                        .ok()
+                })
+            });
+            if worker_result.is_none() {
+                if let Some(task) = context
+                    .store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .find_task_for_pane(&pane.id)
+                    .map_err(storage_error)?
+                {
+                    if qwe_runtime::process_matches(&task.identity) {
+                        unsafe {
+                            libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
+                        }
                     }
                 }
             }
-        }
-        if let Some(handle) = &handle {
-            unsafe {
-                libc::kill(handle.worker_pid as libc::pid_t, libc::SIGKILL);
+            if let Some(handle) = &handle {
+                cleanup_worker_scope(handle);
+                unsafe {
+                    libc::kill(handle.worker_pid as libc::pid_t, libc::SIGKILL);
+                }
+                let _ = fs::remove_file(&handle.socket);
+                let _ = fs::remove_file(&handle.attach_socket);
             }
-            let _ = fs::remove_file(&handle.socket);
-            let _ = fs::remove_file(&handle.attach_socket);
+            pane_results.push((pane.id.clone(), worker_result));
         }
         let now = now_ms();
         let mut store = context
@@ -1397,25 +1924,42 @@ fn stop_all_sessions(context: &Context) -> Result<(Vec<String>, Vec<Value>), Pro
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let persistence = (|| {
-            if let Some(task) = &task {
-                let exit_code = worker_result
-                    .as_ref()
-                    .and_then(|status| status.get("exit_code"))
-                    .and_then(Value::as_i64)
-                    .map(|value| value as i32);
-                let exit_signal = worker_result
-                    .as_ref()
-                    .and_then(|status| status.get("exit_signal"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .or_else(|| worker_result.is_none().then(|| "SIGKILL".to_string()));
+            for (pane_id, worker_result) in &pane_results {
+                if let Some(task) = store.find_task_for_pane(pane_id).map_err(storage_error)? {
+                    let exit_code = worker_result
+                        .as_ref()
+                        .and_then(|status| status.get("exit_code"))
+                        .and_then(Value::as_i64)
+                        .map(|value| value as i32);
+                    let exit_signal = worker_result
+                        .as_ref()
+                        .and_then(|status| status.get("exit_signal"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .or_else(|| worker_result.is_none().then(|| "SIGKILL".to_string()));
+                    store
+                        .update_task(
+                            &task.id,
+                            TaskState::Stopped,
+                            exit_code,
+                            exit_signal,
+                            Some(now),
+                        )
+                        .map_err(storage_error)?;
+                }
+                if let Some(mut worker) = store.find_pane_worker(pane_id).map_err(storage_error)? {
+                    worker.state = "closed".into();
+                    worker.updated_at_ms = now;
+                    store.upsert_pane_worker(&worker).map_err(storage_error)?;
+                }
+            }
+            for pane in &panes {
                 store
-                    .update_task(
-                        &task.id,
-                        TaskState::Stopped,
-                        exit_code,
-                        exit_signal,
-                        Some(now),
+                    .update_resource_scope_state(
+                        &pane.resource_scope_id,
+                        qwe_core::ResourceScopeState::Closed,
+                        Some("server shutdown stopped complete scope"),
+                        now,
                     )
                     .map_err(storage_error)?;
             }
@@ -1627,36 +2171,64 @@ fn required_u64(payload: &Value, key: &str) -> Result<u64, ProtocolErrorBody> {
         .ok_or_else(|| error("invalid_request", format!("missing {key}")))
 }
 
-fn mark_worker_lost(context: &Context, session_id: &str) -> Result<(), StorageError> {
+fn mark_pane_lost(context: &Context, pane_id: &str) -> Result<(), StorageError> {
+    let pane_id_value =
+        PaneId::from_str(pane_id).map_err(|error| StorageError::Invariant(error.to_string()))?;
     let now = now_ms();
     let mut store = context
         .store
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(mut session) = store.find_session(session_id)? {
-        if !matches!(session.state.as_str(), "lost" | "closed") {
-            session.state = "lost".into();
-            session.updated_at_ms = now;
-            store.upsert_session(&session)?;
+    let Some(pane) = store.find_pane(&pane_id_value)? else {
+        return Ok(());
+    };
+    if let Some(mut worker) = store.find_pane_worker(&pane_id_value)? {
+        worker.state = "lost".into();
+        worker.updated_at_ms = now;
+        store.upsert_pane_worker(&worker)?;
+    }
+    if let Some(task) = store.find_task_for_pane(&pane_id_value)? {
+        if matches!(task.state, TaskState::Running | TaskState::Stopped) {
+            store.update_task(&task.id, TaskState::Lost, None, None, Some(now))?;
         }
     }
-    if let Some(task) = store.find_task_for_session(session_id)? {
-        if matches!(task.state, TaskState::Running) {
-            store.update_task(&task.id, TaskState::Lost, None, None, Some(now))?;
+    let session_panes = store
+        .list_panes_for_session(&pane.session_id)?
+        .into_iter()
+        .map(|candidate| candidate.id)
+        .collect::<HashSet<_>>();
+    let other_active = store.list_pane_workers()?.into_iter().any(|worker| {
+        session_panes.contains(&worker.pane_id)
+            && worker.pane_id != pane_id_value
+            && worker.state == "active"
+    });
+    if !other_active {
+        if let Some(mut session) = store.find_session(&pane.session_id)? {
+            if !matches!(session.state.as_str(), "lost" | "closed") {
+                session.state = "lost".into();
+                session.updated_at_ms = now;
+                store.upsert_session(&session)?;
+            }
+        }
+    } else if let Some(mut session) = store.find_session(&pane.session_id)? {
+        if session.state == "lost" {
+            session.state = "running".into();
+            session.updated_at_ms = now;
+            store.upsert_session(&session)?;
         }
     }
     Ok(())
 }
 
-fn remove_worker_files(context: &Context, session_id: &str) {
-    let _ = fs::remove_file(worker_socket(&context.runtime_dir, session_id));
-    let _ = fs::remove_file(worker_attach_socket(&context.runtime_dir, session_id));
+fn remove_worker_files(context: &Context, pane_id: &str) {
+    let _ = fs::remove_file(worker_socket(&context.runtime_dir, pane_id));
+    let _ = fs::remove_file(worker_attach_socket(&context.runtime_dir, pane_id));
 }
 
-fn quarantine_worker(context: &Context, session_id: &str) {
+fn quarantine_worker(context: &Context, pane_id: &str) {
     for path in [
-        worker_socket(&context.runtime_dir, session_id),
-        worker_attach_socket(&context.runtime_dir, session_id),
+        worker_socket(&context.runtime_dir, pane_id),
+        worker_attach_socket(&context.runtime_dir, pane_id),
     ] {
         quarantine_runtime_path(&path);
     }
@@ -1691,6 +2263,7 @@ fn probe_runtime_worker(context: &Context, socket: &Path) -> Option<Value> {
     let client = WorkerClient::connect(
         socket,
         "runtime-reconciliation",
+        "runtime-reconciliation",
         context.worker_events.clone(),
     )
     .ok()?;
@@ -1702,6 +2275,7 @@ fn probe_runtime_worker(context: &Context, socket: &Path) -> Option<Value> {
 fn runtime_incident_json(incident: &RuntimeIncident) -> Value {
     json!({
         "session_id": incident.session_id,
+        "pane_id": incident.pane_id,
         "disposition": incident.disposition.as_str(),
         "health": incident.health.as_str(),
         "socket": incident.socket
@@ -1709,19 +2283,42 @@ fn runtime_incident_json(incident: &RuntimeIncident) -> Value {
 }
 
 fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::error::Error>> {
-    let sessions = context
-        .store
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .list_sessions()?;
-    let expected_control_sockets: HashSet<PathBuf> = sessions
+    let (sessions, panes, stored_workers) = {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            store.list_sessions()?,
+            store.list_panes()?,
+            store.list_pane_workers()?,
+        )
+    };
+    let sessions_by_id = sessions
         .iter()
-        .map(|session| worker_socket(&context.runtime_dir, &session.id))
-        .collect();
-    let expected_attach_sockets: HashSet<PathBuf> = sessions
-        .iter()
-        .map(|session| worker_attach_socket(&context.runtime_dir, &session.id))
-        .collect();
+        .map(|session| (session.id.clone(), session))
+        .collect::<HashMap<_, _>>();
+    let stored_workers = stored_workers
+        .into_iter()
+        .map(|worker| (worker.pane_id.clone(), worker))
+        .collect::<HashMap<_, _>>();
+
+    let mut expected_control_sockets = HashSet::new();
+    let mut expected_attach_sockets = HashSet::new();
+    for pane in &panes {
+        let pane_key = pane.id.to_string();
+        expected_control_sockets.insert(worker_socket(&context.runtime_dir, &pane_key));
+        expected_attach_sockets.insert(worker_attach_socket(&context.runtime_dir, &pane_key));
+        if let Some(session) = sessions_by_id.get(&pane.session_id) {
+            expected_control_sockets
+                .insert(legacy_worker_socket(&context.runtime_dir, &session.id));
+            expected_attach_sockets.insert(legacy_worker_attach_socket(
+                &context.runtime_dir,
+                &session.id,
+            ));
+        }
+    }
+
     let runtime_entries = fs::read_dir(&context.runtime_dir)
         .map(|entries| {
             entries
@@ -1741,50 +2338,79 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
         .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("sock"))
         .map(|path| (path.clone(), probe_runtime_worker(context, path)))
         .collect();
-    let mut healthy_groups: HashMap<String, Vec<PathBuf>> = HashMap::new();
-    for (path, status) in &control_probes {
-        if let Some(session_id) = status
-            .as_ref()
-            .and_then(|status| status.get("session_id"))
-            .and_then(Value::as_str)
-        {
-            healthy_groups
-                .entry(session_id.to_string())
+
+    let pane_by_session = panes.iter().fold(
+        HashMap::<String, Vec<&PaneRecord>>::new(),
+        |mut grouped, pane| {
+            grouped
+                .entry(pane.session_id.clone())
                 .or_default()
-                .push(path.clone());
+                .push(pane);
+            grouped
+        },
+    );
+    let mut healthy_groups: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    for (runtime_path, status) in &control_probes {
+        let Some(status) = status else {
+            continue;
+        };
+        let pane_id = status
+            .get("pane_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                let session_id = status.get("session_id").and_then(Value::as_str)?;
+                let candidates = pane_by_session.get(session_id)?;
+                (candidates.len() == 1).then(|| candidates[0].id.to_string())
+            });
+        if let Some(pane_id) = pane_id {
+            healthy_groups
+                .entry(pane_id)
+                .or_default()
+                .push(runtime_path.clone());
         }
     }
-    let duplicate_sessions: HashSet<String> = healthy_groups
+    let duplicate_panes = healthy_groups
         .iter()
         .filter(|(_, paths)| paths.len() > 1)
-        .map(|(session_id, _)| session_id.clone())
-        .collect();
+        .map(|(pane_id, _)| pane_id.clone())
+        .collect::<HashSet<_>>();
     let mut report = Reconciliation::default();
-    for (session_id, paths) in &healthy_groups {
+    for (pane_id, paths) in &healthy_groups {
         if paths.len() <= 1 {
             continue;
         }
         report.conflict_sessions += 1;
-        for path in paths {
+        for runtime_path in paths {
             report.incidents.push(RuntimeIncident {
-                session_id: Some(session_id.clone()),
+                session_id: panes
+                    .iter()
+                    .find(|pane| pane.id.to_string() == *pane_id)
+                    .map(|pane| pane.session_id.clone()),
+                pane_id: Some(pane_id.clone()),
                 disposition: ReconciliationDisposition::Conflict,
                 health: WorkerHealth::Healthy,
-                socket: path.clone(),
+                socket: runtime_path.clone(),
             });
-            quarantine_runtime_family(path);
+            quarantine_runtime_family(runtime_path);
         }
     }
-    for session in sessions {
-        if duplicate_sessions.contains(&session.id) {
+
+    for pane in panes {
+        let pane_key = pane.id.to_string();
+        if duplicate_panes.contains(&pane_key) {
             continue;
         }
+        let Some(session) = sessions_by_id.get(&pane.session_id) else {
+            continue;
+        };
         if session.state == "closed" {
-            let socket = worker_socket(&context.runtime_dir, &session.id);
+            let socket = worker_socket(&context.runtime_dir, &pane_key);
             if socket.exists() {
                 report.conflict_sessions += 1;
                 report.incidents.push(RuntimeIncident {
                     session_id: Some(session.id.clone()),
+                    pane_id: Some(pane_key.clone()),
                     disposition: ReconciliationDisposition::Conflict,
                     health: if control_probes.get(&socket).is_some_and(Option::is_some) {
                         WorkerHealth::Healthy
@@ -1793,153 +2419,153 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
                     },
                     socket: socket.clone(),
                 });
-                quarantine_worker(context, &session.id);
+                quarantine_worker(context, &pane_key);
             }
             continue;
         }
-        let socket = worker_socket(&context.runtime_dir, &session.id);
-        if !socket.exists() {
-            let alternate = control_probes.iter().find_map(|(path, status)| {
-                (path != &socket
-                    && path.exists()
-                    && status
-                        .as_ref()
-                        .and_then(|status| status.get("session_id"))
-                        .and_then(Value::as_str)
-                        == Some(session.id.as_str()))
-                .then_some(path)
-            });
-            if let Some(path) = alternate {
-                quarantine_runtime_family(path);
-                mark_worker_lost(context, &session.id)?;
-                report.conflict_sessions += 1;
-                report.incidents.push(RuntimeIncident {
-                    session_id: Some(session.id.clone()),
-                    disposition: ReconciliationDisposition::Conflict,
-                    health: WorkerHealth::Healthy,
-                    socket: path.clone(),
-                });
-                continue;
-            }
-            if session
-                .worker_identity
-                .as_ref()
-                .is_some_and(qwe_runtime::process_matches)
-            {
-                remember_unreachable(context, &session);
+        let socket = worker_socket(&context.runtime_dir, &pane_key);
+        let runtime_path = healthy_groups
+            .get(&pane_key)
+            .and_then(|paths| paths.first())
+            .cloned()
+            .or_else(|| socket.exists().then_some(socket.clone()));
+        let Some(runtime_path) = runtime_path else {
+            if let Some(worker) = stored_workers.get(&pane.id) {
+                if qwe_runtime::process_matches(&worker.identity) {
+                    remember_unreachable(context, &session.id, &pane_key, worker.identity.clone());
+                } else {
+                    mark_pane_lost(context, &pane_key)?;
+                }
             } else {
-                mark_worker_lost(context, &session.id)?;
+                mark_pane_lost(context, &pane_key)?;
             }
             continue;
-        }
-        match connect_existing_worker(context, &session.id, socket.clone()) {
+        };
+        match connect_existing_worker(context, &session.id, &pane_key, runtime_path.clone()) {
             Ok((client, status)) => {
-                let health_client = match connect_health_client(context, &session.id, &socket) {
-                    Ok(client) => client,
-                    Err(failure) => {
-                        eprintln!(
-                            "worker health channel unavailable for {}: {}",
-                            session.id, failure
-                        );
-                        remember_unreachable(context, &session);
-                        continue;
-                    }
-                };
+                let health_client =
+                    match connect_health_client(context, &session.id, &pane_key, &runtime_path) {
+                        Ok(client) => client,
+                        Err(failure) => {
+                            eprintln!(
+                                "worker health channel unavailable for Pane {}: {}",
+                                pane_key, failure
+                            );
+                            if let Some(worker) = stored_workers.get(&pane.id) {
+                                remember_unreachable(
+                                    context,
+                                    &session.id,
+                                    &pane_key,
+                                    worker.identity.clone(),
+                                );
+                            }
+                            continue;
+                        }
+                    };
                 match worker_handle(
                     &session.id,
-                    socket.clone(),
+                    &pane_key,
+                    runtime_path.clone(),
                     &status,
                     Some(client.clone()),
                     Some(health_client),
                     WorkerHealth::Healthy,
                 ) {
                     Ok(handle) => {
-                        if session
-                            .worker_identity
-                            .as_ref()
-                            .is_some_and(|identity| identity != &handle.worker_identity)
+                        if stored_workers
+                            .get(&pane.id)
+                            .is_some_and(|worker| worker.identity != handle.worker_identity)
                         {
-                            quarantine_worker(context, &session.id);
-                            mark_worker_lost(context, &session.id)?;
+                            quarantine_worker(context, &pane_key);
+                            mark_pane_lost(context, &pane_key)?;
                             report.conflict_sessions += 1;
                             report.incidents.push(RuntimeIncident {
                                 session_id: Some(session.id.clone()),
+                                pane_id: Some(pane_key.clone()),
                                 disposition: ReconciliationDisposition::Conflict,
                                 health: WorkerHealth::Healthy,
-                                socket: socket.clone(),
+                                socket: runtime_path.clone(),
                             });
                             continue;
                         }
-                        apply_status(context, &session.id, &status)
+                        apply_pane_status(context, &pane.id, &status)
                             .map_err(|failure| format!("{}: {}", failure.code, failure.message))?;
                         context
                             .workers
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner())
-                            .insert(session.id.clone(), Arc::new(handle));
+                            .insert(pane_key, Arc::new(handle));
                     }
                     Err(failure) => {
-                        quarantine_worker(context, &session.id);
-                        mark_worker_lost(context, &session.id)?;
+                        quarantine_worker(context, &pane_key);
+                        mark_pane_lost(context, &pane_key)?;
                         report.conflict_sessions += 1;
                         report.incidents.push(RuntimeIncident {
                             session_id: Some(session.id.clone()),
+                            pane_id: Some(pane_key.clone()),
                             disposition: ReconciliationDisposition::Conflict,
                             health: WorkerHealth::Healthy,
-                            socket: socket.clone(),
+                            socket: runtime_path.clone(),
                         });
                         eprintln!(
-                            "worker identity conflict for {}: {}",
-                            session.id, failure.message
+                            "worker identity conflict for Pane {}: {}",
+                            pane_key, failure.message
                         );
                     }
                 }
             }
             Err(_) => {
-                if session
-                    .worker_identity
-                    .as_ref()
-                    .is_some_and(qwe_runtime::process_matches)
-                {
-                    remember_unreachable(context, &session);
+                if let Some(worker) = stored_workers.get(&pane.id) {
+                    if qwe_runtime::process_matches(&worker.identity) {
+                        remember_unreachable(
+                            context,
+                            &session.id,
+                            &pane_key,
+                            worker.identity.clone(),
+                        );
+                    } else {
+                        mark_pane_lost(context, &pane_key)?;
+                    }
                 } else {
-                    mark_worker_lost(context, &session.id)?;
+                    mark_pane_lost(context, &pane_key)?;
                 }
             }
         }
     }
+
     let mut orphan_ids = HashSet::new();
-    for path in runtime_entries {
-        if !path.exists()
-            || expected_control_sockets.contains(&path)
-            || expected_attach_sockets.contains(&path)
+    for runtime_path in runtime_entries {
+        if !runtime_path.exists()
+            || expected_control_sockets.contains(&runtime_path)
+            || expected_attach_sockets.contains(&runtime_path)
         {
             continue;
         }
-        let probe = control_probes.get(&path).and_then(Option::as_ref);
+        let probe = control_probes.get(&runtime_path).and_then(Option::as_ref);
         let session_id = probe
             .and_then(|status| status.get("session_id"))
             .and_then(Value::as_str)
-            .map(str::to_string)
-            .or_else(|| {
-                path.file_stem()
-                    .and_then(|value| value.to_str())
-                    .and_then(hex_decode)
-            });
+            .map(str::to_string);
+        let pane_id = probe
+            .and_then(|status| status.get("pane_id"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
         let health = if probe.is_some() {
             WorkerHealth::Healthy
         } else {
             WorkerHealth::Unreachable
         };
-        let identity = session_id
+        let identity = pane_id
             .clone()
-            .unwrap_or_else(|| path.display().to_string());
+            .or_else(|| session_id.clone())
+            .unwrap_or_else(|| runtime_path.display().to_string());
         orphan_ids.insert(identity);
         report.incidents.push(RuntimeIncident {
             session_id,
+            pane_id,
             disposition: ReconciliationDisposition::Orphaned,
             health,
-            socket: path,
+            socket: runtime_path,
         });
     }
     report.orphaned_sessions = orphan_ids.len();
@@ -1948,17 +2574,28 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
 
 fn reconnect_worker_handle(
     context: &Context,
-    session_id: &str,
     previous: &WorkerHandle,
 ) -> Option<Arc<WorkerHandle>> {
     if !qwe_runtime::process_matches(&previous.worker_identity) || !previous.socket.exists() {
         return None;
     }
-    let (client, status) =
-        connect_existing_worker(context, session_id, previous.socket.clone()).ok()?;
-    let health_client = connect_health_client(context, session_id, &previous.socket).ok()?;
+    let (client, status) = connect_existing_worker(
+        context,
+        &previous.session_id,
+        &previous.pane_id,
+        previous.socket.clone(),
+    )
+    .ok()?;
+    let health_client = connect_health_client(
+        context,
+        &previous.session_id,
+        &previous.pane_id,
+        &previous.socket,
+    )
+    .ok()?;
     let handle = worker_handle(
-        session_id,
+        &previous.session_id,
+        &previous.pane_id,
         previous.socket.clone(),
         &status,
         Some(client),
@@ -1980,15 +2617,15 @@ fn safety_scan(context: &Context) {
         .iter()
         .map(|(id, handle)| (id.clone(), Arc::clone(handle)))
         .collect();
-    for (session_id, handle) in handles {
+    for (pane_id, handle) in handles {
         if !qwe_runtime::process_matches(&handle.worker_identity) {
-            let _ = mark_worker_lost(context, &session_id);
+            let _ = mark_pane_lost(context, &pane_id);
             context
                 .workers
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .remove(&session_id);
-            remove_worker_files(context, &session_id);
+                .remove(&pane_id);
+            remove_worker_files(context, &pane_id);
             continue;
         }
         let health_result = handle.health_client.as_ref().map_or_else(
@@ -2002,30 +2639,30 @@ fn safety_scan(context: &Context) {
                     .as_ref()
                     .is_none_or(|client| client.is_closed());
                 if main_closed {
-                    if let Some(reconnected) =
-                        reconnect_worker_handle(context, &session_id, &handle)
-                    {
+                    if let Some(reconnected) = reconnect_worker_handle(context, &handle) {
                         context
                             .workers
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner())
-                            .insert(session_id.clone(), reconnected);
+                            .insert(pane_id.clone(), reconnected);
                     } else {
                         set_worker_health(&handle, WorkerHealth::Unreachable);
                     }
                 } else {
                     set_worker_health(&handle, WorkerHealth::Healthy);
                 }
-                let _ = apply_status(context, &session_id, &status);
+                if let Ok(pane_id) = PaneId::from_str(&pane_id) {
+                    let _ = apply_pane_status(context, &pane_id, &status);
+                }
             }
             Err(_) => {
                 set_worker_health(&handle, WorkerHealth::Unreachable);
-                if let Some(reconnected) = reconnect_worker_handle(context, &session_id, &handle) {
+                if let Some(reconnected) = reconnect_worker_handle(context, &handle) {
                     context
                         .workers
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .insert(session_id.clone(), reconnected);
+                        .insert(pane_id.clone(), reconnected);
                 }
             }
         }
@@ -2041,12 +2678,15 @@ fn control_status(context: &Context) -> Result<Value, ProtocolErrorBody> {
     let sessions = store.list_sessions().map_err(storage_error)?;
     let panes = store.list_panes().map_err(storage_error)?;
     let tasks = store.list_tasks().map_err(storage_error)?;
+    let pane_workers = store.list_pane_workers().map_err(storage_error)?;
+    let resource_scopes = store.list_resource_scopes().map_err(storage_error)?;
+    let root_principal = store.local_root_principal().map_err(storage_error)?;
     let workers = context
         .workers
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .iter()
-        .map(|(id, handle)| worker_json(id, handle))
+        .values()
+        .map(|handle| worker_json(handle))
         .collect::<Vec<_>>();
     let healthy_workers = workers
         .iter()
@@ -2079,7 +2719,7 @@ fn control_status(context: &Context) -> Result<Value, ProtocolErrorBody> {
     Ok(json!({
         "daemon": "ok",
         "protocol": PROTOCOL_VERSION,
-        "capabilities": capability_matrix(context.linux_scope_available),
+        "capabilities": capability_matrix(context.resource_support),
         "credentials": {
             "configured": context.credentials.backend().as_str() != "none",
             "backend": context.credentials.backend().as_str(),
@@ -2104,6 +2744,9 @@ fn control_status(context: &Context) -> Result<Value, ProtocolErrorBody> {
             "last_scan_ms": context.last_scan_ms.load(AtomicOrdering::SeqCst)
         },
         "workers": workers,
+        "pane_workers": pane_workers,
+        "resource_scopes": resource_scopes,
+        "principals": [root_principal],
         "panes": panes,
         "sessions": sessions,
         "tasks": tasks
@@ -2138,6 +2781,7 @@ fn client_operation(
         "PING" => Ok(json!({"daemon": "ok", "protocol": PROTOCOL_VERSION})),
         "CONTROL_STATUS" => control_status(context),
         "SESSION_CREATE" => create_session(context, request.payload.clone()),
+        "PANE_CREATE" => create_pane(context, request.payload.clone()),
         "TASK_STATUS" => task_status(context, &request.payload),
         "SESSION_RESOURCE_UPDATE" => update_session_resources(context, &request.payload),
         "TASK_STOP" => task_stop(context, &request.payload),
@@ -2161,6 +2805,8 @@ fn client_operation(
         }
         "SESSION_CLOSE" => close_session(context, &request.payload),
         "SESSION_KILL" => kill_session(context, &request.payload),
+        "PANE_CLOSE" => teardown_pane(context, &request.payload, "SESSION_CLOSE", false),
+        "PANE_KILL" => teardown_pane(context, &request.payload, "SESSION_KILL", true),
         "SERVER_KILL" => kill_server(context, &request.payload),
         "SESSION_INPUT" => {
             let session_id = required_string(&request.payload, "session_id")?;
@@ -2203,9 +2849,35 @@ fn client_operation(
                 WORKER_REQUEST_TIMEOUT,
             )
         }
+        "PANE_STATUS" | "PANE_ATTACH" => {
+            let pane_id = required_pane_id(&request.payload)?;
+            let pane_key = pane_id.to_string();
+            let pane = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .find_pane(&pane_id)
+                .map_err(storage_error)?
+                .ok_or_else(|| error("not_found", "Pane not found"))?;
+            let operation = if request.operation == "PANE_STATUS" {
+                "SESSION_STATUS"
+            } else {
+                "SESSION_ATTACH"
+            };
+            let mut status = call_pane_worker(
+                context,
+                &pane_key,
+                operation,
+                json!({"session_id": pane.session_id}),
+                WORKER_REQUEST_TIMEOUT,
+            )?;
+            apply_pane_status(context, &pane_id, &status)?;
+            annotate_resource_status(&mut status, &pane.resource_policy);
+            Ok(status)
+        }
         "SESSION_STATUS" | "SESSION_ATTACH" => {
             let session_id = required_string(&request.payload, "session_id")?;
-            let status = match call_worker(
+            let mut status = match call_worker(
                 context,
                 session_id,
                 &request.operation,
@@ -2230,6 +2902,15 @@ fn client_operation(
                 Err(failure) => return Err(failure),
             };
             apply_status(context, session_id, &status)?;
+            let pane = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .find_pane_for_session(session_id)
+                .map_err(storage_error)?;
+            if let Some(pane) = pane {
+                annotate_resource_status(&mut status, &pane.resource_policy);
+            }
             Ok(status)
         }
         _ => Err(error("unsupported_operation", request.operation.clone())),
@@ -2240,12 +2921,15 @@ fn requires_idempotency(operation: &str) -> bool {
     matches!(
         operation,
         "SESSION_CREATE"
+            | "PANE_CREATE"
             | "SESSION_DETACH"
             | "SESSION_INPUT"
             | "SESSION_RESOURCE_UPDATE"
             | "SESSION_RESIZE"
             | "SESSION_CLOSE"
             | "SESSION_KILL"
+            | "PANE_CLOSE"
+            | "PANE_KILL"
             | "SERVER_KILL"
             | "TASK_STOP"
             | "TASK_KILL_BATCH"
@@ -2337,7 +3021,7 @@ fn recover_pending_create(
     })?;
     response["task_id"] = json!(task.id);
     response["pane_id"] = json!(pane.id);
-    response["resource_policy"] = json!(pane.resource_policy);
+    annotate_resource_status(&mut response, &pane.resource_policy);
     response["running"] = json!(session.state == "running");
     response["state"] = json!(session.state);
     response["exit_code"] = json!(task.exit_code);
@@ -2353,18 +3037,18 @@ fn execute_request(
     context: &Context,
     request: &RequestEnvelope,
 ) -> Result<Value, ProtocolErrorBody> {
+    if !requires_idempotency(&request.operation) {
+        return client_operation(context, request);
+    }
     let Some(key) = request
         .idempotency_key
         .as_deref()
         .filter(|key| !key.is_empty())
     else {
-        if requires_idempotency(&request.operation) {
-            return Err(error(
-                "invalid_request",
-                "mutating operations require an idempotency_key",
-            ));
-        }
-        return client_operation(context, request);
+        return Err(error(
+            "invalid_request",
+            "mutating operations require an idempotency_key",
+        ));
     };
     if key.len() > 256 {
         return Err(error(
@@ -2687,6 +3371,10 @@ fn serve_attachment(
             );
             return Ok(());
         }
+        let pane = store
+            .find_pane_for_session(&open.session_id)
+            .map_err(|failure| std::io::Error::other(failure.to_string()))?
+            .ok_or_else(|| std::io::Error::other("session has no Pane"))?;
         let mut authority = store
             .get_attachment_authority(&open.session_id)
             .map_err(|failure| std::io::Error::other(failure.to_string()))?
@@ -2726,7 +3414,7 @@ fn serve_attachment(
             .workers
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&open.session_id)
+            .get(&pane.id.to_string())
             .cloned();
         let Some(handle) = handle else {
             drop(store);
@@ -3040,6 +3728,28 @@ fn install_shutdown_handler() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn prepare_user_manager_environment() {
+    #[cfg(target_os = "linux")]
+    {
+        let runtime_dir = PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }));
+        if std::env::var_os("XDG_RUNTIME_DIR").is_none() && runtime_dir.is_dir() {
+            unsafe {
+                std::env::set_var("XDG_RUNTIME_DIR", &runtime_dir);
+            }
+        }
+        if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none()
+            && runtime_dir.join("bus").exists()
+        {
+            unsafe {
+                std::env::set_var(
+                    "DBUS_SESSION_BUS_ADDRESS",
+                    format!("unix:path={}", runtime_dir.join("bus").display()),
+                );
+            }
+        }
+    }
+}
+
 fn install_sigchld_monitor(
     event_sender: Sender<SupervisorEvent>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -3108,33 +3818,34 @@ fn start_monitor_threads(
     thread::spawn(move || {
         for event in events {
             match event {
-                SupervisorEvent::Worker(WorkerEvent::ControlClosed { session_id }) => {
+                SupervisorEvent::Worker(WorkerEvent::ControlClosed { pane_id }) => {
                     let handle = monitor_context
                         .workers
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .get(&session_id)
+                        .get(&pane_id)
                         .cloned();
                     if let Some(handle) = handle {
                         set_worker_health(&handle, WorkerHealth::Unreachable);
                     }
                 }
                 SupervisorEvent::ChildExited { pid } => {
-                    let session_id = monitor_context
+                    let worker = monitor_context
                         .workers
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .iter()
                         .find(|(_, handle)| handle.worker_pid == pid)
-                        .map(|(session_id, _)| session_id.clone());
-                    if let Some(session_id) = session_id {
-                        let _ = mark_worker_lost(&monitor_context, &session_id);
+                        .map(|(pane_id, handle)| (pane_id.clone(), Arc::clone(handle)));
+                    if let Some((pane_id, handle)) = worker {
+                        let _ = mark_pane_lost(&monitor_context, &pane_id);
+                        cleanup_worker_scope(&handle);
                         monitor_context
                             .workers
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner())
-                            .remove(&session_id);
-                        remove_worker_files(&monitor_context, &session_id);
+                            .remove(&pane_id);
+                        remove_worker_files(&monitor_context, &pane_id);
                     }
                 }
             }
@@ -3163,7 +3874,8 @@ fn start_monitor_threads(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     install_shutdown_handler()?;
-    let linux_scope_available = qwe_runtime::systemd_scope_available();
+    prepare_user_manager_environment();
+    let resource_support = qwe_runtime::detect_resource_support();
     let runtime_dir = PathBuf::from(format!("{}.runtime", args.socket));
     let runtime_lock = acquire_runtime_lock(&runtime_dir)?;
     mark_subreaper();
@@ -3194,7 +3906,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let context = Arc::new(Context {
         runtime_dir,
-        linux_scope_available,
+        resource_support,
         store: Mutex::new(store),
         workers: Mutex::new(HashMap::new()),
         reconciliation_incidents: Mutex::new(ReconciliationIncidents::default()),

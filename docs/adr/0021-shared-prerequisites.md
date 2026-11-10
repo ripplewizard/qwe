@@ -3,8 +3,9 @@
 Status: Accepted
 Date: 2026-11-09
 Decision gate: Stage 6.5 accepted on 2026-11-09.
-Implementation state: Design accepted; production multi-Pane inventory,
-Attach routing, observer channels, and schema v11 are not implemented.
+Implementation state: Schema v11, Pane-keyed inventory/recovery, multi-Pane
+control routing, and complete Pane scope teardown are implemented. The
+qwed-owned observer projection remains open.
 
 ## Context
 

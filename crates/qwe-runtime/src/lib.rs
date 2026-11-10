@@ -6,8 +6,10 @@ mod process;
 mod terminal;
 
 pub use cgroup::{
-    apply_resource_policy, current_cgroup_path, read_cpu_usage_microseconds,
-    read_enforcement_event, read_resource_usage, systemd_scope_available,
+    CgroupStats, Pressure, ResourceSupport, apply_resource_policy, current_cgroup_path,
+    detect_resource_support, pane_scope_unit, read_cgroup_stats, read_cpu_usage_microseconds,
+    read_effective_resource_policy, read_enforcement_event, read_resource_usage, stop_pane_scope,
+    stop_systemd_scope, systemd_scope_available,
 };
 pub use process::{process_identity, process_matches};
 pub use terminal::{

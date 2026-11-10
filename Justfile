@@ -919,18 +919,166 @@ stage4-check:
     just --justfile "{{ justfile() }}" cross-uid-smoke
     just --justfile "{{ justfile() }}" stage3-idempotency
 
+stage7-resource-profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker --bins
+    run_root="$(mktemp -d "/tmp/qwe-stage7.XXXXXX")"
+    cleanup_stage7() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_stage7 EXIT
+    python3 "{{ fixtures }}/stage7_resource_probe.py" \
+      --qwed target/debug/qwed \
+      --qwe target/debug/qwe \
+      --socket "$run_root/client.sock"
+
+stage7-multi-pane:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker --bins
+    run_root="$(mktemp -d "/tmp/qwe-stage7-multi.XXXXXX")"
+    cleanup_stage7_multi() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/p" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_stage7_multi EXIT
+    python3 "{{ fixtures }}/stage7_multi_pane_probe.py" \
+      --qwed target/debug/qwed \
+      --socket "$run_root/client.sock"
+
+stage7-pressure:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker --bins
+    run_root="$(mktemp -d "/tmp/qwe-stage7-pressure.XXXXXX")"
+    cleanup_stage7_pressure() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/p" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_stage7_pressure EXIT
+    python3 "{{ fixtures }}/stage7_pressure_probe.py" \
+      --qwed target/debug/qwed \
+      --socket "$run_root/client.sock"
+
+qwed-restart-volume:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwe-worker -p qwed --bins
+    run_root="$(mktemp -d "/tmp/qwe-restart-volume.XXXXXX")"
+    cleanup_restart_volume() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/p" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_restart_volume EXIT
+    python3 "{{ fixtures }}/qwed_restart_volume_probe.py" \
+      --qwed target/debug/qwed \
+      --socket "$run_root/client.sock"
+
+stage7-soak-short:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker --bins
+    run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+    run_root="$(pwd)/target/stage7-soak/short-$run_id"
+    mkdir -p "$run_root"
+    python3 "{{ fixtures }}/stage7_soak_probe.py" \
+      --qwed target/debug/qwed \
+      --sessions 8 \
+      --panes-per-session 2 \
+      --duration-seconds 20 \
+      --restart-interval-seconds 5 \
+      --run-root "$run_root" \
+      --progress-interval 5 \
+      --output "$run_root/result.json"
+
+stage7-soak hours="5" sessions="16" panes="2" restart_minutes="30" run_id="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "{{hours}}" -le 5 ] || {
+      printf 'stage7-soak qualification duration must not exceed 5 hours\n' >&2
+      exit 2
+    }
+    cargo build --release -p qwe -p qwed -p qwe-worker --bins
+    run_id="{{run_id}}"
+    [ -n "$run_id" ] || run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+    run_root="$(pwd)/target/stage7-soak/qualification-$run_id"
+    mkdir -p "$run_root"
+    duration_seconds="$(({{hours}} * 3600))"
+    restart_seconds="$(({{restart_minutes}} * 60))"
+    python3 "{{ fixtures }}/stage7_soak_probe.py" \
+      --qwed target/release/qwed \
+      --sessions {{sessions}} \
+      --panes-per-session {{panes}} \
+      --duration-seconds "$duration_seconds" \
+      --restart-interval-seconds "$restart_seconds" \
+      --run-root "$run_root" \
+      --started-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --progress-interval 60 \
+      --output "$run_root/result.json"
+
+stage7-soak-start hours="5" sessions="16" panes="2" restart_minutes="30":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "{{hours}}" -le 5 ] || {
+      printf 'stage7-soak qualification duration must not exceed 5 hours\n' >&2
+      exit 2
+    }
+    run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+    run_root="{{ justfile_directory() }}/target/stage7-soak/qualification-$run_id"
+    unit="qwe-stage7-soak-$run_id"
+    just_bin="$(command -v just)"
+    mkdir -p "$run_root"
+    systemd-run --user \
+      --unit "$unit" \
+      --collect \
+      --working-directory "{{ justfile_directory() }}" \
+      "--setenv=PATH=$PATH" \
+      "--property=StandardOutput=append:$run_root/console.log" \
+      "--property=StandardError=append:$run_root/console.log" \
+      "$just_bin" \
+      --justfile "{{ justfile() }}" \
+      stage7-soak "{{hours}}" "{{sessions}}" "{{panes}}" "{{restart_minutes}}" "$run_id"
+    printf '{"unit":"%s","run_root":"%s"}\n' "$unit" "$run_root"
+
+stage7-qualification-node soak_seconds="60":
+    python3 "{{ justfile_directory() }}/tests/fixtures/stage7_node_gate.py" \
+      --soak-seconds {{soak_seconds}}
+
+stage7-qualification-matrix soak_seconds="60":
+    python3 "{{ justfile_directory() }}/scripts/stage7_matrix.py" \
+      --repo "{{ justfile_directory() }}" \
+      --soak-seconds {{soak_seconds}} \
+      --output "{{ justfile_directory() }}/target/stage7-qualification/matrix.json"
+
+stage7-check:
+    just --justfile "{{ justfile() }}" check-qwe
+    just --justfile "{{ justfile() }}" stage4-capabilities
+    just --justfile "{{ justfile() }}" stage7-resource-profile
+    just --justfile "{{ justfile() }}" stage7-multi-pane
+    just --justfile "{{ justfile() }}" stage7-pressure
+    just --justfile "{{ justfile() }}" qwed-restart-volume
+    just --justfile "{{ justfile() }}" stage7-soak-short
+    just --justfile "{{ justfile() }}" resilience-smoke
+
 state-matrix:
     cargo test -p qwe-core authority::tests
     cargo test -p qwe-core tests::session_state_machine_rejects_resurrection
     cargo test -p qwe-core tests::task_instance_has_one_initial_transition_path
     cargo test -p qwe-storage tests::created_session_and_task_commit_atomically
-    cargo test -p qwe-storage tests::created_session_has_one_pane_and_one_task_instance
+    cargo test -p qwe-storage tests::created_session_uses_pane_keyed_tasks_and_resource_scopes
     cargo test -p qwe-storage tests::history_pruning_preserves_sessions_with_attachment_authority
     cargo test -p qwe-storage tests::history_pruning_requires_both_age_and_terminal_capacity_pressure
     cargo test -p qwe-storage tests::idempotency_records_replay_until_the_retention_deadline
     cargo test -p qwe-storage tests::lease_claim_touch_release_and_takeover
     cargo test -p qwe-storage tests::lease_renewal_does_not_shorten_deadlines_when_the_wall_clock_moves_back
     cargo test -p qwe-storage tests::migrates_version_one_database
+    cargo test -p qwe-storage tests::migrates_populated_v10_database_to_v11_with_backup
     cargo test -p qwe-storage tests::persisted_active_attachment_enters_reclaim_grace
     just --justfile "{{ justfile() }}" stage3-idempotency
     just --justfile "{{ justfile() }}" stage3-attach-authority

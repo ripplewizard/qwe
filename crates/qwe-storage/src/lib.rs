@@ -1,17 +1,117 @@
 use qwe_core::{
     AttachmentAuthority, AttachmentAuthorityState, LeaseRecord, PaneId, PaneRecord,
-    ProcessIdentity, ResourcePolicy, SessionRecord, TaskId, TaskRecord, TaskState,
+    PaneWorkerRecord, PrincipalId, PrincipalRecord, ProcessIdentity, ResourceBackend,
+    ResourcePolicy, ResourceScopeId, ResourceScopeRecord, ResourceScopeState,
+    ResourceScopeTargetKind, SessionRecord, TaskId, TaskRecord, TaskState,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
+use serde_json::json;
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 pub const IDEMPOTENCY_RETENTION_MS: i64 = 24 * 60 * 60 * 1_000;
 pub const HISTORY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 pub const HISTORY_MAX_TERMINAL_SESSIONS: i64 = 10_000;
 pub const IDEMPOTENCY_PENDING: &str = "pending";
 pub const IDEMPOTENCY_COMPLETE: &str = "complete";
+
+const V11_SCHEMA_SQL: &str = "
+    CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        state TEXT NOT NULL,
+        pid INTEGER,
+        pgid INTEGER,
+        start_token TEXT,
+        updated_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE panes (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL
+            REFERENCES sessions(id) ON DELETE RESTRICT,
+        updated_at_ms INTEGER NOT NULL
+    );
+    CREATE INDEX panes_by_session ON panes(session_id);
+    CREATE TABLE pane_workers (
+        pane_id TEXT PRIMARY KEY
+            REFERENCES panes(id) ON DELETE RESTRICT,
+        pid INTEGER NOT NULL,
+        pgid INTEGER NOT NULL,
+        start_token TEXT NOT NULL,
+        state TEXT NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        pane_id TEXT NOT NULL
+            REFERENCES panes(id) ON DELETE RESTRICT,
+        pid INTEGER NOT NULL,
+        pgid INTEGER NOT NULL,
+        start_token TEXT NOT NULL,
+        state TEXT NOT NULL,
+        exit_code INTEGER,
+        exit_signal TEXT,
+        started_at_ms INTEGER NOT NULL,
+        ended_at_ms INTEGER
+    );
+    CREATE INDEX tasks_by_pane ON tasks(pane_id);
+    CREATE TABLE resource_scopes (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL
+            REFERENCES sessions(id) ON DELETE RESTRICT,
+        target_kind TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        parent_scope_id TEXT
+            REFERENCES resource_scopes(id) ON DELETE RESTRICT,
+        backend TEXT NOT NULL,
+        requested_policy_json TEXT NOT NULL,
+        lifecycle_state TEXT NOT NULL,
+        cleanup_outcome TEXT,
+        updated_at_ms INTEGER NOT NULL,
+        UNIQUE(session_id, target_kind, target_id)
+    );
+    CREATE INDEX resource_scopes_by_session
+        ON resource_scopes(session_id, target_kind, target_id);
+    CREATE TABLE principals (
+        id TEXT PRIMARY KEY,
+        parent_id TEXT
+            REFERENCES principals(id) ON DELETE RESTRICT,
+        epoch INTEGER NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        revoked_at_ms INTEGER
+    );
+    CREATE TABLE leases (
+        session_id TEXT PRIMARY KEY
+            REFERENCES sessions(id) ON DELETE RESTRICT,
+        owner TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        deadline_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        released_at_ms INTEGER
+    );
+    CREATE TABLE attachment_authorities (
+        pane_id TEXT PRIMARY KEY
+            REFERENCES panes(id) ON DELETE RESTRICT,
+        state TEXT NOT NULL,
+        owner TEXT,
+        generation INTEGER NOT NULL,
+        reclaim_token_hash TEXT,
+        deadline_ms INTEGER,
+        updated_at_ms INTEGER NOT NULL
+    );
+    CREATE TABLE idempotency_records (
+        idempotency_key TEXT PRIMARY KEY,
+        operation TEXT NOT NULL,
+        request_fingerprint TEXT NOT NULL,
+        state TEXT NOT NULL,
+        response_json TEXT,
+        created_at_ms INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL
+    );
+    CREATE INDEX idempotency_expiry
+        ON idempotency_records(expires_at_ms);
+";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdempotencyRecord {
@@ -29,6 +129,8 @@ pub struct HistoryPruneReport {
     pub sessions: u64,
     pub tasks: u64,
     pub panes: u64,
+    pub pane_workers: u64,
+    pub resource_scopes: u64,
     pub leases: u64,
     pub attachment_authorities: u64,
 }
@@ -67,6 +169,10 @@ impl Store {
     pub fn open(path: &str) -> Result<Self, StorageError> {
         let connection = Connection::open(path)?;
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version > 0 && version < SCHEMA_VERSION {
+            backup_before_migration(&connection, path, version)?;
+        }
         let mut store = Self { connection };
         store.migrate()?;
         Ok(store)
@@ -89,79 +195,13 @@ impl Store {
         }
         if current == 0 {
             let transaction = self.connection.transaction()?;
-            transaction.execute_batch(
-                "
-                CREATE TABLE sessions (
-                    id TEXT PRIMARY KEY,
-                    owner TEXT NOT NULL,
-                    state TEXT NOT NULL,
-                    pid INTEGER,
-                    pgid INTEGER,
-                    start_token TEXT,
-                    worker_pid INTEGER,
-                    worker_pgid INTEGER,
-                    worker_start_token TEXT,
-                    updated_at_ms INTEGER NOT NULL
-                );
-                CREATE TABLE tasks (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL
-                        REFERENCES sessions(id) ON DELETE RESTRICT,
-                    pid INTEGER NOT NULL,
-                    pgid INTEGER NOT NULL,
-                    start_token TEXT NOT NULL,
-                    state TEXT NOT NULL,
-                    exit_code INTEGER,
-                    exit_signal TEXT,
-                    started_at_ms INTEGER NOT NULL,
-                    ended_at_ms INTEGER
-                );
-                CREATE UNIQUE INDEX tasks_by_session ON tasks(session_id);
-                CREATE TABLE panes (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL UNIQUE
-                        REFERENCES sessions(id) ON DELETE RESTRICT,
-                    cpu_seconds INTEGER,
-                    memory_high_bytes INTEGER,
-                    memory_bytes INTEGER,
-                    memory_swap_max_bytes INTEGER,
-                    process_limit INTEGER,
-                    cpu_quota_percent INTEGER,
-                    updated_at_ms INTEGER NOT NULL
-                );
-                CREATE TABLE leases (
-                    session_id TEXT PRIMARY KEY
-                        REFERENCES sessions(id) ON DELETE RESTRICT,
-                    owner TEXT NOT NULL,
-                    generation INTEGER NOT NULL,
-                    deadline_ms INTEGER NOT NULL,
-                    updated_at_ms INTEGER NOT NULL,
-                    released_at_ms INTEGER
-                );
-                CREATE TABLE attachment_authorities (
-                    session_id TEXT PRIMARY KEY
-                        REFERENCES sessions(id) ON DELETE RESTRICT,
-                    state TEXT NOT NULL,
-                    owner TEXT,
-                    generation INTEGER NOT NULL,
-                    reclaim_token_hash TEXT,
-                    deadline_ms INTEGER,
-                    updated_at_ms INTEGER NOT NULL
-                );
-                CREATE TABLE idempotency_records (
-                    idempotency_key TEXT PRIMARY KEY,
-                    operation TEXT NOT NULL,
-                    request_fingerprint TEXT NOT NULL,
-                    state TEXT NOT NULL,
-                    response_json TEXT,
-                    created_at_ms INTEGER NOT NULL,
-                    expires_at_ms INTEGER NOT NULL
-                );
-                CREATE INDEX idempotency_expiry
-                    ON idempotency_records(expires_at_ms);
-                PRAGMA user_version = 10;
-                ",
+            transaction.execute_batch(V11_SCHEMA_SQL)?;
+            transaction.execute(
+                "INSERT INTO principals (id, parent_id, epoch, created_at_ms, revoked_at_ms)
+                 VALUES (?1, NULL, 1, ?2, NULL)",
+                params![PrincipalId::local_root().to_string(), unix_ms()],
             )?;
+            transaction.execute_batch("PRAGMA user_version = 11;")?;
             transaction.commit()?;
             return Ok(());
         }
@@ -396,8 +436,16 @@ impl Store {
                 ",
             )?;
             transaction.commit()?;
+            current = 10;
+        }
+        if current == 10 {
+            self.migrate_v10_to_v11()?;
         }
         Ok(())
+    }
+
+    fn migrate_v10_to_v11(&mut self) -> Result<(), StorageError> {
+        migrate_v10_to_v11(self)
     }
 
     #[must_use]
@@ -409,23 +457,20 @@ impl Store {
 
     pub fn upsert_session(&mut self, session: &SessionRecord) -> Result<(), StorageError> {
         let identity = session.identity.as_ref();
-        let worker_identity = session.worker_identity.as_ref();
-        self.connection.execute(
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
             "
             INSERT INTO sessions (
                 id, owner, state, pid, pgid, start_token,
-                worker_pid, worker_pgid, worker_start_token, updated_at_ms
+                updated_at_ms
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(id) DO UPDATE SET
                 owner = excluded.owner,
                 state = excluded.state,
                 pid = excluded.pid,
                 pgid = excluded.pgid,
                 start_token = excluded.start_token,
-                worker_pid = excluded.worker_pid,
-                worker_pgid = excluded.worker_pgid,
-                worker_start_token = excluded.worker_start_token,
                 updated_at_ms = excluded.updated_at_ms
             ",
             params![
@@ -435,19 +480,16 @@ impl Store {
                 identity.map(|value| value.pid),
                 identity.map(|value| value.pgid),
                 identity.map(|value| value.start_token.as_str()),
-                worker_identity.map(|value| value.pid),
-                worker_identity.map(|value| value.pgid),
-                worker_identity.map(|value| value.start_token.as_str()),
                 session.updated_at_ms
             ],
         )?;
+        transaction.commit()?;
         Ok(())
     }
 
     pub fn list_sessions(&self) -> Result<Vec<SessionRecord>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, owner, state, pid, pgid, start_token,
-                    worker_pid, worker_pgid, worker_start_token, updated_at_ms
+            "SELECT id, owner, state, pid, pgid, start_token, updated_at_ms
              FROM sessions ORDER BY id",
         )?;
         let rows = statement.query_map([], |row| {
@@ -462,27 +504,20 @@ impl Store {
                 }),
                 _ => None,
             };
-            let worker_pid = row.get::<_, Option<u32>>(6)?;
-            let worker_pgid = row.get::<_, Option<u32>>(7)?;
-            let worker_start_token = row.get::<_, Option<String>>(8)?;
-            let worker_identity = match (worker_pid, worker_pgid, worker_start_token) {
-                (Some(pid), Some(pgid), Some(start_token)) => Some(ProcessIdentity {
-                    pid,
-                    pgid,
-                    start_token,
-                }),
-                _ => None,
-            };
             Ok(SessionRecord {
                 id: row.get(0)?,
                 owner: row.get(1)?,
                 state: row.get(2)?,
                 identity,
-                worker_identity,
-                updated_at_ms: row.get(9)?,
+                worker_identity: None,
+                updated_at_ms: row.get(6)?,
             })
         })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        let mut sessions = rows.collect::<Result<Vec<_>, _>>()?;
+        for session in &mut sessions {
+            session.worker_identity = self.worker_identity_for_session(&session.id)?;
+        }
+        Ok(sessions)
     }
 
     pub fn find_session(&self, id: &str) -> Result<Option<SessionRecord>, StorageError> {
@@ -492,15 +527,66 @@ impl Store {
             .find(|session| session.id == id))
     }
 
+    fn worker_identity_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<ProcessIdentity>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT pw.pid, pw.pgid, pw.start_token
+                 FROM panes p
+                 JOIN pane_workers pw ON pw.pane_id = p.id
+                 WHERE p.session_id = ?1
+                 ORDER BY p.id LIMIT 1",
+                [session_id],
+                |row| {
+                    Ok(ProcessIdentity {
+                        pid: row.get(0)?,
+                        pgid: row.get(1)?,
+                        start_token: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn default_pane_id(&self, session_id: &str) -> Result<Option<PaneId>, StorageError> {
+        let value = self
+            .connection
+            .query_row(
+                "SELECT id FROM panes WHERE session_id = ?1 ORDER BY id LIMIT 1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StorageError::from)?;
+        value
+            .map(|value: String| {
+                PaneId::from_str(&value).map_err(|error| StorageError::Invariant(error.to_string()))
+            })
+            .transpose()
+    }
+
     pub fn get_attachment_authority(
         &self,
         session_id: &str,
     ) -> Result<Option<AttachmentAuthority>, StorageError> {
+        let Some(pane_id) = self.default_pane_id(session_id)? else {
+            return Ok(None);
+        };
+        self.get_attachment_authority_for_pane(&pane_id)
+    }
+
+    pub fn get_attachment_authority_for_pane(
+        &self,
+        pane_id: &PaneId,
+    ) -> Result<Option<AttachmentAuthority>, StorageError> {
         self.connection
             .query_row(
                 "SELECT state, owner, generation, reclaim_token_hash, deadline_ms
-                 FROM attachment_authorities WHERE session_id = ?1",
-                [session_id],
+                 FROM attachment_authorities WHERE pane_id = ?1",
+                [pane_id.to_string()],
                 |row| {
                     let state = AttachmentAuthorityState::from_db(&row.get::<_, String>(0)?);
                     let token_hash = row
@@ -525,7 +611,19 @@ impl Store {
         authority: &AttachmentAuthority,
         now_ms: i64,
     ) -> Result<(), StorageError> {
-        write_attachment_authority(&self.connection, session_id, authority, now_ms)
+        let pane_id = self.default_pane_id(session_id)?.ok_or_else(|| {
+            StorageError::Invariant(format!("Session '{session_id}' has no Pane"))
+        })?;
+        self.write_attachment_authority_for_pane(&pane_id, authority, now_ms)
+    }
+
+    pub fn write_attachment_authority_for_pane(
+        &mut self,
+        pane_id: &PaneId,
+        authority: &AttachmentAuthority,
+        now_ms: i64,
+    ) -> Result<(), StorageError> {
+        write_attachment_authority(&self.connection, pane_id, authority, now_ms)
     }
 
     pub fn enter_reclaim_grace(&mut self, now_ms: i64, grace_ms: i64) -> Result<u64, StorageError> {
@@ -550,6 +648,9 @@ impl Store {
                 "activated attachment authority must be active".into(),
             ));
         }
+        let pane_id = self.default_pane_id(session_id)?.ok_or_else(|| {
+            StorageError::Invariant(format!("Session '{session_id}' has no Pane"))
+        })?;
         let transaction = self.connection.transaction()?;
         if let Some((owner, generation)) = release_hold {
             let lease = transaction
@@ -580,7 +681,7 @@ impl Store {
                 params![session_id, authority.generation as i64, now_ms],
             )?;
         }
-        write_attachment_authority(&transaction, session_id, authority, now_ms)?;
+        write_attachment_authority(&transaction, &pane_id, authority, now_ms)?;
         transaction.commit()?;
         Ok(())
     }
@@ -594,8 +695,11 @@ impl Store {
         now_ms: i64,
     ) -> Result<AttachmentAuthority, StorageError> {
         let authority = AttachmentAuthority::held(owner, generation, deadline_ms);
+        let pane_id = self.default_pane_id(session_id)?.ok_or_else(|| {
+            StorageError::Invariant(format!("Session '{session_id}' has no Pane"))
+        })?;
         let transaction = self.connection.transaction()?;
-        write_attachment_authority(&transaction, session_id, &authority, now_ms)?;
+        write_attachment_authority(&transaction, &pane_id, &authority, now_ms)?;
         transaction.execute(
             "
             INSERT INTO leases (
@@ -632,16 +736,27 @@ impl Store {
                 "created Pane must belong to the created Session".into(),
             ));
         }
+        if task.pane_id != pane.id {
+            return Err(StorageError::Invariant(
+                "created Task must belong to the created Pane".into(),
+            ));
+        }
         let identity = session.identity.as_ref();
         let worker_identity = session.worker_identity.as_ref();
         let transaction = self.connection.transaction()?;
         transaction.execute(
+            "INSERT OR IGNORE INTO principals (
+                id, parent_id, epoch, created_at_ms, revoked_at_ms
+             ) VALUES (?1, NULL, 1, ?2, NULL)",
+            params![PrincipalId::local_root().to_string(), unix_ms()],
+        )?;
+        transaction.execute(
             "
             INSERT INTO sessions (
                 id, owner, state, pid, pgid, start_token,
-                worker_pid, worker_pgid, worker_start_token, updated_at_ms
+                updated_at_ms
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ",
             params![
                 session.id,
@@ -650,22 +765,59 @@ impl Store {
                 identity.map(|value| value.pid),
                 identity.map(|value| value.pgid),
                 identity.map(|value| value.start_token.as_str()),
-                worker_identity.map(|value| value.pid),
-                worker_identity.map(|value| value.pgid),
-                worker_identity.map(|value| value.start_token.as_str()),
                 session.updated_at_ms
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO panes (id, session_id, updated_at_ms) VALUES (?1, ?2, ?3)",
+            params![pane.id.to_string(), pane.session_id, pane.updated_at_ms],
+        )?;
+        let session_scope_id = ResourceScopeId::new();
+        transaction.execute(
+            "INSERT INTO resource_scopes (
+                id, session_id, target_kind, target_id, parent_scope_id, backend,
+                requested_policy_json, lifecycle_state, cleanup_outcome, updated_at_ms
+             ) VALUES (?1, ?2, 'session', ?2, NULL, 'logical', '{}', 'active', NULL, ?3)",
+            params![
+                session_scope_id.to_string(),
+                pane.session_id,
+                pane.updated_at_ms
+            ],
+        )?;
+        let backend = if cfg!(target_os = "linux") {
+            ResourceBackend::LinuxCgroupV2.as_str()
+        } else if cfg!(target_os = "macos") {
+            ResourceBackend::MacosMonitored.as_str()
+        } else {
+            ResourceBackend::Logical.as_str()
+        };
+        let scope_id = pane.resource_scope_id.clone();
+        transaction.execute(
+            "INSERT INTO resource_scopes (
+                id, session_id, target_kind, target_id, parent_scope_id, backend,
+                requested_policy_json, lifecycle_state, cleanup_outcome, updated_at_ms
+             ) VALUES (?1, ?2, 'pane', ?3, ?4, ?5, ?6, 'active', NULL, ?7)",
+            params![
+                scope_id.to_string(),
+                pane.session_id,
+                pane.id.to_string(),
+                session_scope_id.to_string(),
+                backend,
+                serde_json::to_string(&pane.resource_policy)
+                    .map_err(|error| StorageError::Invariant(error.to_string()))?,
+                pane.updated_at_ms
             ],
         )?;
         transaction.execute(
             "
             INSERT INTO tasks (
-                id, session_id, pid, pgid, start_token, state,
+                id, pane_id, pid, pgid, start_token, state,
                 exit_code, exit_signal, started_at_ms, ended_at_ms
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             ",
             params![
                 task.id.to_string(),
-                task.session_id,
+                task.pane_id.to_string(),
                 task.identity.pid,
                 task.identity.pgid,
                 task.identity.start_token,
@@ -676,25 +828,25 @@ impl Store {
                 task.ended_at_ms
             ],
         )?;
-        transaction.execute(
-            "
-            INSERT INTO panes (
-                id, session_id, cpu_seconds, memory_high_bytes, memory_bytes,
-                memory_swap_max_bytes, process_limit, cpu_quota_percent, updated_at_ms
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-            ",
-            params![
-                pane.id.to_string(),
-                pane.session_id,
-                sqlite_limit(pane.resource_policy.cpu_seconds),
-                sqlite_limit(pane.resource_policy.memory_high_bytes),
-                sqlite_limit(pane.resource_policy.memory_max_bytes),
-                sqlite_limit(pane.resource_policy.memory_swap_max_bytes),
-                sqlite_limit(pane.resource_policy.tasks_max),
-                pane.resource_policy.cpu_quota_percent.map(i64::from),
-                pane.updated_at_ms
-            ],
-        )?;
+        if let Some(worker_identity) = worker_identity {
+            transaction.execute(
+                "INSERT INTO pane_workers (
+                    pane_id, pid, pgid, start_token, state, updated_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    pane.id.to_string(),
+                    worker_identity.pid,
+                    worker_identity.pgid,
+                    worker_identity.start_token,
+                    if session.state == "closed" {
+                        "closed"
+                    } else {
+                        "active"
+                    },
+                    session.updated_at_ms
+                ],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -705,11 +857,47 @@ impl Store {
     ) -> Result<Option<PaneRecord>, StorageError> {
         self.connection
             .query_row(
-                "SELECT id, session_id, cpu_seconds, memory_high_bytes, memory_bytes,
-                        memory_swap_max_bytes, process_limit, cpu_quota_percent,
-                        updated_at_ms
-                 FROM panes WHERE session_id = ?1",
+                "SELECT p.id, p.session_id, rs.id, rs.requested_policy_json,
+                        p.updated_at_ms
+                 FROM panes p
+                 JOIN resource_scopes rs
+                   ON rs.target_kind = 'pane' AND rs.target_id = p.id
+                 WHERE p.session_id = ?1
+                 ORDER BY p.id LIMIT 1",
                 [session_id],
+                pane_from_row,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    pub fn list_panes_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<PaneRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT p.id, p.session_id, rs.id, rs.requested_policy_json,
+                    p.updated_at_ms
+             FROM panes p
+             JOIN resource_scopes rs
+               ON rs.target_kind = 'pane' AND rs.target_id = p.id
+             WHERE p.session_id = ?1
+             ORDER BY p.id",
+        )?;
+        let rows = statement.query_map([session_id], pane_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn find_pane(&self, pane_id: &PaneId) -> Result<Option<PaneRecord>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT p.id, p.session_id, rs.id, rs.requested_policy_json,
+                        p.updated_at_ms
+                 FROM panes p
+                 JOIN resource_scopes rs
+                   ON rs.target_kind = 'pane' AND rs.target_id = p.id
+                 WHERE p.id = ?1",
+                [pane_id.to_string()],
                 pane_from_row,
             )
             .optional()
@@ -718,10 +906,12 @@ impl Store {
 
     pub fn list_panes(&self) -> Result<Vec<PaneRecord>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, session_id, cpu_seconds, memory_high_bytes, memory_bytes,
-                    memory_swap_max_bytes, process_limit, cpu_quota_percent,
-                    updated_at_ms
-                 FROM panes ORDER BY session_id",
+            "SELECT p.id, p.session_id, rs.id, rs.requested_policy_json,
+                    p.updated_at_ms
+             FROM panes p
+             JOIN resource_scopes rs
+               ON rs.target_kind = 'pane' AND rs.target_id = p.id
+             ORDER BY p.session_id, p.id",
         )?;
         let rows = statement.query_map([], pane_from_row)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -733,36 +923,235 @@ impl Store {
         policy: &ResourcePolicy,
         updated_at_ms: i64,
     ) -> Result<PaneRecord, StorageError> {
+        let pane = self.find_pane_for_session(session_id)?.ok_or_else(|| {
+            StorageError::Invariant(format!("Pane for Session '{session_id}' does not exist"))
+        })?;
+        self.update_resource_scope_policy(&pane.resource_scope_id, policy, updated_at_ms)?;
+        self.connection.execute(
+            "UPDATE panes SET updated_at_ms = ?2 WHERE id = ?1",
+            params![pane.id.to_string(), updated_at_ms],
+        )?;
+        self.find_pane(&pane.id)?
+            .ok_or_else(|| StorageError::Invariant("Pane disappeared after update".into()))
+    }
+
+    pub fn update_resource_scope_policy(
+        &mut self,
+        scope_id: &ResourceScopeId,
+        policy: &ResourcePolicy,
+        updated_at_ms: i64,
+    ) -> Result<(), StorageError> {
+        let policy_json = serde_json::to_string(policy)
+            .map_err(|error| StorageError::Invariant(error.to_string()))?;
         let changed = self.connection.execute(
-            "
-            UPDATE panes SET
-                cpu_seconds = ?2,
-                memory_high_bytes = ?3,
-                memory_bytes = ?4,
-                memory_swap_max_bytes = ?5,
-                process_limit = ?6,
-                cpu_quota_percent = ?7,
-                updated_at_ms = ?8
-            WHERE session_id = ?1
-            ",
+            "UPDATE resource_scopes SET requested_policy_json = ?2, updated_at_ms = ?3
+             WHERE id = ?1",
+            params![scope_id.to_string(), policy_json, updated_at_ms],
+        )?;
+        if changed == 0 {
+            return Err(StorageError::Invariant(format!(
+                "ResourceScope '{scope_id}' does not exist"
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn insert_created_pane(
+        &mut self,
+        pane: &PaneRecord,
+        worker: &PaneWorkerRecord,
+        task: &TaskRecord,
+    ) -> Result<(), StorageError> {
+        if pane.id != worker.pane_id
+            || pane.id != task.pane_id
+            || pane.session_id != task.session_id
+        {
+            return Err(StorageError::Invariant(
+                "created Pane, worker, and Task identities do not match".into(),
+            ));
+        }
+        let transaction = self.connection.transaction()?;
+        let session_exists: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+            [&pane.session_id],
+            |row| row.get(0),
+        )?;
+        if session_exists != 1 {
+            return Err(StorageError::Invariant(format!(
+                "Session '{}' does not exist",
+                pane.session_id
+            )));
+        }
+        transaction.execute(
+            "INSERT INTO panes (id, session_id, updated_at_ms) VALUES (?1, ?2, ?3)",
+            params![pane.id.to_string(), pane.session_id, pane.updated_at_ms],
+        )?;
+        let session_scope: String = transaction.query_row(
+            "SELECT id FROM resource_scopes
+             WHERE session_id = ?1 AND target_kind = 'session'",
+            [&pane.session_id],
+            |row| row.get(0),
+        )?;
+        let backend = if cfg!(target_os = "linux") {
+            ResourceBackend::LinuxCgroupV2.as_str()
+        } else if cfg!(target_os = "macos") {
+            ResourceBackend::MacosMonitored.as_str()
+        } else {
+            ResourceBackend::Logical.as_str()
+        };
+        transaction.execute(
+            "INSERT INTO resource_scopes (
+                id, session_id, target_kind, target_id, parent_scope_id, backend,
+                requested_policy_json, lifecycle_state, cleanup_outcome, updated_at_ms
+             ) VALUES (?1, ?2, 'pane', ?3, ?4, ?5, ?6, 'active', NULL, ?7)",
             params![
-                session_id,
-                sqlite_limit(policy.cpu_seconds),
-                sqlite_limit(policy.memory_high_bytes),
-                sqlite_limit(policy.memory_max_bytes),
-                sqlite_limit(policy.memory_swap_max_bytes),
-                sqlite_limit(policy.tasks_max),
-                policy.cpu_quota_percent.map(i64::from),
+                pane.resource_scope_id.to_string(),
+                pane.session_id,
+                pane.id.to_string(),
+                session_scope,
+                backend,
+                serde_json::to_string(&pane.resource_policy)
+                    .map_err(|error| StorageError::Invariant(error.to_string()))?,
+                pane.updated_at_ms
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO pane_workers (
+                pane_id, pid, pgid, start_token, state, updated_at_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                worker.pane_id.to_string(),
+                worker.identity.pid,
+                worker.identity.pgid,
+                worker.identity.start_token,
+                worker.state,
+                worker.updated_at_ms
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO tasks (
+                id, pane_id, pid, pgid, start_token, state, exit_code,
+                exit_signal, started_at_ms, ended_at_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                task.id.to_string(),
+                task.pane_id.to_string(),
+                task.identity.pid,
+                task.identity.pgid,
+                task.identity.start_token,
+                task.state.as_str(),
+                task.exit_code,
+                task.exit_signal,
+                task.started_at_ms,
+                task.ended_at_ms
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn upsert_pane_worker(&mut self, worker: &PaneWorkerRecord) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO pane_workers (
+                pane_id, pid, pgid, start_token, state, updated_at_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(pane_id) DO UPDATE SET
+                pid = excluded.pid,
+                pgid = excluded.pgid,
+                start_token = excluded.start_token,
+                state = excluded.state,
+                updated_at_ms = excluded.updated_at_ms",
+            params![
+                worker.pane_id.to_string(),
+                worker.identity.pid,
+                worker.identity.pgid,
+                worker.identity.start_token,
+                worker.state,
+                worker.updated_at_ms
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn find_pane_worker(
+        &self,
+        pane_id: &PaneId,
+    ) -> Result<Option<PaneWorkerRecord>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT pane_id, pid, pgid, start_token, state, updated_at_ms
+                 FROM pane_workers WHERE pane_id = ?1",
+                [pane_id.to_string()],
+                pane_worker_from_row,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    pub fn list_pane_workers(&self) -> Result<Vec<PaneWorkerRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT pane_id, pid, pgid, start_token, state, updated_at_ms
+             FROM pane_workers ORDER BY pane_id",
+        )?;
+        let rows = statement.query_map([], pane_worker_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn list_resource_scopes(&self) -> Result<Vec<ResourceScopeRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, session_id, target_kind, target_id, parent_scope_id, backend,
+                    requested_policy_json, lifecycle_state, cleanup_outcome, updated_at_ms
+             FROM resource_scopes ORDER BY session_id, target_kind, target_id",
+        )?;
+        let rows = statement.query_map([], resource_scope_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn update_resource_scope_state(
+        &mut self,
+        scope_id: &ResourceScopeId,
+        state: ResourceScopeState,
+        cleanup_outcome: Option<&str>,
+        updated_at_ms: i64,
+    ) -> Result<(), StorageError> {
+        let changed = self.connection.execute(
+            "UPDATE resource_scopes
+             SET lifecycle_state = ?2, cleanup_outcome = ?3, updated_at_ms = ?4
+             WHERE id = ?1",
+            params![
+                scope_id.to_string(),
+                state.as_str(),
+                cleanup_outcome,
                 updated_at_ms
             ],
         )?;
         if changed == 0 {
             return Err(StorageError::Invariant(format!(
-                "Pane for Session '{session_id}' does not exist"
+                "ResourceScope '{scope_id}' does not exist"
             )));
         }
-        self.find_pane_for_session(session_id)?
-            .ok_or_else(|| StorageError::Invariant("Pane disappeared after update".into()))
+        Ok(())
+    }
+
+    pub fn local_root_principal(&self) -> Result<PrincipalRecord, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT id, parent_id, epoch, created_at_ms, revoked_at_ms
+                 FROM principals WHERE id = ?1",
+                [PrincipalId::local_root().to_string()],
+                |row| {
+                    Ok(PrincipalRecord {
+                        id: PrincipalId::from_str(&row.get::<_, String>(0)?).unwrap(),
+                        parent_id: row
+                            .get::<_, Option<String>>(1)?
+                            .map(|value| PrincipalId::from_str(&value).unwrap()),
+                        epoch: row.get::<_, i64>(2)? as u64,
+                        created_at_ms: row.get(3)?,
+                        revoked_at_ms: row.get(4)?,
+                    })
+                },
+            )
+            .map_err(StorageError::from)
     }
 
     pub fn mark_sessions_missing(
@@ -788,13 +1177,13 @@ impl Store {
         self.connection.execute(
             "
             INSERT INTO tasks (
-                id, session_id, pid, pgid, start_token, state,
+                id, pane_id, pid, pgid, start_token, state,
                 exit_code, exit_signal, started_at_ms, ended_at_ms
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             ",
             params![
                 task.id.to_string(),
-                task.session_id,
+                task.pane_id.to_string(),
                 task.identity.pid,
                 task.identity.pgid,
                 task.identity.start_token,
@@ -811,9 +1200,10 @@ impl Store {
     pub fn find_task(&self, id: &TaskId) -> Result<Option<TaskRecord>, StorageError> {
         self.connection
             .query_row(
-                "SELECT id, session_id, pid, pgid, start_token, state, exit_code,
-                        exit_signal, started_at_ms, ended_at_ms
-                 FROM tasks WHERE id = ?1",
+                "SELECT t.id, p.session_id, t.pane_id, t.pid, t.pgid, t.start_token,
+                        t.state, t.exit_code, t.exit_signal, t.started_at_ms, t.ended_at_ms
+                 FROM tasks t JOIN panes p ON p.id = t.pane_id
+                 WHERE t.id = ?1",
                 [id.to_string()],
                 task_from_row,
             )
@@ -827,11 +1217,27 @@ impl Store {
     ) -> Result<Option<TaskRecord>, StorageError> {
         self.connection
             .query_row(
-                "SELECT id, session_id, pid, pgid, start_token, state, exit_code,
-                        exit_signal, started_at_ms, ended_at_ms
-                 FROM tasks WHERE session_id = ?1
-                 ORDER BY started_at_ms DESC LIMIT 1",
+                "SELECT t.id, p.session_id, t.pane_id, t.pid, t.pgid, t.start_token,
+                        t.state, t.exit_code, t.exit_signal, t.started_at_ms, t.ended_at_ms
+                 FROM tasks t JOIN panes p ON p.id = t.pane_id
+                 WHERE p.session_id = ?1
+                 ORDER BY t.started_at_ms DESC, t.id DESC LIMIT 1",
                 [session_id],
+                task_from_row,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    pub fn find_task_for_pane(&self, pane_id: &PaneId) -> Result<Option<TaskRecord>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT t.id, p.session_id, t.pane_id, t.pid, t.pgid, t.start_token,
+                        t.state, t.exit_code, t.exit_signal, t.started_at_ms, t.ended_at_ms
+                 FROM tasks t JOIN panes p ON p.id = t.pane_id
+                 WHERE t.pane_id = ?1
+                 ORDER BY t.started_at_ms DESC, t.id DESC LIMIT 1",
+                [pane_id.to_string()],
                 task_from_row,
             )
             .optional()
@@ -840,9 +1246,10 @@ impl Store {
 
     pub fn list_tasks(&self) -> Result<Vec<TaskRecord>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, session_id, pid, pgid, start_token, state, exit_code,
-                    exit_signal, started_at_ms, ended_at_ms
-             FROM tasks ORDER BY started_at_ms, id",
+            "SELECT t.id, p.session_id, t.pane_id, t.pid, t.pgid, t.start_token,
+                    t.state, t.exit_code, t.exit_signal, t.started_at_ms, t.ended_at_ms
+             FROM tasks t JOIN panes p ON p.id = t.pane_id
+             ORDER BY t.started_at_ms, t.id",
         )?;
         let rows = statement.query_map([], task_from_row)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -1022,8 +1429,10 @@ impl Store {
                   LIMIT ?2
               )
               AND NOT EXISTS (
-                  SELECT 1 FROM attachment_authorities
-                  WHERE attachment_authorities.session_id = sessions.id
+                  SELECT 1
+                  FROM attachment_authorities aa
+                  JOIN panes p ON p.id = aa.pane_id
+                  WHERE p.session_id = sessions.id
               )
             ORDER BY updated_at_ms, id
             ",
@@ -1037,19 +1446,40 @@ impl Store {
         let mut report = HistoryPruneReport::default();
         let transaction = self.connection.transaction()?;
         for session_id in session_ids {
-            report.tasks += transaction
-                .execute("DELETE FROM tasks WHERE session_id = ?1", [&session_id])?
-                as u64;
+            report.tasks += transaction.execute(
+                "DELETE FROM tasks WHERE pane_id IN (
+                        SELECT id FROM panes WHERE session_id = ?1
+                     )",
+                [&session_id],
+            )? as u64;
+            report.attachment_authorities += transaction.execute(
+                "DELETE FROM attachment_authorities WHERE pane_id IN (
+                    SELECT id FROM panes WHERE session_id = ?1
+                 )",
+                [&session_id],
+            )? as u64;
+            report.pane_workers += transaction.execute(
+                "DELETE FROM pane_workers WHERE pane_id IN (
+                    SELECT id FROM panes WHERE session_id = ?1
+                 )",
+                [&session_id],
+            )? as u64;
+            report.resource_scopes += transaction.execute(
+                "DELETE FROM resource_scopes
+                 WHERE session_id = ?1 AND target_kind = 'pane'",
+                [&session_id],
+            )? as u64;
+            report.resource_scopes += transaction.execute(
+                "DELETE FROM resource_scopes
+                 WHERE session_id = ?1 AND target_kind = 'session'",
+                [&session_id],
+            )? as u64;
             report.panes += transaction
                 .execute("DELETE FROM panes WHERE session_id = ?1", [&session_id])?
                 as u64;
             report.leases += transaction
                 .execute("DELETE FROM leases WHERE session_id = ?1", [&session_id])?
                 as u64;
-            report.attachment_authorities += transaction.execute(
-                "DELETE FROM attachment_authorities WHERE session_id = ?1",
-                [&session_id],
-            )? as u64;
             report.sessions +=
                 transaction.execute("DELETE FROM sessions WHERE id = ?1", [&session_id])? as u64;
         }
@@ -1204,27 +1634,421 @@ impl Store {
     }
 }
 
+fn migrate_v10_to_v11(store: &mut Store) -> Result<(), StorageError> {
+    use std::collections::HashMap;
+
+    store.connection.execute_batch("PRAGMA foreign_keys=OFF;")?;
+    let result = (|| {
+        let transaction = store.connection.transaction()?;
+        transaction.execute_batch(
+            "
+            ALTER TABLE sessions RENAME TO sessions_v10;
+            ALTER TABLE panes RENAME TO panes_v10;
+            ALTER TABLE tasks RENAME TO tasks_v10;
+            ALTER TABLE leases RENAME TO leases_v10;
+            ALTER TABLE attachment_authorities RENAME TO attachment_authorities_v10;
+            ALTER TABLE idempotency_records RENAME TO idempotency_records_v10;
+            DROP INDEX IF EXISTS tasks_by_session;
+            DROP INDEX IF EXISTS idempotency_expiry;
+            ",
+        )?;
+        transaction.execute_batch(V11_SCHEMA_SQL)?;
+        transaction.execute(
+            "INSERT INTO principals (id, parent_id, epoch, created_at_ms, revoked_at_ms)
+             VALUES (?1, NULL, 1, ?2, NULL)",
+            params![PrincipalId::local_root().to_string(), unix_ms()],
+        )?;
+
+        struct LegacySession {
+            id: String,
+            owner: String,
+            state: String,
+            pid: Option<u32>,
+            pgid: Option<u32>,
+            start_token: Option<String>,
+            worker_pid: Option<u32>,
+            worker_pgid: Option<u32>,
+            worker_start_token: Option<String>,
+            updated_at_ms: i64,
+        }
+
+        let sessions = {
+            let mut statement = transaction.prepare(
+                "SELECT id, owner, state, pid, pgid, start_token,
+                        worker_pid, worker_pgid, worker_start_token, updated_at_ms
+                 FROM sessions_v10 ORDER BY id",
+            )?;
+            statement
+                .query_map([], |row| {
+                    Ok(LegacySession {
+                        id: row.get(0)?,
+                        owner: row.get(1)?,
+                        state: row.get(2)?,
+                        pid: row.get(3)?,
+                        pgid: row.get(4)?,
+                        start_token: row.get(5)?,
+                        worker_pid: row.get(6)?,
+                        worker_pgid: row.get(7)?,
+                        worker_start_token: row.get(8)?,
+                        updated_at_ms: row.get(9)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        struct LegacyPane {
+            id: String,
+            session_id: String,
+            cpu_seconds: Option<i64>,
+            memory_high_bytes: Option<i64>,
+            memory_bytes: Option<i64>,
+            memory_swap_max_bytes: Option<i64>,
+            process_limit: Option<i64>,
+            cpu_quota_percent: Option<i64>,
+            updated_at_ms: i64,
+        }
+
+        let panes = {
+            let mut statement = transaction.prepare(
+                "SELECT id, session_id, cpu_seconds, memory_high_bytes, memory_bytes,
+                        memory_swap_max_bytes, process_limit, cpu_quota_percent,
+                        updated_at_ms
+                 FROM panes_v10 ORDER BY session_id, id",
+            )?;
+            statement
+                .query_map([], |row| {
+                    Ok(LegacyPane {
+                        id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        cpu_seconds: row.get(2)?,
+                        memory_high_bytes: row.get(3)?,
+                        memory_bytes: row.get(4)?,
+                        memory_swap_max_bytes: row.get(5)?,
+                        process_limit: row.get(6)?,
+                        cpu_quota_percent: row.get(7)?,
+                        updated_at_ms: row.get(8)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        for session in &sessions {
+            transaction.execute(
+                "INSERT INTO sessions (
+                    id, owner, state, pid, pgid, start_token, updated_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    session.id,
+                    session.owner,
+                    session.state,
+                    session.pid,
+                    session.pgid,
+                    session.start_token,
+                    session.updated_at_ms
+                ],
+            )?;
+        }
+
+        let mut pane_by_session = HashMap::new();
+        let mut session_scope_by_session = HashMap::new();
+        for pane in &panes {
+            let session_scope_id = ResourceScopeId::new();
+            transaction.execute(
+                "INSERT INTO resource_scopes (
+                    id, session_id, target_kind, target_id, parent_scope_id, backend,
+                    requested_policy_json, lifecycle_state, cleanup_outcome, updated_at_ms
+                 ) VALUES (?1, ?2, 'session', ?2, NULL, 'logical', '{}', 'active', NULL, ?3)",
+                params![
+                    session_scope_id.to_string(),
+                    pane.session_id,
+                    pane.updated_at_ms
+                ],
+            )?;
+            session_scope_by_session.insert(pane.session_id.clone(), session_scope_id);
+            transaction.execute(
+                "INSERT INTO panes (id, session_id, updated_at_ms) VALUES (?1, ?2, ?3)",
+                params![pane.id, pane.session_id, pane.updated_at_ms],
+            )?;
+            let requested = json!({
+                "cpu_seconds": pane.cpu_seconds,
+                "memory_high_bytes": pane.memory_high_bytes,
+                "memory_max_bytes": pane.memory_bytes,
+                "memory_swap_max_bytes": pane.memory_swap_max_bytes,
+                "tasks_max": pane.process_limit,
+                "cpu_quota_percent": pane.cpu_quota_percent
+            });
+            let backend = if cfg!(target_os = "linux") {
+                ResourceBackend::LinuxCgroupV2.as_str()
+            } else if cfg!(target_os = "macos") {
+                ResourceBackend::MacosMonitored.as_str()
+            } else {
+                ResourceBackend::Logical.as_str()
+            };
+            transaction.execute(
+                "INSERT INTO resource_scopes (
+                    id, session_id, target_kind, target_id, parent_scope_id, backend,
+                    requested_policy_json, lifecycle_state, cleanup_outcome, updated_at_ms
+                 ) VALUES (?1, ?2, 'pane', ?3, ?4, ?5, ?6, 'active', NULL, ?7)",
+                params![
+                    ResourceScopeId::new().to_string(),
+                    pane.session_id,
+                    pane.id,
+                    session_scope_by_session
+                        .get(&pane.session_id)
+                        .expect("session scope was inserted")
+                        .to_string(),
+                    backend,
+                    requested.to_string(),
+                    pane.updated_at_ms
+                ],
+            )?;
+            pane_by_session
+                .entry(pane.session_id.clone())
+                .or_insert_with(|| pane.id.clone());
+        }
+
+        for session in &sessions {
+            let pane_id = pane_by_session.get(&session.id).ok_or_else(|| {
+                StorageError::Invariant(format!(
+                    "v10 Session '{}' has no Pane to own its worker",
+                    session.id
+                ))
+            })?;
+            if let (Some(pid), Some(pgid), Some(start_token)) = (
+                session.worker_pid,
+                session.worker_pgid,
+                session.worker_start_token.as_ref(),
+            ) {
+                transaction.execute(
+                    "INSERT INTO pane_workers (
+                        pane_id, pid, pgid, start_token, state, updated_at_ms
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        pane_id,
+                        pid,
+                        pgid,
+                        start_token,
+                        if session.state == "closed" {
+                            "closed"
+                        } else {
+                            "active"
+                        },
+                        session.updated_at_ms
+                    ],
+                )?;
+            }
+        }
+
+        let task_rows = {
+            let mut statement = transaction.prepare(
+                "SELECT id, session_id, pid, pgid, start_token, state, exit_code,
+                        exit_signal, started_at_ms, ended_at_ms
+                 FROM tasks_v10 ORDER BY started_at_ms, id",
+            )?;
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, u32>(2)?,
+                        row.get::<_, u32>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, Option<i32>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, i64>(8)?,
+                        row.get::<_, Option<i64>>(9)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for task in task_rows {
+            let pane_id = pane_by_session.get(&task.1).ok_or_else(|| {
+                StorageError::Invariant(format!(
+                    "v10 Task '{}' references Session '{}' without a Pane",
+                    task.0, task.1
+                ))
+            })?;
+            transaction.execute(
+                "INSERT INTO tasks (
+                    id, pane_id, pid, pgid, start_token, state, exit_code,
+                    exit_signal, started_at_ms, ended_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    task.0, pane_id, task.2, task.3, task.4, task.5, task.6, task.7, task.8, task.9
+                ],
+            )?;
+        }
+
+        let authority_rows = {
+            let mut statement = transaction.prepare(
+                "SELECT session_id, state, owner, generation, reclaim_token_hash,
+                        deadline_ms, updated_at_ms
+                 FROM attachment_authorities_v10",
+            )?;
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<i64>>(5)?,
+                        row.get::<_, i64>(6)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for authority in authority_rows {
+            let pane_id = pane_by_session.get(&authority.0).ok_or_else(|| {
+                StorageError::Invariant(format!(
+                    "v10 attachment authority references Session '{}' without a Pane",
+                    authority.0
+                ))
+            })?;
+            transaction.execute(
+                "INSERT INTO attachment_authorities (
+                    pane_id, state, owner, generation, reclaim_token_hash,
+                    deadline_ms, updated_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    pane_id,
+                    authority.1,
+                    authority.2,
+                    authority.3,
+                    authority.4,
+                    authority.5,
+                    authority.6
+                ],
+            )?;
+        }
+
+        transaction.execute_batch(
+            "
+            INSERT INTO leases (
+                session_id, owner, generation, deadline_ms, updated_at_ms, released_at_ms
+            )
+            SELECT session_id, owner, generation, deadline_ms, updated_at_ms, released_at_ms
+            FROM leases_v10;
+            INSERT INTO idempotency_records (
+                idempotency_key, operation, request_fingerprint, state, response_json,
+                created_at_ms, expires_at_ms
+            )
+            SELECT idempotency_key, operation, request_fingerprint, state, response_json,
+                   created_at_ms, expires_at_ms
+            FROM idempotency_records_v10;
+            DROP TABLE attachment_authorities_v10;
+            DROP TABLE tasks_v10;
+            DROP TABLE panes_v10;
+            DROP TABLE leases_v10;
+            DROP TABLE idempotency_records_v10;
+            DROP TABLE sessions_v10;
+            PRAGMA user_version = 11;
+            ",
+        )?;
+
+        let orphaned: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM tasks t
+             LEFT JOIN panes p ON p.id = t.pane_id
+             WHERE p.id IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        if orphaned != 0 {
+            return Err(StorageError::Invariant(format!(
+                "v11 migration produced {orphaned} Tasks without a Pane"
+            )));
+        }
+        let pane_scopes: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM panes p
+             LEFT JOIN resource_scopes s
+               ON s.target_kind = 'pane' AND s.target_id = p.id
+             WHERE s.id IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        if pane_scopes != 0 {
+            return Err(StorageError::Invariant(format!(
+                "v11 migration produced {pane_scopes} Panes without a ResourceScope"
+            )));
+        }
+        transaction.commit()?;
+        Ok(())
+    })();
+    store.connection.execute_batch("PRAGMA foreign_keys=ON;")?;
+    result?;
+    let foreign_key_errors: i64 =
+        store
+            .connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })?;
+    if foreign_key_errors != 0 {
+        return Err(StorageError::Invariant(format!(
+            "v11 migration left {foreign_key_errors} foreign-key violations"
+        )));
+    }
+    let integrity: String = store
+        .connection
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    if integrity != "ok" {
+        return Err(StorageError::Invariant(format!(
+            "v11 migration integrity check failed: {integrity}"
+        )));
+    }
+    Ok(())
+}
+
+fn unix_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as i64)
+}
+
+fn backup_before_migration(
+    connection: &Connection,
+    path: &str,
+    schema_version: i64,
+) -> Result<(), StorageError> {
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let backup_path = format!("{path}.pre-v{SCHEMA_VERSION}-{suffix}.sqlite");
+    connection.execute("VACUUM INTO ?1", [&backup_path])?;
+    let backup = Connection::open(&backup_path)?;
+    let backed_up_version: i64 = backup.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let integrity: String = backup.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    if backed_up_version != schema_version || integrity != "ok" {
+        return Err(StorageError::Invariant(format!(
+            "pre-migration backup verification failed at {backup_path}"
+        )));
+    }
+    Ok(())
+}
+
 fn write_attachment_authority(
     connection: &Connection,
-    session_id: &str,
+    pane_id: &PaneId,
     authority: &AttachmentAuthority,
     now_ms: i64,
 ) -> Result<(), StorageError> {
     if authority.state == AttachmentAuthorityState::Unattached {
         connection.execute(
-            "DELETE FROM attachment_authorities WHERE session_id = ?1",
-            [session_id],
+            "DELETE FROM attachment_authorities WHERE pane_id = ?1",
+            [pane_id.to_string()],
         )?;
         return Ok(());
     }
     connection.execute(
         "
         INSERT INTO attachment_authorities (
-            session_id, state, owner, generation, reclaim_token_hash,
+            pane_id, state, owner, generation, reclaim_token_hash,
             deadline_ms, updated_at_ms
         )
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        ON CONFLICT(session_id) DO UPDATE SET
+        ON CONFLICT(pane_id) DO UPDATE SET
             state = excluded.state,
             owner = excluded.owner,
             generation = excluded.generation,
@@ -1233,7 +2057,7 @@ fn write_attachment_authority(
             updated_at_ms = excluded.updated_at_ms
         ",
         params![
-            session_id,
+            pane_id.to_string(),
             authority.state.as_str(),
             authority.owner,
             authority.generation as i64,
@@ -1248,8 +2072,69 @@ fn write_attachment_authority(
     Ok(())
 }
 
+fn pane_worker_from_row(row: &Row<'_>) -> rusqlite::Result<PaneWorkerRecord> {
+    let pane_id: String = row.get(0)?;
+    Ok(PaneWorkerRecord {
+        pane_id: PaneId::from_str(&pane_id).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        identity: ProcessIdentity {
+            pid: row.get(1)?,
+            pgid: row.get(2)?,
+            start_token: row.get(3)?,
+        },
+        state: row.get(4)?,
+        updated_at_ms: row.get(5)?,
+    })
+}
+
+fn resource_scope_from_row(row: &Row<'_>) -> rusqlite::Result<ResourceScopeRecord> {
+    let id: String = row.get(0)?;
+    let parent_scope_id = row.get::<_, Option<String>>(4)?;
+    let requested_policy_json: String = row.get(6)?;
+    Ok(ResourceScopeRecord {
+        id: ResourceScopeId::from_str(&id).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        session_id: row.get(1)?,
+        target_kind: ResourceScopeTargetKind::from_db(&row.get::<_, String>(2)?),
+        target_id: row.get(3)?,
+        parent_scope_id: parent_scope_id
+            .map(|value| {
+                ResourceScopeId::from_str(&value).map_err(|failure| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(failure),
+                    )
+                })
+            })
+            .transpose()?,
+        backend: ResourceBackend::from_db(&row.get::<_, String>(5)?),
+        requested_policy: serde_json::from_str(&requested_policy_json).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                6,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        lifecycle_state: ResourceScopeState::from_db(&row.get::<_, String>(7)?),
+        cleanup_outcome: row.get(8)?,
+        updated_at_ms: row.get(9)?,
+    })
+}
+
 fn task_from_row(row: &Row<'_>) -> rusqlite::Result<TaskRecord> {
     let id: String = row.get(0)?;
+    let pane_id: String = row.get(2)?;
     Ok(TaskRecord {
         id: TaskId::from_str(&id).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
@@ -1259,21 +2144,38 @@ fn task_from_row(row: &Row<'_>) -> rusqlite::Result<TaskRecord> {
             )
         })?,
         session_id: row.get(1)?,
+        pane_id: PaneId::from_str(&pane_id).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                2,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
         identity: ProcessIdentity {
-            pid: row.get(2)?,
-            pgid: row.get(3)?,
-            start_token: row.get(4)?,
+            pid: row.get(3)?,
+            pgid: row.get(4)?,
+            start_token: row.get(5)?,
         },
-        state: TaskState::from_db(&row.get::<_, String>(5)?),
-        exit_code: row.get(6)?,
-        exit_signal: row.get(7)?,
-        started_at_ms: row.get(8)?,
-        ended_at_ms: row.get(9)?,
+        state: TaskState::from_db(&row.get::<_, String>(6)?),
+        exit_code: row.get(7)?,
+        exit_signal: row.get(8)?,
+        started_at_ms: row.get(9)?,
+        ended_at_ms: row.get(10)?,
     })
 }
 
 fn pane_from_row(row: &Row<'_>) -> rusqlite::Result<PaneRecord> {
     let id: String = row.get(0)?;
+    let scope_id: String = row.get(2)?;
+    let policy_json: String = row.get(3)?;
+    let resource_policy =
+        serde_json::from_str::<ResourcePolicy>(&policy_json).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                3,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?;
     Ok(PaneRecord {
         id: PaneId::from_str(&id).map_err(|failure| {
             rusqlite::Error::FromSqlConversionFailure(
@@ -1283,44 +2185,16 @@ fn pane_from_row(row: &Row<'_>) -> rusqlite::Result<PaneRecord> {
             )
         })?,
         session_id: row.get(1)?,
-        resource_policy: ResourcePolicy {
-            cpu_seconds: resource_limit_from_row(row, 2)?,
-            memory_high_bytes: resource_limit_from_row(row, 3)?,
-            memory_max_bytes: resource_limit_from_row(row, 4)?,
-            memory_swap_max_bytes: resource_limit_from_row(row, 5)?,
-            tasks_max: resource_limit_from_row(row, 6)?,
-            cpu_quota_percent: resource_limit_from_row(row, 7)?
-                .map(|value| {
-                    u32::try_from(value).map_err(|failure| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            7,
-                            rusqlite::types::Type::Integer,
-                            Box::new(failure),
-                        )
-                    })
-                })
-                .transpose()?,
-        },
-        updated_at_ms: row.get(8)?,
+        resource_scope_id: ResourceScopeId::from_str(&scope_id).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                2,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        resource_policy,
+        updated_at_ms: row.get(4)?,
     })
-}
-
-fn sqlite_limit(value: Option<u64>) -> Option<i64> {
-    value.and_then(|value| i64::try_from(value).ok())
-}
-
-fn resource_limit_from_row(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<u64>> {
-    row.get::<_, Option<i64>>(index)?
-        .map(|value| {
-            u64::try_from(value).map_err(|failure| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    index,
-                    rusqlite::types::Type::Integer,
-                    Box::new(failure),
-                )
-            })
-        })
-        .transpose()
 }
 
 fn lease_from_row(row: &Row<'_>) -> rusqlite::Result<LeaseRecord> {
@@ -1338,10 +2212,11 @@ fn lease_from_row(row: &Row<'_>) -> rusqlite::Result<LeaseRecord> {
 mod tests {
     use super::*;
 
-    fn task(id: TaskId, session_id: &str) -> TaskRecord {
+    fn task(id: TaskId, session_id: &str, pane_id: &PaneId) -> TaskRecord {
         TaskRecord {
             id,
             session_id: session_id.into(),
+            pane_id: pane_id.clone(),
             identity: ProcessIdentity {
                 pid: 100,
                 pgid: 100,
@@ -1359,6 +2234,7 @@ mod tests {
         PaneRecord {
             id: PaneId::new(),
             session_id: session_id.into(),
+            resource_scope_id: ResourceScopeId::new(),
             resource_policy: ResourcePolicy::empty(),
             updated_at_ms: 10,
         }
@@ -1375,6 +2251,14 @@ mod tests {
         }
     }
 
+    fn create_running_session(store: &mut Store, id: &str) -> PaneRecord {
+        let pane = pane(id);
+        store
+            .insert_created_session(&session(id), &pane, &task(TaskId::new(), id, &pane.id))
+            .unwrap();
+        pane
+    }
+
     #[test]
     fn creates_versioned_schema() {
         let store = Store::open_in_memory().unwrap();
@@ -1385,8 +2269,10 @@ mod tests {
     fn persists_and_updates_tasks() {
         let mut store = Store::open_in_memory().unwrap();
         let id = TaskId::new();
-        store.upsert_session(&session("session-1")).unwrap();
-        store.insert_task(&task(id.clone(), "session-1")).unwrap();
+        let pane = create_running_session(&mut store, "session-1");
+        store
+            .insert_task(&task(id.clone(), "session-1", &pane.id))
+            .unwrap();
         let stored = store.find_task(&id).unwrap().unwrap();
         assert_eq!(stored.identity.pid, 100);
         assert_eq!(stored.state, TaskState::Running);
@@ -1402,9 +2288,9 @@ mod tests {
     fn created_session_and_task_commit_atomically() {
         let mut store = Store::open_in_memory().unwrap();
         let existing_id = TaskId::new();
-        store.upsert_session(&session("existing")).unwrap();
+        let existing_pane = create_running_session(&mut store, "existing");
         store
-            .insert_task(&task(existing_id.clone(), "existing"))
+            .insert_task(&task(existing_id.clone(), "existing", &existing_pane.id))
             .unwrap();
         let session = SessionRecord {
             id: "new".into(),
@@ -1418,9 +2304,9 @@ mod tests {
             worker_identity: None,
             updated_at_ms: 10,
         };
-        let mut conflicting_task = task(existing_id, "new");
-        conflicting_task.identity.pid = 200;
         let created_pane = pane("new");
+        let mut conflicting_task = task(existing_id, "new", &created_pane.id);
+        conflicting_task.identity.pid = 200;
         assert!(
             store
                 .insert_created_session(&session, &created_pane, &conflicting_task)
@@ -1430,7 +2316,7 @@ mod tests {
     }
 
     #[test]
-    fn created_session_has_one_pane_and_one_task_instance() {
+    fn created_session_uses_pane_keyed_tasks_and_resource_scopes() {
         let mut store = Store::open_in_memory().unwrap();
         let session = SessionRecord {
             id: "one".into(),
@@ -1457,7 +2343,7 @@ mod tests {
             cpu_quota_percent: Some(150),
             cpu_seconds: Some(5),
         };
-        let created_task = task(TaskId::new(), "one");
+        let created_task = task(TaskId::new(), "one", &created_pane.id);
         store
             .insert_created_session(&session, &created_pane, &created_task)
             .unwrap();
@@ -1488,15 +2374,43 @@ mod tests {
             store.find_task_for_session("one").unwrap().unwrap().id,
             created_task.id
         );
-        assert!(
-            store.insert_task(&task(TaskId::new(), "one")).is_err(),
-            "a second TaskInstance for one Session must be rejected"
+        let second_task = task(TaskId::new(), "one", &created_pane.id);
+        store.insert_task(&second_task).unwrap();
+        assert_eq!(
+            store
+                .list_tasks()
+                .unwrap()
+                .into_iter()
+                .filter(|task| task.pane_id == created_pane.id)
+                .count(),
+            2
         );
+        let second_pane = pane("one");
+        let second_worker = PaneWorkerRecord {
+            pane_id: second_pane.id.clone(),
+            identity: ProcessIdentity {
+                pid: 310,
+                pgid: 310,
+                start_token: "worker:310".into(),
+            },
+            state: "active".into(),
+            updated_at_ms: 30,
+        };
+        let second_pane_task = task(TaskId::new(), "one", &second_pane.id);
+        store
+            .insert_created_pane(&second_pane, &second_worker, &second_pane_task)
+            .unwrap();
+        assert_eq!(store.list_panes_for_session("one").unwrap().len(), 2);
+        assert!(
+            store.find_pane(&second_pane.id).unwrap().is_some(),
+            "Pane lookup must not depend on the Session's first Pane"
+        );
+        let missing_pane = PaneId::new();
         assert!(
             store
-                .insert_task(&task(TaskId::new(), "missing-session"))
+                .insert_task(&task(TaskId::new(), "missing-session", &missing_pane))
                 .is_err(),
-            "TaskInstance must reference an existing Session"
+            "TaskInstance must reference an existing Pane"
         );
     }
 
@@ -1555,7 +2469,7 @@ mod tests {
     #[test]
     fn persisted_active_attachment_enters_reclaim_grace() {
         let mut store = Store::open_in_memory().unwrap();
-        store.upsert_session(&session("authority")).unwrap();
+        create_running_session(&mut store, "authority");
         let token_hash = qwe_core::ReclaimTokenHash::from_token("reclaim-token");
         let authority = AttachmentAuthority::active("alice", token_hash.clone());
         store
@@ -1702,6 +2616,204 @@ mod tests {
     }
 
     #[test]
+    fn migrates_populated_v10_database_to_v11_with_backup() {
+        let path = std::env::temp_dir().join(format!(
+            "qwe-storage-v10-{}-{}.sqlite",
+            std::process::id(),
+            TaskId::new()
+        ));
+        let pane_id = PaneId::new();
+        let task_id = TaskId::new();
+        let token_hash = qwe_core::ReclaimTokenHash::from_token("legacy-token");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "
+                    CREATE TABLE sessions (
+                        id TEXT PRIMARY KEY,
+                        owner TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        pid INTEGER,
+                        pgid INTEGER,
+                        start_token TEXT,
+                        worker_pid INTEGER,
+                        worker_pgid INTEGER,
+                        worker_start_token TEXT,
+                        updated_at_ms INTEGER NOT NULL
+                    );
+                    CREATE TABLE panes (
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL UNIQUE,
+                        cpu_seconds INTEGER,
+                        memory_high_bytes INTEGER,
+                        memory_bytes INTEGER,
+                        memory_swap_max_bytes INTEGER,
+                        process_limit INTEGER,
+                        cpu_quota_percent INTEGER,
+                        updated_at_ms INTEGER NOT NULL
+                    );
+                    CREATE TABLE tasks (
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        pid INTEGER NOT NULL,
+                        pgid INTEGER NOT NULL,
+                        start_token TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        exit_code INTEGER,
+                        exit_signal TEXT,
+                        started_at_ms INTEGER NOT NULL,
+                        ended_at_ms INTEGER
+                    );
+                    CREATE UNIQUE INDEX tasks_by_session ON tasks(session_id);
+                    CREATE TABLE leases (
+                        session_id TEXT PRIMARY KEY,
+                        owner TEXT NOT NULL,
+                        generation INTEGER NOT NULL,
+                        deadline_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        released_at_ms INTEGER
+                    );
+                    CREATE TABLE attachment_authorities (
+                        session_id TEXT PRIMARY KEY,
+                        state TEXT NOT NULL,
+                        owner TEXT,
+                        generation INTEGER NOT NULL,
+                        reclaim_token_hash TEXT,
+                        deadline_ms INTEGER,
+                        updated_at_ms INTEGER NOT NULL
+                    );
+                    CREATE TABLE idempotency_records (
+                        idempotency_key TEXT PRIMARY KEY,
+                        operation TEXT NOT NULL,
+                        request_fingerprint TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        response_json TEXT,
+                        created_at_ms INTEGER NOT NULL,
+                        expires_at_ms INTEGER NOT NULL
+                    );
+                    CREATE INDEX idempotency_expiry
+                        ON idempotency_records(expires_at_ms);
+                    PRAGMA user_version = 10;
+                    ",
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sessions VALUES (
+                        'legacy', 'local', 'running', 100, 100, 'task:100',
+                        90, 90, 'worker:90', 10
+                     )",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO panes VALUES (
+                        ?1, 'legacy', 5, 67108864, 134217728, 0, 32, 150, 10
+                     )",
+                    [pane_id.to_string()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO tasks VALUES (
+                        ?1, 'legacy', 100, 100, 'task:100', 'running', NULL, NULL, 9, NULL
+                     )",
+                    [task_id.to_string()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO leases VALUES ('legacy', 'alice', 3, 5000, 10, NULL)",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO attachment_authorities VALUES (
+                        'legacy', 'active', 'alice', 4, ?1, 5000, 10
+                     )",
+                    [token_hash.as_str()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO idempotency_records VALUES (
+                        'legacy-key', 'SESSION_CREATE', 'fingerprint', 'complete',
+                        '{\"Ok\":{\"session_id\":\"legacy\"}}', 10, 999999
+                     )",
+                    [],
+                )
+                .unwrap();
+        }
+
+        let store = Store::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(store.schema_version(), 11);
+        let session = store.find_session("legacy").unwrap().unwrap();
+        assert_eq!(session.identity.unwrap().pid, 100);
+        assert_eq!(session.worker_identity.unwrap().pid, 90);
+        let pane = store.find_pane(&pane_id).unwrap().unwrap();
+        assert_eq!(pane.resource_policy.memory_max_bytes, Some(134217728));
+        let worker = store.find_pane_worker(&pane_id).unwrap().unwrap();
+        assert_eq!(worker.identity.start_token, "worker:90");
+        let task = store.find_task(&task_id).unwrap().unwrap();
+        assert_eq!(task.pane_id, pane_id);
+        assert_eq!(
+            store
+                .get_attachment_authority_for_pane(&pane_id)
+                .unwrap()
+                .unwrap()
+                .reclaim_token_hash,
+            Some(token_hash)
+        );
+        assert_eq!(
+            store
+                .find_idempotency("legacy-key", 11)
+                .unwrap()
+                .unwrap()
+                .response_json
+                .as_deref(),
+            Some(r#"{"Ok":{"session_id":"legacy"}}"#)
+        );
+        assert_eq!(store.list_resource_scopes().unwrap().len(), 2);
+        assert_eq!(store.local_root_principal().unwrap().epoch, 1);
+
+        let backup_prefix = format!("{}.pre-v11-", path.file_name().unwrap().to_string_lossy());
+        let backup = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|candidate| {
+                candidate
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(&backup_prefix))
+            })
+            .expect("v11 migration must leave a verified v10 backup");
+        let backup = Connection::open(&backup).unwrap();
+        let backup_version: i64 = backup
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(backup_version, 10);
+        drop(backup);
+        drop(store);
+
+        let backup_prefix = format!("{}.pre-v11-", path.file_name().unwrap().to_string_lossy());
+        for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&backup_prefix)
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    }
+
+    #[test]
     fn reconciliation_marks_missing_sessions_lost() {
         let mut store = Store::open_in_memory().unwrap();
         store
@@ -1747,16 +2859,29 @@ mod tests {
             let mut record = session(id);
             record.state = state.into();
             record.updated_at_ms = updated_at_ms;
-            store.upsert_session(&record).unwrap();
+            let pane = pane(id);
+            store
+                .insert_created_session(&record, &pane, &task(TaskId::new(), id, &pane.id))
+                .unwrap();
         }
+        let old_pane = store
+            .find_pane_for_session("old-outside-capacity")
+            .unwrap()
+            .unwrap();
         let pruned_id = TaskId::new();
         store
-            .insert_task(&task(pruned_id.clone(), "old-outside-capacity"))
+            .insert_task(&task(
+                pruned_id.clone(),
+                "old-outside-capacity",
+                &old_pane.id,
+            ))
             .unwrap();
 
         let report = store.prune_terminal_history(10_000, 1_000, 2).unwrap();
         assert_eq!(report.sessions, 1);
-        assert_eq!(report.tasks, 1);
+        assert_eq!(report.tasks, 2);
+        assert_eq!(report.panes, 1);
+        assert_eq!(report.resource_scopes, 2);
         assert!(
             store
                 .find_session("old-outside-capacity")
@@ -1775,7 +2900,14 @@ mod tests {
         let mut closed = session("authority-protected");
         closed.state = "closed".into();
         closed.updated_at_ms = 1;
-        store.upsert_session(&closed).unwrap();
+        let pane = pane("authority-protected");
+        store
+            .insert_created_session(
+                &closed,
+                &pane,
+                &task(TaskId::new(), "authority-protected", &pane.id),
+            )
+            .unwrap();
         let authority =
             AttachmentAuthority::active("owner", qwe_core::ReclaimTokenHash::from_token("token"));
         store

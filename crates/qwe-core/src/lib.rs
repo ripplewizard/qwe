@@ -89,6 +89,71 @@ impl FromStr for PaneId {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ResourceScopeId(Uuid);
+
+impl ResourceScopeId {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::now_v7())
+    }
+}
+
+impl Default for ResourceScopeId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for ResourceScopeId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl FromStr for ResourceScopeId {
+    type Err = uuid::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(value).map(Self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PrincipalId(String);
+
+impl PrincipalId {
+    #[must_use]
+    pub fn local_root() -> Self {
+        Self("local-root".into())
+    }
+
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::now_v7().to_string())
+    }
+}
+
+impl Default for PrincipalId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for PrincipalId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl FromStr for PrincipalId {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self(value.to_string()))
+    }
+}
+
 impl fmt::Display for TaskId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
@@ -334,6 +399,7 @@ pub struct SessionRecord {
 pub struct TaskRecord {
     pub id: TaskId,
     pub session_id: String,
+    pub pane_id: PaneId,
     pub identity: ProcessIdentity,
     pub state: TaskState,
     pub exit_code: Option<i32>,
@@ -380,12 +446,221 @@ impl Default for ResourcePolicy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceProfile {
+    Interactive,
+    Batch,
+    Tight,
+    Unlimited,
+}
+
+impl ResourceProfile {
+    pub const ALL: [Self; 4] = [Self::Interactive, Self::Batch, Self::Tight, Self::Unlimited];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Batch => "batch",
+            Self::Tight => "tight",
+            Self::Unlimited => "unlimited",
+        }
+    }
+
+    #[must_use]
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Interactive => {
+                "interactive terminals with bounded memory, swap, tasks, and CPU quota"
+            }
+            Self::Batch => "longer compiler or batch jobs with wider resource allowances",
+            Self::Tight => "small shell utilities with conservative hard limits",
+            Self::Unlimited => "no requested resource limits; explicit fields may still be added",
+        }
+    }
+
+    #[must_use]
+    pub fn policy(self) -> ResourcePolicy {
+        match self {
+            Self::Interactive => ResourcePolicy {
+                memory_high_bytes: Some(1024 * 1024 * 1024),
+                memory_max_bytes: Some(2 * 1024 * 1024 * 1024),
+                memory_swap_max_bytes: Some(0),
+                tasks_max: Some(256),
+                cpu_quota_percent: Some(200),
+                cpu_seconds: None,
+            },
+            Self::Batch => ResourcePolicy {
+                memory_high_bytes: Some(2 * 1024 * 1024 * 1024),
+                memory_max_bytes: Some(4 * 1024 * 1024 * 1024),
+                memory_swap_max_bytes: Some(1024 * 1024 * 1024),
+                tasks_max: Some(512),
+                cpu_quota_percent: Some(400),
+                cpu_seconds: None,
+            },
+            Self::Tight => ResourcePolicy {
+                memory_high_bytes: Some(192 * 1024 * 1024),
+                memory_max_bytes: Some(256 * 1024 * 1024),
+                memory_swap_max_bytes: Some(0),
+                tasks_max: Some(64),
+                cpu_quota_percent: Some(100),
+                cpu_seconds: None,
+            },
+            Self::Unlimited => ResourcePolicy::empty(),
+        }
+    }
+
+    #[must_use]
+    pub fn classify(policy: &ResourcePolicy) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|profile| profile.policy() == *policy)
+    }
+}
+
+impl FromStr for ResourceProfile {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "interactive" => Ok(Self::Interactive),
+            "batch" => Ok(Self::Batch),
+            "tight" => Ok(Self::Tight),
+            "unlimited" => Ok(Self::Unlimited),
+            _ => Err(format!("unknown resource profile '{value}'")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneRecord {
     pub id: PaneId,
     pub session_id: String,
+    pub resource_scope_id: ResourceScopeId,
     pub resource_policy: ResourcePolicy,
     pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneWorkerRecord {
+    pub pane_id: PaneId,
+    pub identity: ProcessIdentity,
+    pub state: String,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceScopeTargetKind {
+    Session,
+    Pane,
+    Task,
+}
+
+impl ResourceScopeTargetKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::Pane => "pane",
+            Self::Task => "task",
+        }
+    }
+
+    #[must_use]
+    pub fn from_db(value: &str) -> Self {
+        match value {
+            "session" => Self::Session,
+            "task" => Self::Task,
+            _ => Self::Pane,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceBackend {
+    LinuxCgroupV2,
+    MacosMonitored,
+    Logical,
+}
+
+impl ResourceBackend {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LinuxCgroupV2 => "linux_cgroup_v2",
+            Self::MacosMonitored => "macos_monitored",
+            Self::Logical => "logical",
+        }
+    }
+
+    #[must_use]
+    pub fn from_db(value: &str) -> Self {
+        match value {
+            "linux_cgroup_v2" => Self::LinuxCgroupV2,
+            "macos_monitored" => Self::MacosMonitored,
+            _ => Self::Logical,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceScopeState {
+    Creating,
+    Active,
+    Closing,
+    Closed,
+    Lost,
+}
+
+impl ResourceScopeState {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Creating => "creating",
+            Self::Active => "active",
+            Self::Closing => "closing",
+            Self::Closed => "closed",
+            Self::Lost => "lost",
+        }
+    }
+
+    #[must_use]
+    pub fn from_db(value: &str) -> Self {
+        match value {
+            "creating" => Self::Creating,
+            "closing" => Self::Closing,
+            "closed" => Self::Closed,
+            "lost" => Self::Lost,
+            _ => Self::Active,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceScopeRecord {
+    pub id: ResourceScopeId,
+    pub session_id: String,
+    pub target_kind: ResourceScopeTargetKind,
+    pub target_id: String,
+    pub parent_scope_id: Option<ResourceScopeId>,
+    pub backend: ResourceBackend,
+    pub requested_policy: ResourcePolicy,
+    pub lifecycle_state: ResourceScopeState,
+    pub cleanup_outcome: Option<String>,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrincipalRecord {
+    pub id: PrincipalId,
+    pub parent_id: Option<PrincipalId>,
+    pub epoch: u64,
+    pub created_at_ms: i64,
+    pub revoked_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -540,5 +815,26 @@ mod tests {
                 disposition.as_str()
             );
         }
+    }
+
+    #[test]
+    fn resource_profiles_have_stable_names_and_policies() {
+        assert_eq!(
+            ResourceProfile::ALL.map(ResourceProfile::as_str),
+            ["interactive", "batch", "tight", "unlimited"]
+        );
+        for profile in ResourceProfile::ALL {
+            assert_eq!(
+                profile.as_str().parse::<ResourceProfile>().unwrap(),
+                profile
+            );
+            assert_eq!(
+                serde_json::to_value(profile).unwrap(),
+                serde_json::Value::String(profile.as_str().into())
+            );
+            assert_eq!(ResourceProfile::classify(&profile.policy()), Some(profile));
+        }
+        assert_eq!(ResourceProfile::Unlimited.policy(), ResourcePolicy::empty());
+        assert!("surprise".parse::<ResourceProfile>().is_err());
     }
 }

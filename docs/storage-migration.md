@@ -1,9 +1,9 @@
 # Storage Migration: Shared-Prerequisites Schema v11
 
-Status: Accepted design target; implementation pending Stage 7
-Date: 2026-11-09
-Authority: [ADR 0021](adr/0021-shared-prerequisites.md) and the current v10
-schema in `crates/qwe-storage`.
+Status: Implemented in Stage 7; schema v11 is current
+Date: 2026-11-10
+Authority: [ADR 0021](adr/0021-shared-prerequisites.md) and the v11 schema in
+`crates/qwe-storage`.
 
 ## 1. Purpose
 
@@ -12,11 +12,11 @@ assumptions while preserving every valid v10 record. It introduces durable
 Pane-worker, ResourceScope, and Principal records that the accepted shared
 prerequisites require.
 
-This plan freezes migration invariants, not Rust types or final SQL. Stage 7
-may adjust physical details only when the invariants and compatibility rules
-remain intact.
+The implementation follows these invariants and compatibility rules. The
+physical schema lives in `crates/qwe-storage`; this document remains the
+migration contract rather than a second schema copy.
 
-## 2. Current v10 Facts
+## 2. Pre-v11 Baseline Facts
 
 - `sessions` stores the optional worker PID, PGID, and start token.
 - `panes.session_id` is unique, so a Session cannot own multiple Panes.
@@ -26,7 +26,7 @@ remain intact.
 - Lease state is Session-scoped.
 - Attachment authority is keyed by `session_id`.
 - Idempotency records and task history are durable and must survive migration.
-- `PRAGMA user_version = 10`; older binaries reject a newer schema.
+- The pre-migration schema used `PRAGMA user_version = 10`.
 
 ## 3. Target Invariants
 
@@ -48,8 +48,8 @@ Session
 
 ## 4. Schema Shape
 
-The following names describe the required logical records. Exact column order
-and indexes are settled with the Stage 7 migration implementation.
+The following names describe the implemented logical records. Physical column
+order and indexes are defined by `crates/qwe-storage`.
 
 ### `panes`
 
@@ -108,7 +108,7 @@ and indexes are settled with the Stage 7 migration implementation.
 - `idempotency_records` remains global and unchanged except for migration-safe
   schema compatibility.
 
-## 5. Migration Procedure
+## 5. Implemented Migration Procedure
 
 1. Open the database in WAL mode with foreign keys enabled.
 2. Reject schemas newer than v11 and require a verified pre-migration backup.

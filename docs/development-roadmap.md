@@ -122,15 +122,18 @@ and [Storage Migration](storage-migration.md).
 
 ## Milestone D6: Linux Resource Governance
 
-Status: Ready to start. Stage 7 productizes Linux cgroup v2 resource controls
-as Pane-first ResourceScopes for long-running Sessions. It is not a Docker or
-Podman runtime.
+Status: In progress. Stage 7 productizes Linux cgroup v2 resource controls as
+Pane-first ResourceScopes for long-running Sessions. It is not a Docker or
+Podman runtime. Profiles, controller validation, requested/effective policy,
+bounded events, schema v11, multi-Pane inventory/recovery, RG-004 pressure,
+short soak, and local Fedora installed-systemd qualification pass. Ubuntu and
+Debian real-VM qualification and the five-hour soak remain open.
 
 - Add reusable, opt-in resource profiles.
 - Harden Pane systemd scope, controller detection, detached-process cleanup,
   and recovery.
 - Expose bounded resource usage and enforcement events.
-- Pass a 24-hour multi-Session resource soak.
+- Pass a five-hour operation-dense multi-Session resource soak.
 - Validate installed systemd and cgroup behavior on each claimed Linux target.
 
 Exit: the Stage 7 gates in

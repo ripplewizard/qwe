@@ -1,8 +1,8 @@
 # V0 Contract Test Matrices
 
-Status: Stages 1-5 complete for Linux-first V0; Fedora Linux x86_64 supported;
-macOS ARM64 remains experimental/local
-Date: 2026-11-06
+Status: Stages 1-5 complete for Linux-first V0; Stage 7 deterministic and
+Fedora installed-systemd gates pass; Ubuntu/Debian and five-hour soak pending
+Date: 2026-11-10
 
 These IDs are stable contract identifiers. An implementation test may be
 named after an ID only after it exercises the complete row with real sockets,
@@ -305,19 +305,21 @@ release targets.
 | SHARED-005 | Exercise interactive and observer channels on one Pane | Interactive authority is exclusive for that Pane; the qwed-owned observer receives snapshot/output only and cannot input, resize, or control |
 | SHARED-006 | Tear down a Pane ResourceScope with detached jobs | The complete Pane scope closes without residual processes or controller state, and the cleanup tombstone records success |
 
-SHARED-001 passes for two- and four-Pane runs on Fedora Linux x86_64 with
+The shared-prerequisites spike passes for two- and four-Pane runs on Fedora Linux x86_64 with
 systemd user cgroup v2 delegation in
 [Experiment 0028](experiments/0028-stage6-shared-prerequisites-spike.md). The
-result uses a spike-local supervisor and direct worker Attach. SHARED-002 is
-not run: production qwed multi-Pane integration is deferred implementation
-work, not a Stage 6.4 claim. Experiment 0028 recommended the accepted observer
-projection and complete-scope-teardown rules.
+result uses a spike-local supervisor and direct worker Attach. Production
+qwed multi-Pane inventory and recovery now pass through
+`just stage7-multi-pane`; observer-channel persistence remains open.
+Experiment 0028 recommended the accepted observer projection and
+complete-scope-teardown rules.
 
 Stage 6.5 accepted ADR 0021 on 2026-11-09 with Pane-first enforcement,
 Pane-keyed inventory and Attach, the qwed-owned observer projection, complete
 scope teardown, and the v11 migration invariants in
-[Storage Migration](storage-migration.md). SHARED-002 through SHARED-006 are
-planned for Stage 7 and are not passing implementation evidence.
+[Storage Migration](storage-migration.md). The production shared-prerequisite
+rows are implemented under Stage 7; observer-channel persistence remains
+open.
 
 ## Stage 7 Resource Governance
 
@@ -330,4 +332,11 @@ planned for Stage 7 and are not passing implementation evidence.
 | RG-005 | Qualify installed-systemd Linux targets | Packaged service, cgroup delegation, limits, recovery, and cleanup pass before support is claimed |
 | RG-006 | Retain long-run resource events | Enforcement and pressure history remains bounded with an explicit retention policy |
 
-These rows are planned. They pass only with linked real-process evidence.
+The Stage 7 deterministic probe covers profile resolution, controller
+rejection, requested/effective policy, crash-restart persistence, bounded
+events, short-lived startup acknowledgement, detached-job scope cleanup, and
+concurrent memory/CPU/task pressure with qwed latency. The short soak covers
+eight Sessions with two Panes, qwed restarts, churn, Attach cycles, and scope
+cleanup. Fedora installed-systemd qualification passes. Ubuntu 22.04, Ubuntu
+24.04, and Debian 12 remain blocked on unavailable real-VM targets; the
+five-hour operation-dense release soak remains open.

@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::ffi::CString;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 
@@ -26,7 +26,13 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         let mut stream = UnixStream::connect(topology_socket)
             .map_err(|failure| format!("failed to connect topology broker: {failure}"))?;
         serde_json::to_writer(&mut stream, &payload)?;
+        stream.write_all(b"\n")?;
         stream.flush()?;
+        let mut acknowledgement = [0_u8; 1];
+        stream.read_exact(&mut acknowledgement)?;
+        if acknowledgement != *b"1" {
+            return Err("resource topology broker rejected the handshake".into());
+        }
         let _ = stream.shutdown(std::net::Shutdown::Both);
     }
     if let Some(path) = args.credential_socket {
