@@ -44,10 +44,15 @@ pub struct ResourceMetrics {
     pub last_violation: Option<String>,
     pub stats: qwe_runtime::CgroupStats,
     pub events: VecDeque<ResourceEvent>,
+    #[cfg(target_os = "linux")]
     memory_event_max_seen: u64,
+    #[cfg(target_os = "linux")]
     memory_oom_seen: u64,
+    #[cfg(target_os = "linux")]
     memory_oom_kill_seen: u64,
+    #[cfg(target_os = "linux")]
     pids_event_max_seen: u64,
+    #[cfg(target_os = "linux")]
     cpu_throttled_seen: u64,
 }
 
@@ -63,10 +68,15 @@ impl Default for ResourceMetrics {
             last_violation: None,
             stats: qwe_runtime::CgroupStats::default(),
             events: VecDeque::with_capacity(RESOURCE_EVENT_LIMIT),
+            #[cfg(target_os = "linux")]
             memory_event_max_seen: 0,
+            #[cfg(target_os = "linux")]
             memory_oom_seen: 0,
+            #[cfg(target_os = "linux")]
             memory_oom_kill_seen: 0,
+            #[cfg(target_os = "linux")]
             pids_event_max_seen: 0,
+            #[cfg(target_os = "linux")]
             cpu_throttled_seen: 0,
         }
     }
@@ -652,6 +662,7 @@ fn record_event(metrics: &mut ResourceMetrics, kind: &str, severity: &str, messa
     });
 }
 
+#[cfg(target_os = "linux")]
 fn counter_value(counters: &[(String, u64)], name: &str) -> u64 {
     counters
         .iter()
@@ -659,6 +670,7 @@ fn counter_value(counters: &[(String, u64)], name: &str) -> u64 {
         .unwrap_or_default()
 }
 
+#[cfg(target_os = "linux")]
 fn observe_stats(metrics: &mut ResourceMetrics, stats: &qwe_runtime::CgroupStats) {
     let memory_max = counter_value(&stats.memory_events, "max");
     if memory_max > metrics.memory_event_max_seen {

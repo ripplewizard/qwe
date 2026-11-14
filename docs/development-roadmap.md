@@ -122,12 +122,14 @@ and [Storage Migration](storage-migration.md).
 
 ## Milestone D6: Linux Resource Governance
 
-Status: In progress. Stage 7 productizes Linux cgroup v2 resource controls as
+Status: Complete. Stage 7 productized Linux cgroup v2 resource controls as
 Pane-first ResourceScopes for long-running Sessions. It is not a Docker or
 Podman runtime. Profiles, controller validation, requested/effective policy,
 bounded events, schema v11, multi-Pane inventory/recovery, RG-004 pressure,
-short soak, and local Fedora installed-systemd qualification pass. Ubuntu and
-Debian real-VM qualification and the five-hour soak remain open.
+short soak, local Fedora installed-systemd qualification, and Ubuntu
+22.04/24.04 plus Debian 12 real-VM qualification pass. Two six-hour runs on
+Ubuntu 22.04 completed the long-run gate with eleven qwed restarts each and
+complete cleanup.
 
 - Add reusable, opt-in resource profiles.
 - Harden Pane systemd scope, controller detection, detached-process cleanup,
@@ -139,3 +141,33 @@ Debian real-VM qualification and the five-hour soak remain open.
 Exit: the Stage 7 gates in
 [Linux Resource Governance](stage7-resource-governance.md)
 pass without claiming container or security-sandbox capabilities.
+
+## Milestone D7: Session Layout
+
+Status: Complete. macOS/Linux/Podman and installed-systemd qualification pass.
+Stages 8.1-8.10
+add Pane-targeted Attach, deterministic layout query, the client compositor,
+schema v12/v13, durable layout/focus/bounds, split/close/reorder, visible and
+scrollback copy, mouse selection, keyboard/mouse floating move/resize, content
+mouse routing, and persisted click-to-raise z-order.
+
+- Present multiple Pane workers through one client compositor.
+- Add Pane-targeted Attach and shared tiling without changing default-Pane
+  compatibility.
+- Add Pane layout metadata and authorized split/close/focus controls.
+- Add Pane-clipped copy and a terminal quick menu.
+- Add fixed and draggable floating Panes with complete ResourceScope teardown.
+
+Exit: the Stage 8 gates in [Session Layout](stage8-session-layout.md) pass.
+
+## Next Feature Track: Agent Execution Model
+
+Status: ADR accepted; implementation not started. The stable name for this
+track is Agent Execution Model; it is not a renumbering of historical Stage 8.
+
+[ADR 0032](adr/0032-agent-execution-model.md) selects fresh-process `exec`,
+command handles with `wait_idle`, bounded command events and replay, read-only
+observation, capability and real-time revocation checks, per-command
+credentials, and explicit recovery/lost states. It defers `shell_exec`,
+sandbox implementation, cross-Pane orchestration, persistent history, and host
+management.

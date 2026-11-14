@@ -860,6 +860,7 @@ impl WorkerSession {
             let accepted = attach::AttachAccepted {
                 protocol_version: ATTACH_PROTOCOL_VERSION,
                 session_id: open.session_id.clone(),
+                pane_id: open.pane_id.clone(),
                 owner: open.owner.clone(),
                 generation: 0,
                 reclaim_token: token,
@@ -1238,6 +1239,21 @@ fn serve_worker_attachment(
                     "attach protocol {} is incompatible with {}",
                     open.protocol_version, ATTACH_PROTOCOL_VERSION
                 ),
+            ),
+        );
+        return Ok(());
+    }
+    if open
+        .pane_id
+        .as_deref()
+        .is_some_and(|pane_id| pane_id != session.pane_id.as_str())
+    {
+        let _ = attach::write_json_frame(
+            &mut stream,
+            attach::FrameType::Error,
+            &attach_error(
+                "pane_mismatch",
+                "attach target does not match this Pane worker",
             ),
         );
         return Ok(());

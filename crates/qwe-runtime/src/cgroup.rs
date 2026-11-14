@@ -1,4 +1,5 @@
 use qwe_core::ResourcePolicy;
+#[cfg(target_os = "linux")]
 use std::collections::BTreeMap;
 #[cfg(target_os = "linux")]
 use std::fs;
@@ -102,6 +103,7 @@ fn systemd_user_available() -> bool {
         })
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn parse_controllers(contents: &str) -> std::collections::BTreeSet<String> {
     contents.split_whitespace().map(str::to_string).collect()
 }
@@ -457,6 +459,7 @@ fn read_pressure(path: &Path) -> io::Result<Option<Pressure>> {
     Ok(parse_pressure(&contents))
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn parse_pressure(contents: &str) -> Option<Pressure> {
     let some = contents.lines().find(|line| line.starts_with("some "))?;
     let mut pressure = Pressure::default();

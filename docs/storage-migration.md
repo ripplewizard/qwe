@@ -1,9 +1,10 @@
-# Storage Migration: Shared-Prerequisites Schema v11
+# Storage Migration: Pane Layout Schema v13
 
-Status: Implemented in Stage 7; schema v11 is current
-Date: 2026-11-10
+Status: Implemented in Stage 8; schema v13 is current
+Date: 2026-11-11
 Authority: [ADR 0021](adr/0021-shared-prerequisites.md) and the v11 schema in
-`crates/qwe-storage`.
+`crates/qwe-storage`; Pane layout metadata is governed by
+[ADR 0023](adr/0023-durable-pane-layout.md).
 
 ## 1. Purpose
 
@@ -150,6 +151,7 @@ Future implementation uses these stable test IDs:
 | SHARED-004 | Start the multi-Pane topology from migrated state | qwed discovers, adopts, reports health for, and routes commands to workers by Pane; one Pane loss does not mark unrelated Panes lost |
 | SHARED-005 | Exercise interactive and observer channels on one Pane | Interactive authority is exclusive for that Pane; the observer receives snapshot/output only and cannot input, resize, or control |
 | SHARED-006 | Tear down a Pane ResourceScope containing detached jobs | The complete scope closes, no process or controller state remains, and the cleanup tombstone records the outcome |
+| LAYOUT-006 | Restart qwed after changing focus in a multi-Pane Session | Pane IDs, layout order, weights, and focused Pane survive unchanged |
 
 Migration tests must cover a production-generated v10 database, concurrent
 writers at shutdown, interrupted migration rollback, history retention,
@@ -158,8 +160,47 @@ history.
 
 ## 8. Non-Goals
 
-- Pane geometry and compositor persistence.
+- Freeform Pane geometry, split trees, and floating-overlay persistence.
 - `exec` versus `shell_exec` semantics or command-handle storage.
 - Capability-token encoding, AuthContext internals, or revocation severity.
 - Sandbox, namespace, UID, filesystem, or network isolation.
 - Terminal replay persistence or disk-backed scrollback.
+
+## 9. v11 to v12: Durable Pane Layout
+
+Schema v12 preserves every v11 identity and adds:
+
+- `panes.kind` with `normal` as the migration default;
+- `panes.layout_order`, unique within active Session layout membership;
+- `panes.layout_weight`, default `1`;
+- `panes.z_index`, default `0`;
+- `session_layouts.focused_pane_id`.
+
+The migration orders existing Panes by stable Pane ID, gives every Pane equal
+weight, and selects the first ordered Pane as focus. The pre-migration backup
+and all validation remain transactional. Focus is a user preference, not
+attachment authority; `PANE_FOCUS` enforces the target Pane's attachment
+authority separately.
+
+The physical index on `(session_id, layout_order)` is non-unique because closed
+Panes remain history and retain tombstone orders. Active layout membership is
+limited to Pane workers in `active` or `exited` state; qwed and storage enforce
+unique, complete ordering for that live set transactionally.
+
+Floating Panes retain the same Pane identity and worker records, persist
+`kind=floating` plus increasing `z_index`, and are excluded from tiled reorder
+membership.
+
+## 10. v12 to v13: Durable Floating Bounds
+
+Schema v13 adds nullable `floating_x`, `floating_y`, `floating_rows`, and
+`floating_columns` to `panes`.
+
+- All four values are null or all are present.
+- Only floating Panes may store nonzero bounds.
+- Bounds are clamped to the current usable viewport at render time.
+- Migration leaves every existing floating Pane with null bounds, preserving
+  the centered popup default.
+
+`PANE_FLOATING_UPDATE` persists a complete rectangle under LayoutMutation
+authority and preserves Pane, worker, Task, and ResourceScope identity.

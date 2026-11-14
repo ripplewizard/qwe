@@ -1,8 +1,8 @@
 # QWE IPC Protocol
 
-Status: Stages 1-4 validated on macOS ARM64 and Fedora Linux x86_64. The
-accepted multi-Pane contract is documented but not implemented.
-Date: 2026-11-09
+Status: Multi-Pane inventory and control are implemented. Stage 8 slices 1-10
+add Pane-targeted Attach, composition, durable layout, and copy controls.
+Date: 2026-11-11
 
 This document describes the currently implemented request/response protocol
 and the accepted Stage 6.5 target where explicitly labeled. The accepted V0
@@ -102,10 +102,13 @@ subscriber before capturing `SNAPSHOT`, so `OUTPUT` starts at
 `RESIZE` is ordered against output by a worker stream lock. EOF releases the
 Active attachment immediately.
 
-V0 `read_only` is rejected with `unsupported_mode`. Immediate `DETACH` closes
-the channel and releases authority. A positive-TTL `DETACH` closes the channel
-and creates a Lease-backed Hold. Reattach requires the current owner and Lease
-generation and writes a release tombstone before returning Active.
+`read_only` opens a qwed-owned observer channel. The observer receives a
+snapshot and subsequent live output mirrored from the Pane's exclusive
+interactive channel, but cannot send input, resize, detach, or lifecycle
+control. Immediate `DETACH` closes the interactive channel and releases
+authority. A positive-TTL `DETACH` closes the channel and creates a
+Lease-backed Hold. Reattach requires the current owner and Lease generation
+and writes a release tombstone before returning Active.
 
 qwed decides `ATTACH_OPEN` before opening the worker data channel. It returns a
 256-bit CSPRNG reclaim token only after persisting the active owner and token
@@ -220,21 +223,102 @@ loss is permitted.
 ## 10. Multi-Pane Contract
 
 [ADR 0021](adr/0021-shared-prerequisites.md) accepts Pane-targeted channels and
-Pane-keyed worker inventory. Schema v11 and qwed's Pane-keyed control operations
-are implemented. The public `qwe-v1` binary Attach frame remains Session
-addressed and resolves the Session's default Pane; a Pane-addressed streaming
-Attach version and observer projection remain future protocol work.
+Pane-keyed worker inventory. Schema v13 and qwed's Pane-keyed control operations
+are implemented. The public `qwe-v1` binary Attach resolves the Session's
+default Pane when `pane_id` is omitted. Stage 8 slices 1-10 add direct routing
+and Pane composition controls. qwed-owned interactive and observer channels
+can coexist on one Pane while only the interactive channel holds write
+authority.
 
 ### Target Selection
 
+- `ATTACH_OPEN` carries `session_id` and an optional `pane_id`. qwed verifies
+  the Pane belongs to the Session before selecting its worker and attachment
+  authority.
 - `PANE_CREATE` carries `session_id`; other Pane control operations carry
   `pane_id`. qwed resolves the owning Session from durable state.
+- `PANE_CREATE.after_pane_id` inserts immediately after a live source Pane;
+  omission appends. `PANE_REORDER` replaces the complete ordered live Pane
+  list transactionally.
+- `PANE_CREATE.pane_kind=floating` creates a full worker-backed overlay with an
+  increasing z-index. Floating Panes reject `after_pane_id` and do not
+  participate in `PANE_REORDER`.
+- `PANE_FLOATING_UPDATE` saves a complete floating rectangle under
+  LayoutMutation authority and rejects tiled Panes.
+- `PANE_FOCUS` persists the Session focus preference. It requires Active owner
+  authority on the target Pane, Held owner plus generation, or a current
+  Session Lease when the target is unattached.
 - qwed resolves the Pane worker from inventory and rejects a missing, lost, or
   unreachable Pane before opening a worker channel.
 - Clients never supply a worker socket path or select a worker by Session
   order.
 - Pane-scoped interactive and observer attachment state is durable. Session
   Leases remain the fence for Session-wide lifecycle operations.
+
+### Layout Query
+
+`SESSION_LAYOUT` accepts `session_id`, `rows`, and `columns`. It is read-only
+and returns Pane identity, worker state, focus, layout order, relative weight,
+z-index, and non-overlapping viewport-relative rectangles. The current
+implementation uses deterministic near-square tiling for normal Panes and is
+bounded to 64 Panes. Floating Panes return a centered popup rectangle and are
+ordered after tiled Panes by z-index.
+
+Schema v12 persists Pane order, weight, z-index, and Session focus; v13 adds
+optional floating rectangles. An explicit
+`focused_pane_id` is a request hint; otherwise persisted focus is used, then
+the first ordered Pane. Default Attach resolves the same persisted focus before
+layout order.
+
+`qwe session layout` exposes the response. `qwe session compose` uses it to
+open one Pane-targeted Attach channel per Pane and routes input only to the
+focused Pane. Existing `qwe session attach` continues to target the default
+Pane. See [ADR 0022](adr/0022-session-layout-compositor.md).
+
+Closed and lost Pane-worker history is excluded from `SESSION_LAYOUT` and
+`PANE_REORDER` membership. The compositor uses `Ctrl-A c` to split after focus,
+`Ctrl-A x` to close focus, and `Ctrl-A h/l` to move focus left/right. The last
+visible Pane cannot be closed by `Ctrl-A x`; close its Session instead. See
+[ADR 0024](adr/0024-pane-composition-controls.md).
+
+`Ctrl-A f` creates a centered fixed floating shell. Floating Panes retain
+independent workers, PTYs, and ResourceScopes and can be focused or closed
+normally. Title dragging, corner resizing, and topmost-z hit-testing are
+implemented. See
+[ADR 0026](adr/0026-fixed-floating-panes.md).
+
+`Ctrl-A d` enters keyboard move mode for the focused floating Pane. `h/j/k/l`
+moves, `H/L` changes width, `K/J` changes height, `y` saves, and `q`/Escape
+cancels. Saved rectangles survive restart and are clamped by the client to the
+usable viewport. See
+[ADR 0027](adr/0027-floating-bounds-and-keyboard-move.md).
+
+The compositor enables SGR button-event tracking (`1002`/`1006`) while attached.
+Left-button drag on a floating title row persists bounds on release. Pane
+hit-testing walks the rendered stack in reverse z-order. Content mouse events
+are forwarded to the target Pane only when its VT screen enabled a mouse
+protocol. See [ADR 0028](adr/0028-mouse-drag-and-hit-testing.md).
+
+A visible bottom-right marker is the floating resize handle. Dragging it
+changes only the client draft width/height and persists one rectangle on
+release. See [ADR 0029](adr/0029-mouse-resize-handle.md).
+
+Left press on any floating Pane calls `PANE_FLOATING_RAISE`, persists a new
+z-index, and reorders the client view/Attach stack before drag or content
+routing. See [ADR 0030](adr/0030-floating-z-order.md).
+
+Copy mode Ctrl-U/Ctrl-D navigates bounded client VT scrollback. Mouse
+press/motion/release inside focused-Pane content creates a Pane-clamped
+selection and copies on release. Attach replacement or compositor restart
+discards selection and client scrollback. See
+[ADR 0031](adr/0031-scrollback-and-mouse-copy.md).
+
+`Ctrl-A [` enters focused-Pane visible-screen copy mode and `Ctrl-A m` opens
+the client quick menu. Copy and menu state are not protocol objects. Selection
+is clamped to the focused Pane's current client VT screen; snapshot
+replacement, resize, process exit, and Attach close cancel it. Clipboard
+success names the provider; failure is explicit. Menu bytes are consumed before
+PTY input. See [ADR 0025](adr/0025-copy-and-quick-menu.md).
 
 ### Channel Profiles
 
@@ -248,8 +332,9 @@ inputs. The detailed profile table and authorization boundary are in
 internal worker Attach channel. It can subscribe to snapshot and output but
 cannot send input, resize, detach, or lifecycle control. qwed rejects those
 frames before they reach the worker. The worker does not need a native
-`read_only` Attach mode; V0 continues to reject that reserved mode with
-`unsupported_mode`.
+`read_only` Attach mode; qwed maps the public observer profile onto its
+internal exclusive worker channel and fans committed frames out to observer
+subscribers.
 
 ### Inventory, Recovery, and Resource Reporting
 
@@ -264,11 +349,12 @@ frames before they reach the worker. The worker does not need a native
 
 ### Compatibility
 
-The future protocol change is additive at the object level but not wire
-compatible with a client that assumes one Session equals one worker. It must
-introduce a new negotiated protocol version, update
-[Storage Migration](storage-migration.md), and pass SHARED-002 through
-SHARED-006 before replacing the V0 path.
+Optional `pane_id` and `SESSION_LAYOUT` are additive: clients that omit the
+field continue to use the default Pane. A protocol change that removes the
+default or requires every client to understand multiple workers must introduce
+a new negotiated protocol version, update [Storage Migration](storage-migration.md),
+and pass the applicable shared-prerequisite cases before replacing the
+compatible path.
 
 ## 11. Security Model
 

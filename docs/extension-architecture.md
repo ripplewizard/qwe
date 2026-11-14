@@ -103,10 +103,10 @@ Task
 
 ID	Extension	Priority	Current Status
 E01	QWE Mesh	High	Research
-E02	Resource Controller	High	V0 cgroup v2 controls implemented; Stage 7 hardening
+E02	Resource Controller	High	Stage 7 complete; Linux cgroup v2 and macOS monitoring implemented
 E03	Credential Broker	High	Research
 E04	Security Sandbox	Medium	Research
-E05	Agent Runtime	Medium	Research
+E05	Agent Runtime	Medium	ADR 0032 accepted; implementation pending
 E06	Environment Backend	Medium	Basic Definition
 E07	Terminal Backend	High	POC Required
 

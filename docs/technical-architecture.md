@@ -67,6 +67,10 @@ and liveness matrix work is tracked in
 - Renders JSON, terminal output, or TUI state.
 - Drives the long-lived Attach channel with raw terminal mode, terminal-size
   polling, and `Ctrl-]` detach.
+- Runs `session compose` as a client-side projection over one Pane-targeted
+  Attach channel per displayed Pane.
+- Implements Pane-clamped visible-screen copy and a quick menu without
+  forwarding menu bytes to PTY input.
 - Never accesses SQLite directly.
 
 ### qwed
@@ -79,7 +83,8 @@ and liveness matrix work is tracked in
   persistent control EOF, and runs the bounded safety scan. Inventory,
   recovery, health, and control routing are keyed by Pane.
 - Authenticates and proxies the dedicated Attach socket to the selected Pane
-  worker. Observer access is a qwed-owned read-only projection.
+  worker. Attach may select an optional Pane; omission preserves the default
+  Pane. Observer access is a qwed-owned read-only projection.
 - Does not own PTYs or process groups.
 
 ### qwe-worker
@@ -142,6 +147,10 @@ Operations:
 ```text
 session.create
 session.attach
+session.layout
+pane.focus
+pane.reorder
+pane.floating_update
 session.detach
 session.input
 session.resize
@@ -229,6 +238,39 @@ snapshot's `next_stream_offset` is the first offset that may appear in an
 `OUTPUT` frame. A per-attachment queue overflows at 1 MiB and closes only that
 channel with `output_backpressure`.
 
+Stage 8 slice 1 adds optional Pane targeting to `ATTACH_OPEN`. qwed validates
+that the Pane belongs to the requested Session and proxies only to that Pane
+worker. A compositor can therefore hold one exclusive interactive channel per
+Pane. `SESSION_LAYOUT` returns viewport-relative rectangles from the shared
+`qwe-core` tiling function. Pane kind, order, relative weight, z-index, and
+Session focus are durable in schema v12; floating rectangles are durable in
+schema v13 and viewport layouts are derived.
+See [ADR 0022](adr/0022-session-layout-compositor.md) and
+[ADR 0023](adr/0023-durable-pane-layout.md). Relative insertion and reorder
+are authorized qwed mutations under
+[ADR 0024](adr/0024-pane-composition-controls.md).
+
+Copy mode and the quick menu remain client projections under
+[ADR 0025](adr/0025-copy-and-quick-menu.md). Copy text comes from the focused
+Pane's current client VT screen, never from native terminal selection or the
+diagnostic journal. Snapshot replacement, resize, process exit, and Attach close
+cancel active selections.
+
+Fixed floating Panes use the same worker/Attach/resource paths under
+[ADR 0026](adr/0026-fixed-floating-panes.md). Tiled geometry excludes them;
+the compositor derives a centered popup and renders floating Panes afterward in
+persisted z-order. [ADR 0027](adr/0027-floating-bounds-and-keyboard-move.md)
+persists optional rectangles and provides `Ctrl-A d` keyboard move/resize.
+[ADR 0028](adr/0028-mouse-drag-and-hit-testing.md) enables SGR button-event
+tracking, performs topmost-z hit-testing, and persists floating title drags on
+release. Content mouse events are forwarded only when the child VT mouse mode is
+enabled. [ADR 0029](adr/0029-mouse-resize-handle.md) adds bottom-right corner
+resize with the same draft and single-persist boundary.
+[ADR 0030](adr/0030-floating-z-order.md) raises a floating Pane on left press
+and reorders client views/targets by persisted z-index.
+[ADR 0031](adr/0031-scrollback-and-mouse-copy.md) exposes bounded client VT
+scrollback in copy mode and supports focused-Pane mouse selection.
+
 Stage 3 moves attachment authority to qwed. qwed validates `ATTACH_OPEN`,
 persists the active owner and SHA-256 reclaim-token hash, and only then sends
 `ATTACH_ACCEPTED`. It intercepts `DETACH` to create a positive-TTL hold or an
@@ -251,6 +293,7 @@ startup; only the matching token can resume the Session during that window.
 | Lease owner/deadline | `qwed` | SQLite |
 | Attachment authority | `qwed` | SQLite token hash, owner, generation, deadline; keyed by Pane after v11 |
 | Task history | `qwed` | SQLite |
+| Pane layout metadata, focus, and floating bounds | `qwed` | SQLite schema v13 |
 | Worker control, health, and inventory | `qwed` supervisor | Persistent channels keyed by Pane, rebuilt by reconciliation |
 | Configuration | Workspace files | Files |
 
@@ -315,10 +358,15 @@ The process start token is mandatory. PID alone is never sufficient.
 - `CONTROL_STATUS.reconciliation` is computed from current Sessions, Tasks, and
   worker health. `last_scan_ms` reports the latest completed safety scan rather
   than a static startup value.
-- SQLite schema v11 removes the one-Pane/one-Task uniqueness assumptions and
+- SQLite schema v11 removed the one-Pane/one-Task uniqueness assumptions and
   stores Pane-worker, ResourceScope, and Principal records alongside
   Pane-keyed Tasks and attachment authority. `CONTROL_STATUS` exposes all
   inventory records.
+- Schema v12 adds durable Pane kind, layout order, relative weight, z-index,
+  and Session focus. Active layout membership includes only Pane workers in
+  `active` or `exited` state; closed/lost history remains queryable but does
+  not drive composition. Schema v13 adds optional floating rectangles and is
+  the current schema.
 - Lease release writes a generation tombstone; expiration does not kill Tasks.
 
 ## 10. Resource Model
@@ -380,6 +428,8 @@ reported only when a reliable platform identifier exists.
 - ChannelProfile separates projection and authorization from state ownership.
   `human_observer` is a qwed read-only projection; it cannot acquire input,
   resize, or lifecycle authority. AuthContext remains opaque to IPC clients.
+- Menu keys never enter PTY input. Clipboard provider failures are explicit and
+  are never reported as successful copies.
 - Principal records use monotonic epochs and tombstones. They do not elevate
   the V0 same-UID owner string into an authenticated identity.
 

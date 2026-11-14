@@ -58,6 +58,7 @@ pub enum AttachmentOperation {
     InputResize,
     ResourcePolicy,
     PaneCreate,
+    LayoutMutation,
     Detach,
     CloseTaskStop,
     LeaseClaimTakeover,
@@ -212,7 +213,8 @@ impl AttachmentAuthority {
             },
             AttachmentOperation::CloseTaskStop
             | AttachmentOperation::ResourcePolicy
-            | AttachmentOperation::PaneCreate => match state {
+            | AttachmentOperation::PaneCreate
+            | AttachmentOperation::LayoutMutation => match state {
                 AttachmentAuthorityState::Active => self
                     .owner_matches(credentials.owner)
                     .then_some(())
@@ -500,6 +502,7 @@ mod tests {
         for operation in [
             AttachmentOperation::CloseTaskStop,
             AttachmentOperation::ResourcePolicy,
+            AttachmentOperation::LayoutMutation,
         ] {
             assert_eq!(
                 unattached

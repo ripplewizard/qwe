@@ -1,8 +1,8 @@
 # QWE Development Plan
 
-Status: Stage 6 accepted for Linux-first V0 adoption and stabilization;
-Stage 6.5 shared prerequisites accepted; Stage 7 in progress
-Updated: 2026-11-10
+Status: Stage 6.5 accepted; Stages 7 and 8 complete; Agent Execution Model ADR
+accepted
+Updated: 2026-11-14
 
 ## Planning Assumptions
 
@@ -32,7 +32,8 @@ Implemented with current repository evidence:
   interactive CLI loop.
 - Persisted attachment authority, reclaim-token grace, detached holds, Lease
   release tombstones, and 24-hour durable idempotency.
-- 51 workspace tests pass, including five `vt100` capability probes.
+- Workspace unit and integration tests pass, including five `vt100`
+  capability probes.
 
 Post-V0 follow-ups:
 
@@ -444,9 +445,10 @@ remain explicitly unimplemented until Stage 7.
 ### Stage 7: Linux Resource Governance
 
 Target: Qualification
-Status: In progress; deterministic P0 gates, schema v11, multi-Pane inventory,
-RG-004 pressure, short soak, and local Fedora installed-systemd qualification
-pass. Ubuntu/Debian real-VM targets and the five-hour soak remain open.
+Status: Complete; deterministic P0 gates, schema v11, multi-Pane inventory,
+RG-004 pressure, short soak, Fedora installed-systemd qualification, and
+Ubuntu 22.04/24.04 plus Debian 12 real KVM VM qualification pass. Two
+consecutive six-hour Ubuntu 22.04 runs pass the long-run gate.
 
 - Treat cgroup v2 as the Linux resource-control mechanism for Pane process
   trees, not as a container runtime.
@@ -466,6 +468,75 @@ Exit: the Stage 7 gates in
 [Linux Resource Governance](stage7-resource-governance.md)
 pass. Docker/Podman execution, namespaces, container images, and GPU isolation
 remain outside this stage.
+
+### Stage 8: Session Layout
+
+Target: Multi-Pane interactive composition
+Status: Complete; macOS/Linux/Podman and installed-systemd qualification pass.
+
+[ADR 0022](adr/0022-session-layout-compositor.md) selects Pane-targeted Attach
+and a client-side compositor over a second multiplexing daemon. Slice 1 adds
+`SESSION_LAYOUT`, deterministic normal-Pane tiling, Pane-addressed Attach
+channels, and `qwe session compose`. The existing default-Pane
+`qwe session attach` path remains compatible.
+
+Schema v12 and [ADR 0023](adr/0023-durable-pane-layout.md) add durable Pane
+kind, order, relative weight, z-index, and focus. `PANE_FOCUS` requires target
+Pane attachment authority and default Attach resolves persisted focus first.
+
+[ADR 0024](adr/0024-pane-composition-controls.md) adds relative insertion,
+authorized complete-order reorder, compositor split/close controls, and
+focus-preserving left/right moves. Closed and lost history records do not join
+the active layout.
+
+[ADR 0025](adr/0025-copy-and-quick-menu.md) adds Pane-scoped visible-screen
+copy, explicit clipboard outcomes, and a keyboard quick menu that consumes its
+keys before PTY input.
+
+[ADR 0026](adr/0026-fixed-floating-panes.md) adds real floating Pane workers,
+deterministic centered popup geometry, persisted z-order, focused input, and
+normal close semantics. Dragging and mouse hit-testing remain open.
+
+[ADR 0027](adr/0027-floating-bounds-and-keyboard-move.md) upgrades storage to
+v13, persists floating rectangles, and adds authorized keyboard move/resize.
+Mouse dragging and hit-testing are added by the following slice.
+
+[ADR 0028](adr/0028-mouse-drag-and-hit-testing.md) adds SGR mouse title drag,
+topmost-z hit-testing, click focus, and conditional child mouse-event routing.
+
+[ADR 0029](adr/0029-mouse-resize-handle.md) adds a floating bottom-right mouse
+resize handle using the same clamped draft and single-persist boundary.
+
+[ADR 0030](adr/0030-floating-z-order.md) adds left-click raise, persisted
+z-order, and client view/target reordering.
+
+[ADR 0031](adr/0031-scrollback-and-mouse-copy.md) adds bounded client
+scrollback and focused-Pane mouse selection.
+
+- Preserve one exclusive interactive writer per Pane.
+- Keep worker inventory, attachment authority, and terminal state in the
+  existing qwed/worker ownership model.
+- Add durable Pane kind, layout order, z-index, and split ratios without
+  rewriting stable Pane identities.
+- Add authorized split, close, focus, and reorder controls.
+- Add Pane-clipped copy, quick menu, and fixed then draggable floating Panes.
+- Keep client shortcuts and rendering outside qwed authorization.
+
+Exit: the Stage 8 gates in
+[Session Layout](stage8-session-layout.md) pass on the supported platform
+matrix.
+
+### Next: Agent Execution Model
+
+Status: [ADR 0032](adr/0032-agent-execution-model.md) accepted; implementation
+not started.
+
+The first delivery is a fresh-process `exec` primitive with command handles and
+`wait_idle`, bounded command events and replay, read-only observation,
+capability and revocation enforcement, per-command credentials, and explicit
+recovery/lost states. It reuses Pane workers and ResourceScopes. `shell_exec`,
+external sandbox integration, cross-Pane orchestration, persistent semantic
+history, and host management remain deferred.
 
 ## Test and Delivery Gates
 
@@ -488,6 +559,7 @@ Implemented Stage gates:
 just protocol-check
 just attach-e2e
 just service-config-check
+just stage8-check
 just stage4-capabilities
 just stage4-check
 just credential-smoke

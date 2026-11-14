@@ -1,7 +1,7 @@
 # Testing Strategy
 
-Status: Active; Stage 5 release gates complete; Stage 6.5 accepted
-Date: 2026-11-09
+Status: Active; Stage 7 and Stage 8 gates complete; Agent Execution ADR accepted
+Date: 2026-11-14
 
 ## Test Layers
 
@@ -73,8 +73,9 @@ Release-mode and long-duration measurements are required before V0.
 dedicated Attach channel. It checks the handshake,
 structured snapshot, exclusive-attach rejection, raw input/output framing,
 stream-offset continuity, resize ordering, immediate detach, reconnect,
-`read_only` rejection, unknown-frame rejection, and version rejection. It also
-drives the interactive CLI through the same channel.
+qwed-owned `read_only` observer acceptance and write rejection, unknown-frame
+rejection, and version rejection. It also drives the interactive CLI through
+the same channel.
 
 The gate passes on Linux x86_64 and macOS ARM64. The channel probe also opens a
 slow client, drives output past the 1 MiB queue, verifies
@@ -224,7 +225,8 @@ Attach, schema v11, observer authorization, and complete scope cleanup.
 Container compatibility tests cannot substitute for these gates.
 
 The executable Stage 7 gates are `stage7-pressure`, `stage7-multi-pane`,
-`qwed-restart-volume`, `stage7-soak-short`, `stage7-soak`,
+`qwed-restart-volume`, `stage7-reconciliation-scale`, `stage7-teardown-scale`,
+`stage7-soak-short`, `stage7-soak`,
 `stage7-qualification-node`, and `stage7-qualification-matrix`. Qualification
 output records distribution and VM reachability explicitly; unavailable
 targets are `blocked`, never `pass`.
@@ -235,6 +237,23 @@ Keychain, records `local-self-signed` and `public_trust: false`, adds the
 `-local` package suffix, and is rejected by the public gate before any Apple
 notary submission. `just macos-local-signing-smoke` separately verifies the
 create, sign, inspect, remove, and Keychain-search-list restoration lifecycle.
+
+Stage 8 slice 1 adds `just stage8-layout`. It creates a two-Pane Session and
+checks deterministic tiling, Pane-targeted Attach, concurrent exclusive
+channels to distinct Panes, focused input, compositor rendering, focus
+switching, and terminal reset on detach. LAYOUT-006 additionally restarts qwed
+and verifies durable layout order and focus. LAYOUT-007 and LAYOUT-008 exercise
+relative split/close and focus-preserving reorder through the interactive
+compositor. LAYOUT-009 and LAYOUT-010 verify focused-Pane visible-screen copy
+with an explicit clipboard provider and confirm menu keys never reach the PTY.
+LAYOUT-011 creates a worker-backed fixed floating Pane, verifies overlay focus
+and input, and closes it through normal teardown. LAYOUT-012 verifies keyboard
+move/resize and persisted floating bounds. LAYOUT-013 injects SGR mouse
+press/motion/release into a real compositor PTY and verifies title-row dragging.
+LAYOUT-014 drags the floating bottom-right resize handle and verifies persisted
+dimensions. LAYOUT-015 verifies click-to-raise on overlapping floating Panes.
+LAYOUT-016 verifies bounded scrollback copy and LAYOUT-017 verifies mouse
+selection in copy mode.
 
 ## ADR 0012-0015 Contract Matrices
 

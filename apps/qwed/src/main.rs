@@ -7,9 +7,10 @@ use clap::Parser;
 use credentials::CredentialProvider;
 use qwe_core::{
     AttachmentAuthority, AttachmentAuthorityState, AttachmentOperation, AuthorityCredentials,
-    DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_LEASE_TTL_MS, PaneId, PaneRecord, PaneWorkerRecord,
-    ProcessIdentity, ReclaimTokenHash, ReconciliationDisposition, ResourcePolicy, ResourceProfile,
-    ResourceScopeId, SessionRecord, TaskId, TaskRecord, TaskState, WorkerHealth,
+    DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_LEASE_TTL_MS, PaneId, PaneKind, PaneRecord,
+    PaneSpec, PaneWorkerRecord, ProcessIdentity, ReclaimTokenHash, ReconciliationDisposition,
+    ResourcePolicy, ResourceProfile, ResourceScopeId, SessionRecord, TaskId, TaskRecord, TaskState,
+    WorkerHealth, tile_pane_specs,
 };
 use qwe_protocol::{
     ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope,
@@ -30,7 +31,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -69,6 +70,7 @@ struct Context {
     resource_support: qwe_runtime::ResourceSupport,
     store: Mutex<Store>,
     workers: Mutex<HashMap<String, Arc<WorkerHandle>>>,
+    attachment_hubs: Mutex<HashMap<String, Arc<AttachmentHub>>>,
     reconciliation_incidents: Mutex<ReconciliationIncidents>,
     last_scan_ms: AtomicI64,
     worker_events: Sender<WorkerEvent>,
@@ -89,6 +91,52 @@ struct WorkerHandle {
     client: Option<Arc<WorkerClient>>,
     health_client: Option<Arc<WorkerClient>>,
     health: Mutex<WorkerHealth>,
+}
+
+struct AttachmentHub {
+    next_observer_id: AtomicU64,
+    observers: Mutex<HashMap<u64, mpsc::SyncSender<attach::ReceivedFrame>>>,
+}
+
+impl AttachmentHub {
+    fn new() -> Self {
+        Self {
+            next_observer_id: AtomicU64::new(1),
+            observers: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn subscribe(&self) -> (u64, mpsc::Receiver<attach::ReceivedFrame>) {
+        let id = self.next_observer_id.fetch_add(1, AtomicOrdering::SeqCst);
+        let (sender, receiver) = mpsc::sync_channel(128);
+        self.observers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(id, sender);
+        (id, receiver)
+    }
+
+    fn unsubscribe(&self, id: u64) {
+        self.observers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&id);
+    }
+
+    fn broadcast(&self, frame: &attach::ReceivedFrame) {
+        let mut observers = self
+            .observers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        observers.retain(|_, sender| sender.try_send(frame.clone()).is_ok());
+    }
+
+    fn close_observers(&self) {
+        self.observers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
 }
 
 #[derive(Debug)]
@@ -787,6 +835,11 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
             session_id: session_id.clone(),
             resource_scope_id: ResourceScopeId::new(),
             resource_policy: resource_policy.clone(),
+            kind: PaneKind::Normal,
+            layout_order: 0,
+            layout_weight: 1,
+            z_index: 0,
+            floating_rect: None,
             updated_at_ms: now,
         };
         let task = TaskRecord {
@@ -873,6 +926,68 @@ fn create_pane(context: &Context, payload: Value) -> Result<Value, ProtocolError
             now_ms(),
         )?;
     }
+    let after_pane_id = payload
+        .get("after_pane_id")
+        .and_then(Value::as_str)
+        .map(|value| {
+            PaneId::from_str(value).map_err(|failure| error("invalid_request", failure.to_string()))
+        })
+        .transpose()?;
+    let pane_kind = payload
+        .get("pane_kind")
+        .and_then(Value::as_str)
+        .unwrap_or("normal")
+        .parse::<PaneKind>()
+        .map_err(|failure| error("invalid_request", failure))?;
+    if pane_kind == PaneKind::Floating && after_pane_id.is_some() {
+        return Err(error(
+            "invalid_request",
+            "after_pane_id is only valid for tiled Panes",
+        ));
+    }
+    let (layout_order, z_index) = {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(after_pane_id) = after_pane_id.as_ref() {
+            let after = store
+                .find_pane(after_pane_id)
+                .map_err(storage_error)?
+                .filter(|pane| pane.session_id == session_id && pane.kind == PaneKind::Normal)
+                .ok_or_else(|| {
+                    error(
+                        "invalid_request",
+                        "after_pane_id must be a tiled Pane in the Session",
+                    )
+                })?;
+            (
+                after
+                    .layout_order
+                    .checked_add(1)
+                    .ok_or_else(|| error("invalid_request", "Pane layout order overflowed"))?,
+                0,
+            )
+        } else if pane_kind == PaneKind::Floating {
+            (
+                store
+                    .next_pane_layout_order(&session_id)
+                    .map_err(storage_error)?,
+                store
+                    .next_pane_z_index(&session_id)
+                    .map_err(storage_error)?,
+            )
+        } else {
+            let next = store
+                .list_tiled_panes_for_session(&session_id)
+                .map_err(storage_error)?
+                .into_iter()
+                .map(|pane| pane.layout_order)
+                .max()
+                .map_or(0, |order| order.saturating_add(1));
+            (next, 0)
+        }
+    };
     let program = payload
         .get("program")
         .and_then(Value::as_str)
@@ -924,6 +1039,11 @@ fn create_pane(context: &Context, payload: Value) -> Result<Value, ProtocolError
         session_id: session_id.clone(),
         resource_scope_id: ResourceScopeId::new(),
         resource_policy: resource_policy.clone(),
+        kind: pane_kind,
+        layout_order,
+        layout_weight: 1,
+        z_index,
+        floating_rect: None,
         updated_at_ms: now,
     };
     let worker = PaneWorkerRecord {
@@ -986,6 +1106,11 @@ fn create_pane(context: &Context, payload: Value) -> Result<Value, ProtocolError
     status["session_id"] = json!(session_id);
     status["pane_id"] = json!(pane_id);
     status["task_id"] = json!(task_id);
+    status["pane_kind"] = json!(pane.kind.as_str());
+    status["layout_order"] = json!(pane.layout_order);
+    status["layout_weight"] = json!(pane.layout_weight);
+    status["z_index"] = json!(pane.z_index);
+    status["floating_rect"] = json!(pane.floating_rect);
     annotate_resource_status(&mut status, &resource_policy);
     if let Some(response) = status.as_object_mut() {
         response.remove("total_written");
@@ -1188,6 +1313,90 @@ fn task_status(context: &Context, payload: &Value) -> Result<Value, ProtocolErro
     Ok(json!({"task": task_json(&task), "terminal": status}))
 }
 
+fn session_layout(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    let session_id = required_string(payload, "session_id")?;
+    let rows = u16::try_from(required_u64(payload, "rows")?)
+        .map_err(|_| error("invalid_request", "rows must fit in u16"))?;
+    let columns = u16::try_from(required_u64(payload, "columns")?)
+        .map_err(|_| error("invalid_request", "columns must fit in u16"))?;
+    let store = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    store
+        .find_session(session_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("not_found", "Session not found"))?;
+    let panes = store
+        .list_layout_panes_for_session(session_id)
+        .map_err(storage_error)?;
+    if panes.is_empty() {
+        return Err(error("not_found", "Session has no Panes"));
+    }
+    let requested_focus = payload
+        .get("focused_pane_id")
+        .and_then(Value::as_str)
+        .map(|value| {
+            PaneId::from_str(value).map_err(|failure| error("invalid_request", failure.to_string()))
+        })
+        .transpose()?;
+    let pane_ids = panes.iter().map(|pane| pane.id.clone()).collect::<Vec<_>>();
+    if requested_focus
+        .as_ref()
+        .is_some_and(|focused| !pane_ids.contains(focused))
+    {
+        return Err(error(
+            "invalid_request",
+            "focused_pane_id does not belong to the Session",
+        ));
+    }
+    let persisted_focus = store.session_focus(session_id).map_err(storage_error)?;
+    if persisted_focus
+        .as_ref()
+        .is_some_and(|focused| !pane_ids.contains(focused))
+    {
+        return Err(error(
+            "persistence_failure",
+            "persisted focus does not belong to the Session",
+        ));
+    }
+    let focused = requested_focus.as_ref().or(persisted_focus.as_ref());
+    let specs = panes
+        .iter()
+        .map(|pane| PaneSpec {
+            pane_id: pane.id.clone(),
+            kind: pane.kind,
+            layout_order: pane.layout_order,
+            layout_weight: pane.layout_weight,
+            z_index: pane.z_index,
+            floating_rect: pane.floating_rect,
+        })
+        .collect::<Vec<_>>();
+    let layouts = tile_pane_specs(&specs, rows, columns, focused)
+        .map_err(|failure| error("invalid_request", failure.to_string()))?;
+    let layouts = layouts
+        .into_iter()
+        .map(|layout| {
+            let pane_id = layout.pane_id.to_string();
+            let worker_state = store
+                .find_pane_worker(&layout.pane_id)
+                .map_err(storage_error)?
+                .map_or_else(|| "absent".to_string(), |worker| worker.state);
+            let mut value = serde_json::to_value(layout)
+                .map_err(|failure| error("internal", failure.to_string()))?;
+            value["worker_state"] = json!(worker_state);
+            value["pane_id"] = json!(pane_id);
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>, ProtocolErrorBody>>()?;
+    Ok(json!({
+        "session_id": session_id,
+        "rows": rows,
+        "columns": columns,
+        "panes": layouts
+    }))
+}
+
 fn update_session_resources(
     context: &Context,
     payload: &Value,
@@ -1354,6 +1563,219 @@ fn authorize_session_control(
             now_ms,
         )
         .map_err(|failure| error(failure.code(), failure.to_string()))
+}
+
+fn authorize_pane_control(
+    store: &mut Store,
+    session_id: &str,
+    pane_id: &PaneId,
+    payload: &Value,
+    operation: AttachmentOperation,
+    now_ms: i64,
+) -> Result<(), ProtocolErrorBody> {
+    let mut authority = store
+        .get_attachment_authority_for_pane(pane_id)
+        .map_err(storage_error)?
+        .unwrap_or_else(AttachmentAuthority::unattached);
+    if authority.state != authority.state_at(now_ms) {
+        authority.release();
+        store
+            .write_attachment_authority_for_pane(pane_id, &authority, now_ms)
+            .map_err(storage_error)?;
+    }
+    if authority.state == AttachmentAuthorityState::Unattached
+        && operation == AttachmentOperation::LayoutMutation
+    {
+        let owner = payload.get("owner").and_then(Value::as_str);
+        let generation = required_u64(payload, "generation").ok();
+        if let Some(lease) = store.get_lease(session_id).map_err(storage_error)? {
+            if owner == Some(lease.owner.as_str())
+                && generation == Some(lease.generation)
+                && lease.released_at_ms.is_none()
+                && lease.deadline_ms > now_ms
+            {
+                return Ok(());
+            }
+        }
+    }
+    authority
+        .authorize(
+            operation,
+            AuthorityCredentials {
+                owner: payload.get("owner").and_then(Value::as_str),
+                lease_generation: required_u64(payload, "generation").ok(),
+                ..AuthorityCredentials::default()
+            },
+            now_ms,
+        )
+        .map_err(|failure| error(failure.code(), failure.to_string()))
+}
+
+fn pane_focus(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    let pane_id = required_pane_id(payload)?;
+    let now = now_ms();
+    let mut store = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let pane = store
+        .find_pane(&pane_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("not_found", "Pane not found"))?;
+    authorize_pane_control(
+        &mut store,
+        &pane.session_id,
+        &pane_id,
+        payload,
+        AttachmentOperation::LayoutMutation,
+        now,
+    )?;
+    store
+        .set_session_focus(&pane.session_id, &pane_id, now)
+        .map_err(storage_error)?;
+    Ok(json!({
+        "session_id": pane.session_id,
+        "pane_id": pane_id,
+        "focused_at_ms": now
+    }))
+}
+
+fn pane_reorder(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    let pane_values = payload
+        .get("pane_ids")
+        .and_then(Value::as_array)
+        .ok_or_else(|| error("invalid_request", "missing pane_ids"))?;
+    if pane_values.is_empty() {
+        return Err(error("invalid_request", "pane_ids must not be empty"));
+    }
+    if pane_values.len() > qwe_core::MAX_LAYOUT_PANES {
+        return Err(error(
+            "invalid_request",
+            format!(
+                "pane_ids supports at most {} Panes",
+                qwe_core::MAX_LAYOUT_PANES
+            ),
+        ));
+    }
+    let pane_ids = pane_values
+        .iter()
+        .map(|value| {
+            let value = value
+                .as_str()
+                .ok_or_else(|| error("invalid_request", "pane_ids must contain strings"))?;
+            PaneId::from_str(value).map_err(|failure| error("invalid_request", failure.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if pane_ids.iter().collect::<HashSet<_>>().len() != pane_ids.len() {
+        return Err(error("invalid_request", "pane_ids contains duplicates"));
+    }
+
+    let now = now_ms();
+    let mut store = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let first = store
+        .find_pane(&pane_ids[0])
+        .map_err(storage_error)?
+        .ok_or_else(|| error("not_found", "Pane not found"))?;
+    let expected = store
+        .list_tiled_panes_for_session(&first.session_id)
+        .map_err(storage_error)?
+        .into_iter()
+        .map(|pane| pane.id)
+        .collect::<HashSet<_>>();
+    if pane_ids.iter().cloned().collect::<HashSet<_>>() != expected {
+        return Err(error(
+            "invalid_request",
+            "pane_ids must include every Pane in the Session exactly once",
+        ));
+    }
+    authorize_session_control(
+        &mut store,
+        &first.session_id,
+        payload,
+        AttachmentOperation::LayoutMutation,
+        now,
+    )?;
+    store
+        .reorder_panes(&first.session_id, &pane_ids, now)
+        .map_err(storage_error)?;
+    Ok(json!({
+        "session_id": first.session_id,
+        "pane_ids": pane_ids,
+        "updated_at_ms": now
+    }))
+}
+
+fn pane_floating_update(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    let pane_id = required_pane_id(payload)?;
+    let rect = payload
+        .get("rect")
+        .cloned()
+        .ok_or_else(|| error("invalid_request", "missing rect"))
+        .and_then(|value| {
+            serde_json::from_value::<qwe_core::LayoutRect>(value)
+                .map_err(|failure| error("invalid_request", failure.to_string()))
+        })?;
+    rect.validate()
+        .map_err(|failure| error("invalid_request", failure.to_string()))?;
+    let now = now_ms();
+    let mut store = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let pane = store
+        .find_pane(&pane_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("not_found", "Pane not found"))?;
+    authorize_pane_control(
+        &mut store,
+        &pane.session_id,
+        &pane_id,
+        payload,
+        AttachmentOperation::LayoutMutation,
+        now,
+    )?;
+    let pane = store
+        .update_pane_floating_rect(&pane_id, rect, now)
+        .map_err(storage_error)?;
+    Ok(json!({
+        "session_id": pane.session_id,
+        "pane_id": pane.id,
+        "rect": pane.floating_rect,
+        "updated_at_ms": pane.updated_at_ms
+    }))
+}
+
+fn pane_floating_raise(context: &Context, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    let pane_id = required_pane_id(payload)?;
+    let now = now_ms();
+    let mut store = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let pane = store
+        .find_pane(&pane_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("not_found", "Pane not found"))?;
+    authorize_pane_control(
+        &mut store,
+        &pane.session_id,
+        &pane_id,
+        payload,
+        AttachmentOperation::LayoutMutation,
+        now,
+    )?;
+    let pane = store
+        .raise_floating_pane(&pane_id, now)
+        .map_err(storage_error)?;
+    Ok(json!({
+        "session_id": pane.session_id,
+        "pane_id": pane.id,
+        "z_index": pane.z_index,
+        "updated_at_ms": pane.updated_at_ms
+    }))
 }
 
 fn required_pane_id(payload: &Value) -> Result<PaneId, ProtocolErrorBody> {
@@ -1599,9 +2021,30 @@ fn teardown_session(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .list_panes_for_session(&session_id)
         .map_err(storage_error)?;
+    let worker_pane_keys = context
+        .workers
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .keys()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let authority_pane_id = panes
+        .iter()
+        .find(|pane| worker_pane_keys.contains(&pane.id.to_string()))
+        .or_else(|| panes.first())
+        .map(|pane| pane.id.clone());
     let mut pane_results = Vec::new();
     for pane in &panes {
         let pane_key = pane.id.to_string();
+        if !worker_pane_keys.contains(&pane_key) {
+            pane_results.push(json!({
+                "session_id": session_id,
+                "pane_id": pane.id,
+                "state": "closed",
+                "running": false
+            }));
+            continue;
+        }
         let result = match call_pane_worker(
             context,
             &pane_key,
@@ -1656,37 +2099,22 @@ fn teardown_session(
         .store
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for pane in &panes {
-        if let Some(task) = store.find_task_for_pane(&pane.id).map_err(storage_error)? {
-            if task.state == TaskState::Running {
-                store
-                    .update_task(&task.id, TaskState::Stopped, None, None, Some(now_ms()))
-                    .map_err(storage_error)?;
-            }
-        }
-        if let Some(mut worker) = store.find_pane_worker(&pane.id).map_err(storage_error)? {
-            worker.state = "closed".into();
-            worker.updated_at_ms = now_ms();
-            store.upsert_pane_worker(&worker).map_err(storage_error)?;
-        }
-        store
-            .update_resource_scope_state(
-                &pane.resource_scope_id,
-                qwe_core::ResourceScopeState::Closed,
-                Some("complete scope stopped"),
-                now_ms(),
-            )
-            .map_err(storage_error)?;
-    }
+    let now = now_ms();
+    store
+        .close_session_pane_records(&session_id, now)
+        .map_err(storage_error)?;
     if let Some(mut session) = store.find_session(&session_id).map_err(storage_error)? {
         session.state = "closed".into();
-        session.updated_at_ms = now_ms();
+        session.updated_at_ms = now;
         store.upsert_session(&session).map_err(storage_error)?;
     }
-    let mut authority = store
-        .get_attachment_authority(&session_id)
-        .map_err(storage_error)?
-        .unwrap_or_else(AttachmentAuthority::unattached);
+    let mut authority = match authority_pane_id.as_ref() {
+        Some(pane_id) => store
+            .get_attachment_authority_for_pane(pane_id)
+            .map_err(storage_error)?
+            .unwrap_or_else(AttachmentAuthority::unattached),
+        None => AttachmentAuthority::unattached(),
+    };
     if let Some(lease) = store.get_lease(&session_id).map_err(storage_error)? {
         if lease.released_at_ms.is_none() {
             let released = store
@@ -1696,9 +2124,11 @@ fn teardown_session(
         }
     }
     authority.release();
-    store
-        .write_attachment_authority(&session_id, &authority, now_ms())
-        .map_err(storage_error)?;
+    if let Some(pane_id) = &authority_pane_id {
+        store
+            .write_attachment_authority_for_pane(pane_id, &authority, now_ms())
+            .map_err(storage_error)?;
+    }
     let mut response = pane_results
         .first()
         .cloned()
@@ -1825,10 +2255,23 @@ fn teardown_pane(
             now,
         )
         .map_err(storage_error)?;
-    let any_active = store
-        .list_panes_for_session(&pane.session_id)
+    let remaining_panes = store
+        .list_layout_panes_for_session(&pane.session_id)
+        .map_err(storage_error)?;
+    if store
+        .session_focus(&pane.session_id)
         .map_err(storage_error)?
-        .into_iter()
+        .is_none_or(|focused| focused == pane_id)
+        && let Some(replacement) = remaining_panes
+            .iter()
+            .find(|candidate| candidate.id != pane_id)
+    {
+        store
+            .set_session_focus(&pane.session_id, &replacement.id, now)
+            .map_err(storage_error)?;
+    }
+    let any_active = remaining_panes
+        .iter()
         .filter(|candidate| candidate.id != pane_id)
         .any(|candidate| {
             store
@@ -2282,8 +2725,19 @@ fn runtime_incident_json(incident: &RuntimeIncident) -> Value {
     })
 }
 
+fn pane_requires_loss_update(worker_state: Option<&str>, task_state: Option<TaskState>) -> bool {
+    match worker_state {
+        Some("closed" | "exited") => !matches!(
+            task_state,
+            Some(TaskState::Exited | TaskState::Stopped | TaskState::Lost)
+        ),
+        Some("lost") => !matches!(task_state, Some(TaskState::Exited | TaskState::Lost)),
+        _ => true,
+    }
+}
+
 fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::error::Error>> {
-    let (sessions, panes, stored_workers) = {
+    let (sessions, panes, stored_workers, stored_tasks) = {
         let store = context
             .store
             .lock()
@@ -2292,6 +2746,7 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
             store.list_sessions()?,
             store.list_panes()?,
             store.list_pane_workers()?,
+            store.list_tasks()?,
         )
     };
     let sessions_by_id = sessions
@@ -2301,6 +2756,10 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
     let stored_workers = stored_workers
         .into_iter()
         .map(|worker| (worker.pane_id.clone(), worker))
+        .collect::<HashMap<_, _>>();
+    let stored_tasks = stored_tasks
+        .into_iter()
+        .map(|task| (task.pane_id.clone(), task))
         .collect::<HashMap<_, _>>();
 
     let mut expected_control_sockets = HashSet::new();
@@ -2433,7 +2892,10 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
             if let Some(worker) = stored_workers.get(&pane.id) {
                 if qwe_runtime::process_matches(&worker.identity) {
                     remember_unreachable(context, &session.id, &pane_key, worker.identity.clone());
-                } else {
+                } else if pane_requires_loss_update(
+                    Some(&worker.state),
+                    stored_tasks.get(&pane.id).map(|task| task.state),
+                ) {
                     mark_pane_lost(context, &pane_key)?;
                 }
             } else {
@@ -2782,7 +3244,12 @@ fn client_operation(
         "CONTROL_STATUS" => control_status(context),
         "SESSION_CREATE" => create_session(context, request.payload.clone()),
         "PANE_CREATE" => create_pane(context, request.payload.clone()),
+        "PANE_FOCUS" => pane_focus(context, &request.payload),
+        "PANE_REORDER" => pane_reorder(context, &request.payload),
+        "PANE_FLOATING_UPDATE" => pane_floating_update(context, &request.payload),
+        "PANE_FLOATING_RAISE" => pane_floating_raise(context, &request.payload),
         "TASK_STATUS" => task_status(context, &request.payload),
+        "SESSION_LAYOUT" => session_layout(context, &request.payload),
         "SESSION_RESOURCE_UPDATE" => update_session_resources(context, &request.payload),
         "TASK_STOP" => task_stop(context, &request.payload),
         "TASK_KILL_BATCH" => task_kill_batch(context, &request.payload),
@@ -2922,6 +3389,10 @@ fn requires_idempotency(operation: &str) -> bool {
         operation,
         "SESSION_CREATE"
             | "PANE_CREATE"
+            | "PANE_FOCUS"
+            | "PANE_REORDER"
+            | "PANE_FLOATING_UPDATE"
+            | "PANE_FLOATING_RAISE"
             | "SESSION_DETACH"
             | "SESSION_INPUT"
             | "SESSION_RESOURCE_UPDATE"
@@ -3201,6 +3672,218 @@ enum ClientAttachmentEnd {
     Error(attach::AttachError),
 }
 
+enum ObserverInputEvent {
+    Closed,
+    Violation(attach::AttachError),
+}
+
+fn attachment_hub(context: &Context, pane_id: &str) -> Arc<AttachmentHub> {
+    let mut hubs = context
+        .attachment_hubs
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Arc::clone(
+        hubs.entry(pane_id.to_string())
+            .or_insert_with(|| Arc::new(AttachmentHub::new())),
+    )
+}
+
+fn attachment_output_offset(frame: &attach::ReceivedFrame) -> Option<u64> {
+    if frame.frame_type != attach::FrameType::Output || frame.payload.len() < 8 {
+        return None;
+    }
+    Some(u64::from_be_bytes(
+        frame.payload[..8]
+            .try_into()
+            .expect("offset has eight bytes"),
+    ))
+}
+
+fn serve_observer_attachment(
+    mut client: UnixStream,
+    context: &Arc<Context>,
+    open: attach::AttachOpen,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let pane = {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(session) = store
+            .find_session(&open.session_id)
+            .map_err(|failure| std::io::Error::other(failure.to_string()))?
+        else {
+            drop(store);
+            send_attachment_error(
+                &mut client,
+                attach_error("session_lost", "session does not exist"),
+            );
+            return Ok(());
+        };
+        if matches!(session.state.as_str(), "lost" | "closed") {
+            drop(store);
+            send_attachment_error(
+                &mut client,
+                attach_error("session_lost", "session is no longer live"),
+            );
+            return Ok(());
+        }
+        match open.pane_id.as_deref() {
+            Some(pane_id) => {
+                let pane_id = match PaneId::from_str(pane_id) {
+                    Ok(pane_id) => pane_id,
+                    Err(failure) => {
+                        drop(store);
+                        send_attachment_error(
+                            &mut client,
+                            attach_error("invalid_request", failure.to_string()),
+                        );
+                        return Ok(());
+                    }
+                };
+                match store.find_pane(&pane_id) {
+                    Ok(Some(pane)) if pane.session_id == open.session_id => pane,
+                    Ok(_) => {
+                        drop(store);
+                        send_attachment_error(
+                            &mut client,
+                            attach_error(
+                                "not_found",
+                                "Pane does not belong to the requested Session",
+                            ),
+                        );
+                        return Ok(());
+                    }
+                    Err(failure) => {
+                        drop(store);
+                        send_attachment_error(
+                            &mut client,
+                            attach_error("persistence_failure", failure.to_string()),
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+            None => match store.find_pane_for_session(&open.session_id) {
+                Ok(Some(pane)) => pane,
+                Ok(None) => {
+                    drop(store);
+                    send_attachment_error(
+                        &mut client,
+                        attach_error("session_lost", "session has no Pane"),
+                    );
+                    return Ok(());
+                }
+                Err(failure) => {
+                    drop(store);
+                    send_attachment_error(
+                        &mut client,
+                        attach_error("persistence_failure", failure.to_string()),
+                    );
+                    return Ok(());
+                }
+            },
+        }
+    };
+    let pane_id = pane.id.to_string();
+    let hub = attachment_hub(context, &pane_id);
+    let (observer_id, observer_frames) = hub.subscribe();
+    let snapshot = match call_pane_worker(
+        context,
+        &pane_id,
+        "SESSION_ATTACH",
+        json!({"session_id": open.session_id}),
+        WORKER_REQUEST_TIMEOUT,
+    ) {
+        Ok(status) => match status
+            .get("terminal")
+            .cloned()
+            .ok_or_else(|| std::io::Error::other("worker snapshot has no terminal state"))
+            .and_then(|value| {
+                serde_json::from_value::<attach::TerminalSnapshot>(value)
+                    .map_err(std::io::Error::other)
+            }) {
+            Ok(snapshot) => snapshot,
+            Err(failure) => {
+                hub.unsubscribe(observer_id);
+                send_attachment_error(
+                    &mut client,
+                    attach_error("worker_protocol_error", failure.to_string()),
+                );
+                return Ok(());
+            }
+        },
+        Err(failure) => {
+            hub.unsubscribe(observer_id);
+            send_attachment_error(&mut client, attach_error(&failure.code, failure.message));
+            return Ok(());
+        }
+    };
+    let accepted = attach::AttachAccepted {
+        protocol_version: ATTACH_PROTOCOL_VERSION,
+        session_id: open.session_id,
+        pane_id: Some(pane_id),
+        owner: open.owner,
+        generation: 0,
+        reclaim_token: secure_attach_token()
+            .map_err(|failure| std::io::Error::other(failure.message))?,
+        rows: snapshot.rows,
+        columns: snapshot.columns,
+        stream_offset: snapshot.next_stream_offset,
+    };
+    if attach::write_json_frame(&mut client, attach::FrameType::AttachAccepted, &accepted)
+        .and_then(|()| {
+            attach::write_json_frame(&mut client, attach::FrameType::Snapshot, &snapshot)
+        })
+        .is_err()
+    {
+        hub.unsubscribe(observer_id);
+        return Ok(());
+    }
+
+    let input_client = client.try_clone()?;
+    let (input_sender, input_receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let event = match attach::read_frame(&mut { input_client }) {
+            Ok(_) => ObserverInputEvent::Violation(attach_error(
+                "read_only",
+                "observer channel cannot send input or control frames",
+            )),
+            Err(_) => ObserverInputEvent::Closed,
+        };
+        let _ = input_sender.send(event);
+    });
+
+    let snapshot_offset = snapshot.next_stream_offset;
+    loop {
+        match observer_frames.recv_timeout(Duration::from_millis(100)) {
+            Ok(frame) => {
+                if attachment_output_offset(&frame).is_some_and(|offset| offset < snapshot_offset) {
+                    continue;
+                }
+                if forward_attachment_frame(&mut client, &frame).is_err() {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if let Ok(event) = input_receiver.try_recv() {
+                    match event {
+                        ObserverInputEvent::Closed => break,
+                        ObserverInputEvent::Violation(failure) => {
+                            send_attachment_error(&mut client, failure);
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    hub.unsubscribe(observer_id);
+    let _ = client.shutdown(std::net::Shutdown::Both);
+    Ok(())
+}
+
 fn serve_client_attachment_input(
     mut client: UnixStream,
     mut worker: UnixStream,
@@ -3324,15 +4007,7 @@ fn serve_attachment(
         return Ok(());
     }
     if open.mode == attach::AttachMode::ReadOnly {
-        let _ = attach::write_json_frame(
-            &mut client,
-            attach::FrameType::Error,
-            &attach_error(
-                "unsupported_mode",
-                "read_only attach mode is reserved and is not supported in V0",
-            ),
-        );
-        return Ok(());
+        return serve_observer_attachment(client, context, open);
     }
     if open.rows == 0 || open.columns == 0 {
         send_attachment_error(
@@ -3342,7 +4017,7 @@ fn serve_attachment(
         return Ok(());
     }
 
-    let (raw_token, generation, worker) = {
+    let (raw_token, generation, worker, pane_id) = {
         let _authority_guard = context
             .attachment_lock
             .lock()
@@ -3371,18 +4046,71 @@ fn serve_attachment(
             );
             return Ok(());
         }
-        let pane = store
-            .find_pane_for_session(&open.session_id)
-            .map_err(|failure| std::io::Error::other(failure.to_string()))?
-            .ok_or_else(|| std::io::Error::other("session has no Pane"))?;
+        let pane = match open.pane_id.as_deref() {
+            Some(pane_id) => {
+                let pane_id = match PaneId::from_str(pane_id) {
+                    Ok(pane_id) => pane_id,
+                    Err(failure) => {
+                        drop(store);
+                        send_attachment_error(
+                            &mut client,
+                            attach_error("invalid_request", failure.to_string()),
+                        );
+                        return Ok(());
+                    }
+                };
+                match store.find_pane(&pane_id) {
+                    Ok(Some(pane)) if pane.session_id == open.session_id => pane,
+                    Ok(_) => {
+                        drop(store);
+                        send_attachment_error(
+                            &mut client,
+                            attach_error(
+                                "not_found",
+                                "Pane does not belong to the requested Session",
+                            ),
+                        );
+                        return Ok(());
+                    }
+                    Err(failure) => {
+                        drop(store);
+                        send_attachment_error(
+                            &mut client,
+                            attach_error("persistence_failure", failure.to_string()),
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+            None => match store.find_pane_for_session(&open.session_id) {
+                Ok(Some(pane)) => pane,
+                Ok(None) => {
+                    drop(store);
+                    send_attachment_error(
+                        &mut client,
+                        attach_error("session_lost", "session has no Pane"),
+                    );
+                    return Ok(());
+                }
+                Err(failure) => {
+                    drop(store);
+                    send_attachment_error(
+                        &mut client,
+                        attach_error("persistence_failure", failure.to_string()),
+                    );
+                    return Ok(());
+                }
+            },
+        };
+        let pane_id = pane.id.clone();
         let mut authority = store
-            .get_attachment_authority(&open.session_id)
+            .get_attachment_authority_for_pane(&pane_id)
             .map_err(|failure| std::io::Error::other(failure.to_string()))?
             .unwrap_or_else(AttachmentAuthority::unattached);
         if authority.state != authority.state_at(now) {
             authority.release();
             store
-                .write_attachment_authority(&open.session_id, &authority, now)
+                .write_attachment_authority_for_pane(&pane_id, &authority, now)
                 .map_err(|failure| std::io::Error::other(failure.to_string()))?;
         }
         if let Err(failure) = authority.authorize(
@@ -3453,7 +4181,8 @@ fn serve_attachment(
             secure_attach_token().map_err(|failure| std::io::Error::other(failure.message))?,
             open.rows,
             open.columns,
-        );
+        )
+        .with_pane(pane_id.to_string());
         if let Err(failure) =
             attach::write_json_frame(&mut worker, attach::FrameType::AttachOpen, &internal_open)
         {
@@ -3506,6 +4235,18 @@ fn serve_attachment(
                     return Ok(());
                 }
             };
+        if worker_accepted.pane_id != Some(pane_id.to_string()) {
+            let _ = worker.shutdown(std::net::Shutdown::Both);
+            drop(store);
+            send_attachment_error(
+                &mut client,
+                attach_error(
+                    "worker_contract",
+                    "worker accepted a different Pane identity",
+                ),
+            );
+            return Ok(());
+        }
         let snapshot_frame = match attach::read_frame(&mut worker) {
             Ok(response) if response.frame_type == attach::FrameType::Snapshot => response,
             Ok(response) => {
@@ -3581,8 +4322,9 @@ fn serve_attachment(
             );
             return Ok(());
         }
-        if let Err(failure) = store.activate_attachment(
+        if let Err(failure) = store.activate_attachment_for_pane(
             &open.session_id,
+            &pane_id,
             &next,
             release_hold
                 .as_ref()
@@ -3600,6 +4342,7 @@ fn serve_attachment(
         let accepted = attach::AttachAccepted {
             protocol_version: ATTACH_PROTOCOL_VERSION,
             session_id: open.session_id.clone(),
+            pane_id: Some(pane_id.to_string()),
             owner: open.owner.clone(),
             generation: next.generation,
             reclaim_token: raw_token.clone(),
@@ -3616,7 +4359,7 @@ fn serve_attachment(
             let _ = worker.shutdown(std::net::Shutdown::Both);
             let mut released = next;
             released.release();
-            let _ = store.write_attachment_authority(&open.session_id, &released, now_ms());
+            let _ = store.write_attachment_authority_for_pane(&pane_id, &released, now_ms());
             drop(store);
             send_attachment_error(
                 &mut client,
@@ -3625,9 +4368,10 @@ fn serve_attachment(
             return Ok(());
         }
         drop(store);
-        (raw_token, next.generation, worker)
+        (raw_token, next.generation, worker, pane_id)
     };
 
+    let hub = attachment_hub(context, &pane_id.to_string());
     let input_client = client.try_clone()?;
     let input_worker = worker.try_clone()?;
     let input = thread::spawn(move || serve_client_attachment_input(input_client, input_worker));
@@ -3636,7 +4380,9 @@ fn serve_attachment(
         if forward_attachment_frame(&mut client, &frame).is_err() {
             break;
         }
+        hub.broadcast(&frame);
     }
+    hub.close_observers();
     let _ = client.shutdown(std::net::Shutdown::Read);
     let end = input.join().unwrap_or_else(|_| {
         ClientAttachmentEnd::Error(attach_error(
@@ -3658,7 +4404,7 @@ fn serve_attachment(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(mut authority) = store
-        .get_attachment_authority(&open.session_id)
+        .get_attachment_authority_for_pane(&pane_id)
         .map_err(|failure| std::io::Error::other(failure.to_string()))?
     {
         if authority.state == AttachmentAuthorityState::Active
@@ -3678,7 +4424,8 @@ fn serve_attachment(
             })?;
             if authority.state == AttachmentAuthorityState::Held {
                 store
-                    .persist_attachment_hold(
+                    .persist_attachment_hold_for_pane(
+                        &pane_id,
                         &open.session_id,
                         authority.owner.as_deref().unwrap_or_default(),
                         authority.generation,
@@ -3688,7 +4435,7 @@ fn serve_attachment(
                     .map_err(|failure| std::io::Error::other(failure.to_string()))?;
             } else {
                 store
-                    .write_attachment_authority(&open.session_id, &authority, now)
+                    .write_attachment_authority_for_pane(&pane_id, &authority, now)
                     .map_err(|failure| std::io::Error::other(failure.to_string()))?;
             }
         }
@@ -3871,18 +4618,27 @@ fn start_monitor_threads(
     Ok(())
 }
 
+fn startup_context(stage: &str, failure: impl std::fmt::Display) -> Box<dyn std::error::Error> {
+    let message = format!("qwed startup failed during {stage}: {failure}");
+    eprintln!("{message}");
+    Box::new(std::io::Error::other(message))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    install_shutdown_handler()?;
+    install_shutdown_handler()
+        .map_err(|failure| startup_context("installing the shutdown handler", failure))?;
     prepare_user_manager_environment();
     let resource_support = qwe_runtime::detect_resource_support();
     let runtime_dir = PathBuf::from(format!("{}.runtime", args.socket));
-    let runtime_lock = acquire_runtime_lock(&runtime_dir)?;
+    let runtime_lock = acquire_runtime_lock(&runtime_dir)
+        .map_err(|failure| startup_context("acquiring the runtime lock", failure))?;
     mark_subreaper();
     let store_path = args
         .store
         .unwrap_or_else(|| format!("{}.sqlite", args.socket));
-    let store = Store::open(&store_path)?;
+    let store = Store::open(&store_path)
+        .map_err(|failure| startup_context("opening durable storage", failure))?;
     let credentials_dir = args
         .credentials_dir
         .or_else(|| std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from));
@@ -3909,6 +4665,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         resource_support,
         store: Mutex::new(store),
         workers: Mutex::new(HashMap::new()),
+        attachment_hubs: Mutex::new(HashMap::new()),
         reconciliation_incidents: Mutex::new(ReconciliationIncidents::default()),
         last_scan_ms: AtomicI64::new(0),
         worker_events: worker_event_tx,
@@ -3918,12 +4675,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         credentials: CredentialProvider::new(credentials_dir, keychain_prefix, keychain_path),
         _runtime_lock: runtime_lock,
     });
-    let report = startup_reconcile(&context)?;
+    let report = startup_reconcile(&context)
+        .map_err(|failure| startup_context("reconciling persisted workers", failure))?;
     context
         .store
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .enter_reclaim_grace(now_ms(), DEFAULT_RECLAIM_GRACE_MS)?;
+        .enter_reclaim_grace(now_ms(), DEFAULT_RECLAIM_GRACE_MS)
+        .map_err(|failure| startup_context("entering attachment reclaim grace", failure))?;
     prune_history(&context);
     *context
         .reconciliation_incidents
@@ -3938,13 +4697,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let attach_path = public_attach_socket(&args.socket);
     let _ = fs::remove_file(&args.socket);
     let _ = fs::remove_file(&attach_path);
-    let listener = UnixListener::bind(&args.socket)?;
-    fs::set_permissions(&args.socket, fs::Permissions::from_mode(0o600))?;
-    let attach_listener = UnixListener::bind(&attach_path)?;
-    fs::set_permissions(&attach_path, fs::Permissions::from_mode(0o600))?;
-    attach_listener.set_nonblocking(true)?;
+    let listener = UnixListener::bind(&args.socket)
+        .map_err(|failure| startup_context("binding the control socket", failure))?;
+    fs::set_permissions(&args.socket, fs::Permissions::from_mode(0o600))
+        .map_err(|failure| startup_context("securing the control socket", failure))?;
+    let attach_listener = UnixListener::bind(&attach_path)
+        .map_err(|failure| startup_context("binding the attach socket", failure))?;
+    fs::set_permissions(&attach_path, fs::Permissions::from_mode(0o600))
+        .map_err(|failure| startup_context("securing the attach socket", failure))?;
+    attach_listener
+        .set_nonblocking(true)
+        .map_err(|failure| startup_context("configuring the attach listener", failure))?;
 
-    start_monitor_threads(&context, supervisor_event_rx, supervisor_event_tx)?;
+    start_monitor_threads(&context, supervisor_event_rx, supervisor_event_tx)
+        .map_err(|failure| startup_context("starting supervisor monitors", failure))?;
 
     let control_context = Arc::clone(&context);
     thread::spawn(move || {
@@ -3978,4 +4744,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     graceful_shutdown(&context, &args.socket);
     Ok(())
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+
+    #[test]
+    fn terminal_lost_panes_do_not_repeat_storage_reconciliation() {
+        assert!(!pane_requires_loss_update(
+            Some("lost"),
+            Some(TaskState::Exited)
+        ));
+        assert!(!pane_requires_loss_update(
+            Some("lost"),
+            Some(TaskState::Lost)
+        ));
+        assert!(!pane_requires_loss_update(
+            Some("closed"),
+            Some(TaskState::Stopped)
+        ));
+        assert!(!pane_requires_loss_update(
+            Some("exited"),
+            Some(TaskState::Exited)
+        ));
+    }
+
+    #[test]
+    fn inconsistent_lost_panes_still_reconcile_running_tasks() {
+        assert!(pane_requires_loss_update(
+            Some("lost"),
+            Some(TaskState::Running)
+        ));
+        assert!(pane_requires_loss_update(
+            Some("lost"),
+            Some(TaskState::Stopped)
+        ));
+        assert!(pane_requires_loss_update(Some("lost"), None));
+    }
+
+    #[test]
+    fn live_or_unknown_workers_require_loss_reconciliation() {
+        assert!(pane_requires_loss_update(
+            Some("active"),
+            Some(TaskState::Running)
+        ));
+        assert!(pane_requires_loss_update(None, None));
+    }
 }

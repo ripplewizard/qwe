@@ -4,8 +4,8 @@ Status: Accepted
 Date: 2026-11-09
 Decision gate: Stage 6.5 accepted on 2026-11-09.
 Implementation state: Schema v11, Pane-keyed inventory/recovery, multi-Pane
-control routing, and complete Pane scope teardown are implemented. The
-qwed-owned observer projection remains open.
+control routing, the qwed-owned observer projection, and complete Pane scope
+teardown are implemented.
 
 ## Context
 

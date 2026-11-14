@@ -14,6 +14,8 @@ use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod compositor;
+
 const TERMINAL_RESET_SEQUENCE: &[u8] = b"\x1b[0m\x1b[0 q\x1b[?25h\x1b[?1l\x1b>\x1b[?7h\
       \x1b[?2004l\x1b[?2026l\x1b[?1049l\
       \x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\
@@ -70,7 +72,7 @@ enum SessionCommand {
         #[arg(long)]
         credential: Option<String>,
         #[command(flatten)]
-        resources: ResourceArgs,
+        resources: Box<ResourceArgs>,
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
@@ -88,6 +90,16 @@ enum SessionCommand {
     },
     Attach {
         id: String,
+    },
+    Compose {
+        id: String,
+    },
+    Layout {
+        id: String,
+        #[arg(long)]
+        rows: Option<u16>,
+        #[arg(long)]
+        columns: Option<u16>,
     },
     Snapshot {
         id: String,
@@ -113,16 +125,48 @@ enum PaneCommand {
         #[arg(default_value = "sh")]
         program: String,
         #[arg(long)]
+        after: Option<String>,
+        #[arg(long, default_value = "normal")]
+        kind: String,
+        #[arg(long)]
         generation: Option<u64>,
         #[arg(long)]
         credential: Option<String>,
         #[command(flatten)]
-        resources: ResourceArgs,
+        resources: Box<ResourceArgs>,
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
     Status {
         pane_id: String,
+    },
+    Focus {
+        pane_id: String,
+        #[arg(long)]
+        generation: Option<u64>,
+    },
+    Reorder {
+        pane_ids: Vec<String>,
+        #[arg(long)]
+        generation: Option<u64>,
+    },
+    Move {
+        pane_id: String,
+        #[arg(long)]
+        x: u16,
+        #[arg(long)]
+        y: u16,
+        #[arg(long)]
+        rows: u16,
+        #[arg(long)]
+        columns: u16,
+        #[arg(long)]
+        generation: Option<u64>,
+    },
+    Raise {
+        pane_id: String,
+        #[arg(long)]
+        generation: Option<u64>,
     },
     Snapshot {
         pane_id: String,
@@ -265,6 +309,10 @@ fn call(socket: &str, operation: &str, payload: Value) -> Result<Value, Protocol
         operation,
         "SESSION_CREATE"
             | "PANE_CREATE"
+            | "PANE_FOCUS"
+            | "PANE_REORDER"
+            | "PANE_FLOATING_UPDATE"
+            | "PANE_FLOATING_RAISE"
             | "PANE_CLOSE"
             | "PANE_KILL"
             | "SESSION_INPUT"
@@ -792,6 +840,21 @@ fn main() -> ExitCode {
                 json!({"session_id": id}),
             ),
             SessionCommand::Attach { id } => run_attach(&arguments.socket, &id, &arguments.owner),
+            SessionCommand::Compose { id } => {
+                compositor::run(&arguments.socket, &id, &arguments.owner)
+            }
+            SessionCommand::Layout { id, rows, columns } => {
+                let (default_rows, default_columns) = terminal_size();
+                call(
+                    &arguments.socket,
+                    "SESSION_LAYOUT",
+                    json!({
+                        "session_id": id,
+                        "rows": rows.unwrap_or(default_rows),
+                        "columns": columns.unwrap_or(default_columns)
+                    }),
+                )
+            }
             SessionCommand::Snapshot { id } => call(
                 &arguments.socket,
                 "SESSION_ATTACH",
@@ -819,6 +882,8 @@ fn main() -> ExitCode {
             PaneCommand::Create {
                 session_id,
                 program,
+                after,
+                kind,
                 generation,
                 credential,
                 resources,
@@ -835,6 +900,10 @@ fn main() -> ExitCode {
                 if let Some(credential) = credential {
                     payload["credential"] = json!(credential);
                 }
+                if let Some(after) = after {
+                    payload["after_pane_id"] = json!(after);
+                }
+                payload["pane_kind"] = json!(kind);
                 if let Some(policy) = resources.policy_json(false) {
                     payload["resource_policy"] = policy;
                 }
@@ -847,6 +916,64 @@ fn main() -> ExitCode {
                 &arguments.socket,
                 "PANE_STATUS",
                 json!({"pane_id": pane_id}),
+            ),
+            PaneCommand::Focus {
+                pane_id,
+                generation,
+            } => call(
+                &arguments.socket,
+                "PANE_FOCUS",
+                json!({
+                    "pane_id": pane_id,
+                    "owner": arguments.owner,
+                    "generation": generation
+                }),
+            ),
+            PaneCommand::Reorder {
+                pane_ids,
+                generation,
+            } => call(
+                &arguments.socket,
+                "PANE_REORDER",
+                json!({
+                    "pane_ids": pane_ids,
+                    "owner": arguments.owner,
+                    "generation": generation
+                }),
+            ),
+            PaneCommand::Move {
+                pane_id,
+                x,
+                y,
+                rows,
+                columns,
+                generation,
+            } => call(
+                &arguments.socket,
+                "PANE_FLOATING_UPDATE",
+                json!({
+                    "pane_id": pane_id,
+                    "rect": {
+                        "x": x,
+                        "y": y,
+                        "rows": rows,
+                        "columns": columns
+                    },
+                    "owner": arguments.owner,
+                    "generation": generation
+                }),
+            ),
+            PaneCommand::Raise {
+                pane_id,
+                generation,
+            } => call(
+                &arguments.socket,
+                "PANE_FLOATING_RAISE",
+                json!({
+                    "pane_id": pane_id,
+                    "owner": arguments.owner,
+                    "generation": generation
+                }),
             ),
             PaneCommand::Snapshot { pane_id } => call(
                 &arguments.socket,

@@ -8,6 +8,7 @@ import tempfile
 import time
 from pathlib import Path
 
+import attach_channel_probe as protocol
 from stage7_resource_probe import (
     claim,
     crash_qwed,
@@ -22,6 +23,33 @@ from stage7_resource_probe import (
 
 
 OWNER = "stage7-multi"
+
+
+def attach_channel(
+    socket_path,
+    session_id,
+    pane_id,
+    owner,
+    mode,
+    generation=None,
+    reclaim_token=None,
+):
+    stream = protocol.connect(f"{socket_path}.attach")
+    frame = protocol.open_frame(
+        session_id,
+        owner,
+        mode=mode,
+        reclaim_token=reclaim_token,
+        lease_generation=generation,
+    )
+    frame["pane_id"] = pane_id
+    protocol.send_json(stream, protocol.ATTACH_OPEN, frame)
+    frame_type, payload = protocol.receive_frame(stream)
+    assert frame_type == protocol.ATTACH_ACCEPTED, payload
+    accepted = json.loads(payload)
+    frame_type, payload = protocol.receive_frame(stream)
+    assert frame_type == protocol.SNAPSHOT, payload
+    return stream, accepted, json.loads(payload)
 
 
 def create_pane(socket_path, session_id, generation, marker):
@@ -89,7 +117,10 @@ def main():
                 {
                     "session_id": "multi-pane",
                     "program": "sh",
-                    "args": ["-c", "echo PANE_ZERO; sleep 120"],
+                    "args": [
+                        "-c",
+                        "echo PANE_ZERO; while IFS= read -r line; do echo ECHO:$line; done",
+                    ],
                     "resource_profile": "tight",
                 },
             )
@@ -109,6 +140,37 @@ def main():
                 cgroups.append(cgroup_path(pane["pid"]))
 
             assert len(set(cgroups)) == 3, cgroups
+
+            interactive, accepted, _ = attach_channel(
+                args.socket,
+                "multi-pane",
+                pane_ids[0],
+                OWNER,
+                "exclusive",
+                generation,
+            )
+            observer, observer_accepted, observer_snapshot = attach_channel(
+                args.socket,
+                "multi-pane",
+                pane_ids[0],
+                "stage7-observer",
+                "read_only",
+            )
+            assert accepted["pane_id"] == pane_ids[0], accepted
+            assert observer_accepted["pane_id"] == pane_ids[0], observer_accepted
+            assert observer_snapshot["screen_text"], observer_snapshot
+            protocol.send_payload(interactive, protocol.INPUT, b"observer-live\n")
+            observed = b""
+            deadline = time.monotonic() + 3
+            while b"ECHO:observer-live" not in observed:
+                assert time.monotonic() < deadline, observed
+                frame_type, payload = protocol.receive_frame(observer)
+                if frame_type == protocol.OUTPUT:
+                    observed += payload[8:]
+            protocol.send_payload(observer, protocol.INPUT, b"must-not-pass\n")
+            protocol.expect_error(observer, "read_only", allow_output=True)
+            reclaim_token = accepted["reclaim_token"]
+
             inventory = control_status(args.socket)
             assert len(
                 [
@@ -127,6 +189,22 @@ def main():
 
             crash_qwed(qwed)
             qwed = start_qwed(args.qwed, args.socket, log_path)
+            interactive, accepted, _ = attach_channel(
+                args.socket,
+                "multi-pane",
+                pane_ids[0],
+                OWNER,
+                "exclusive",
+                generation,
+                reclaim_token,
+            )
+            observer, _, _ = attach_channel(
+                args.socket,
+                "multi-pane",
+                pane_ids[0],
+                "stage7-observer",
+                "read_only",
+            )
             for pane_id in pane_ids:
                 recovered = request(
                     args.socket,
@@ -169,6 +247,14 @@ def main():
             assert session["state"] == "running", session
 
             for pane_id in pane_ids[1:]:
+                pane_writer, _, _ = attach_channel(
+                    args.socket,
+                    "multi-pane",
+                    pane_id,
+                    OWNER,
+                    "exclusive",
+                    generation,
+                )
                 killed = request(
                     args.socket,
                     "PANE_KILL",
@@ -179,6 +265,7 @@ def main():
                     },
                 )
                 assert killed.get("running") is False, killed
+                pane_writer.close()
             request(
                 args.socket,
                 "SESSION_KILL",
@@ -195,11 +282,13 @@ def main():
             print(
                 json.dumps(
                     {
-                        "case": "SHARED-002/SHARED-004/SHARED-006",
+                        "case": "SHARED-002/SHARED-004/SHARED-005/SHARED-006",
                         "multi_pane_inventory": "pass",
                         "qwed_restart_adoption": "pass",
                         "pane_failure_isolation": "pass",
                         "pane_addressed_status": "pass",
+                        "interactive_observer_channels": "pass",
+                        "observer_read_only": "pass",
                         "complete_scope_cleanup": "pass",
                     },
                     separators=(",", ":"),

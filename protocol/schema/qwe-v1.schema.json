@@ -113,6 +113,10 @@
           "type": "string",
           "minLength": 1
         },
+        "pane_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "owner": {
           "type": "string",
           "minLength": 1
@@ -225,6 +229,10 @@
           "const": 1
         },
         "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pane_id": {
           "type": "string",
           "minLength": 1
         },
@@ -624,6 +632,23 @@
     "SHARED-004",
     "SHARED-005",
     "SHARED-006",
+    "LAYOUT-001",
+    "LAYOUT-002",
+    "LAYOUT-003",
+    "LAYOUT-004",
+    "LAYOUT-005",
+    "LAYOUT-006",
+    "LAYOUT-007",
+    "LAYOUT-008",
+    "LAYOUT-009",
+    "LAYOUT-010",
+    "LAYOUT-011",
+    "LAYOUT-012",
+    "LAYOUT-013",
+    "LAYOUT-014",
+    "LAYOUT-015",
+    "LAYOUT-016",
+    "LAYOUT-017",
     "ATTACH-001",
     "ATTACH-002",
     "ATTACH-003",

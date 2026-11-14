@@ -117,6 +117,7 @@ def main():
     ping_samples = []
     memory_samples = []
     restarts = 0
+    cycle = 0
     churn_panes = 0
     churn_state = None
     resize_ops = 0
@@ -129,6 +130,7 @@ def main():
     lease_touch_ops = 0
     resource_updates = 0
     soak_socket = Path("/tmp/qwe-stage7-soak.sock")
+    write_progress = None
     try:
         with contextlib.ExitStack() as stack:
             runtime_root = Path(
@@ -497,6 +499,24 @@ def main():
                 timeout=15,
             )
             write_progress("completed")
+    except BaseException as failure:
+        if write_progress is not None:
+            write_progress("failed")
+        if args.run_root is not None:
+            failure_root = args.run_root.resolve()
+            failure_root.mkdir(parents=True, exist_ok=True)
+            failure_record = {
+                "status": "failed",
+                "failure": f"{type(failure).__name__}: {failure}",
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "cycle": cycle,
+                "restarts": restarts,
+            }
+            (failure_root / "failure.json").write_text(
+                json.dumps(failure_record, sort_keys=True, separators=(",", ":"))
+                + "\n"
+            )
+        raise
     finally:
         stop_qwed(qwed, str(soak_socket))
         if qwed is not None and qwed.poll() is None:
@@ -598,12 +618,17 @@ def start_qwed_at(binary, socket_path, store_path, log_path):
         start_new_session=True,
     )
     process.qwe_log = str(log_path)
-    wait_for(
-        lambda: _socket_ready(socket_path),
-        f"timed out waiting for qwed on {socket_path}",
-        timeout=15,
-    )
-    return process
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if _socket_ready(socket_path):
+            return process
+        exit_code = process.poll()
+        if exit_code is not None:
+            raise RuntimeError(
+                f"qwed exited during startup with code {exit_code}; see {log_path}"
+            )
+        time.sleep(0.02)
+    raise RuntimeError(f"timed out waiting for qwed on {socket_path}; see {log_path}")
 
 
 def _socket_ready(socket_path):

@@ -321,6 +321,8 @@ pub mod attach {
     pub struct AttachOpen {
         pub protocol_version: u16,
         pub session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub pane_id: Option<String>,
         pub owner: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub reclaim_token: Option<String>,
@@ -343,6 +345,7 @@ pub mod attach {
             Self {
                 protocol_version: ATTACH_PROTOCOL_VERSION,
                 session_id: session_id.into(),
+                pane_id: None,
                 owner: owner.into(),
                 reclaim_token: None,
                 lease_generation: None,
@@ -350,6 +353,12 @@ pub mod attach {
                 columns,
                 mode: AttachMode::default(),
             }
+        }
+
+        #[must_use]
+        pub fn with_pane(mut self, pane_id: impl Into<String>) -> Self {
+            self.pane_id = Some(pane_id.into());
+            self
         }
     }
 
@@ -375,6 +384,8 @@ pub mod attach {
     pub struct AttachAccepted {
         pub protocol_version: u16,
         pub session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub pane_id: Option<String>,
         pub owner: String,
         pub generation: u64,
         pub reclaim_token: String,
@@ -677,7 +688,19 @@ mod tests {
     fn attach_open_defaults_to_exclusive_mode() {
         let value = serde_json::to_value(attach::AttachOpen::versioned("s", "o", 24, 80)).unwrap();
         assert_eq!(value["mode"], "exclusive");
+        assert!(value.get("pane_id").is_none());
         assert!(value.get("reclaim_token").is_none());
+    }
+
+    #[test]
+    fn attach_open_round_trips_optional_pane_target() {
+        let open = attach::AttachOpen::versioned("session-1", "owner", 24, 80).with_pane("pane-1");
+        let value = serde_json::to_value(&open).unwrap();
+        assert_eq!(value["pane_id"], "pane-1");
+        assert_eq!(
+            serde_json::from_value::<attach::AttachOpen>(value).unwrap(),
+            open
+        );
     }
 
     #[test]

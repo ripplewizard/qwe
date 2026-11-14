@@ -980,6 +980,20 @@ qwed-restart-volume:
       --qwed target/debug/qwed \
       --socket "$run_root/client.sock"
 
+stage7-reconciliation-scale:
+    cargo build -p qwed -p qwe-worker --bins
+    python3 "{{ fixtures }}/stage7_reconciliation_scale_probe.py" \
+      --qwed target/debug/qwed
+
+stage7-teardown-scale:
+    cargo build -p qwed -p qwe-worker --bins
+    python3 "{{ fixtures }}/stage7_reconciliation_scale_probe.py" \
+      --qwed target/debug/qwed \
+      --active-panes 2 \
+      --history-panes 4000 \
+      --history-state closed \
+      --exercise-teardown
+
 stage7-soak-short:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1063,8 +1077,28 @@ stage7-check:
     just --justfile "{{ justfile() }}" stage7-multi-pane
     just --justfile "{{ justfile() }}" stage7-pressure
     just --justfile "{{ justfile() }}" qwed-restart-volume
+    just --justfile "{{ justfile() }}" stage7-reconciliation-scale
+    just --justfile "{{ justfile() }}" stage7-teardown-scale
     just --justfile "{{ justfile() }}" stage7-soak-short
     just --justfile "{{ justfile() }}" resilience-smoke
+
+stage8-layout:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(mktemp -d "/tmp/qwe-stage8-layout.XXXXXX")"
+    cleanup_stage8() {
+      find "$root" -depth -delete 2>/dev/null || true
+    }
+    trap cleanup_stage8 EXIT
+    cargo build -p qwe -p qwe-worker -p qwed
+    python3 "{{ fixtures }}/stage8_layout_probe.py" \
+      --cli target/debug/qwe \
+      --qwed target/debug/qwed \
+      --socket "$root/qwed.sock"
+
+stage8-check:
+    just --justfile "{{ justfile() }}" check-qwe
+    just --justfile "{{ justfile() }}" stage8-layout
 
 state-matrix:
     cargo test -p qwe-core authority::tests

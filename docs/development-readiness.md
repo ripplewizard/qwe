@@ -1,8 +1,8 @@
 # Development Readiness
 
-Status: Stages 1-5 complete; Stage 6 Linux adoption and stabilization in
-progress; Stage 6.5 shared prerequisites accepted
-Date: 2026-11-09
+Status: Stages 1-5 complete; Stage 6.5 accepted; Stages 7 and 8 complete;
+Agent Execution ADR accepted
+Date: 2026-11-14
 
 ## Decision
 
@@ -125,6 +125,19 @@ These are implementation work, not reasons to delay development:
 - Terminal detach now resets Kitty keyboard, modified-key, synchronized-output,
   paste, alternate-screen, cursor, and mouse modes; `ATTACH-015` passes on both
   platforms.
+- Stage 8 slice 1 adds Pane-targeted Attach, deterministic layout query,
+  concurrent exclusive channels to distinct Panes, and an interactive
+  `qwe session compose` client. Freeform floating geometry, scrollback copy,
+  and floating drag remain open under
+  [Session Layout](stage8-session-layout.md). Slice 2 adds schema v12 and
+  restart-stable Pane order, weight, z-index, and focus. Slice 3 adds relative
+  split, close, and reorder controls in the API and compositor. Slice 4 adds
+  focused-Pane visible-screen copy and the quick menu. Slice 5 adds fixed
+  floating Panes with independent workers and persisted z-order. Slice 6 adds
+  durable floating bounds and keyboard move/resize. Slice 7 adds simulated and
+  live SGR mouse title dragging plus child mouse-event routing. Slice 8 adds
+  bottom-right mouse resize. Slice 9 adds floating click-to-raise. Slice 10
+  adds scrollback and mouse copy.
 
 ## Non-Blocking Audit Items
 
@@ -166,12 +179,33 @@ inventory and Attach, the qwed-owned observer projection, complete scope
 teardown, and schema v11. Production multi-Pane behavior is not implemented by
 the decision gate; SHARED-002 through SHARED-006 remain Stage 7 work.
 
-Stage 7 is in progress as Linux cgroup v2 resource governance for long-running
+Stage 7 is complete as Linux cgroup v2 resource governance for long-running
 Sessions. It moves the V0 per-Session scope to Pane-level ResourceScope and
 does not introduce a container runtime. Profiles, controller rejection,
-requested/effective policy, bounded events, and Pane scope teardown now have
-deterministic coverage. Schema v11, multi-Pane inventory/recovery, RG-004
-pressure, short soak, and local Fedora installed-systemd qualification pass.
-Ubuntu/Debian real-VM targets and the five-hour soak remain open. The detailed
-scope and gates are in
-[Stage 7 Resource Governance](stage7-resource-governance.md).
+requested/effective policy, bounded events, Pane scope teardown, schema v11,
+multi-Pane inventory/recovery, RG-004 pressure, and history-scale startup and
+teardown regressions pass. Fedora, Ubuntu 22.04, Ubuntu 24.04, and Debian 12
+pass the installed-systemd matrix. Two consecutive six-hour 16-Session by
+two-Pane runs on Ubuntu 22.04 completed eleven qwed restarts each with bounded
+latency and complete cleanup, exceeding the five-hour long-run gate. The
+detailed scope and evidence are in
+[Stage 7 Resource Governance](stage7-resource-governance.md) and
+[Experiment 0042](experiments/0042-stage7-8-closure.md).
+
+Stage 8 is complete under
+[ADR 0022](adr/0022-session-layout-compositor.md) and
+[ADR 0023](adr/0023-durable-pane-layout.md). Slice 1 has deterministic
+LAYOUT-001 through LAYOUT-005 coverage; LAYOUT-006 covers restart-stable layout
+order and focus, while LAYOUT-007 and LAYOUT-008 cover split/close and reorder
+under [ADR 0024](adr/0024-pane-composition-controls.md). LAYOUT-009 through
+LAYOUT-017 cover copy, menu isolation, floating Panes, mouse move/resize,
+click-to-raise, scrollback, and mouse copy. The supported macOS, Linux,
+Podman, and installed-systemd matrices pass.
+
+Agent Execution Model is accepted under
+[ADR 0032](adr/0032-agent-execution-model.md). Implementation has not started;
+the accepted first delivery is fresh-process `exec`, command handles,
+`wait_idle`, bounded command events and replay, read-only observation,
+capability/revocation enforcement, per-command credentials, and explicit
+recovery/lost states. `shell_exec`, sandbox implementation, cross-Pane
+orchestration, persistent history, and host management remain deferred.

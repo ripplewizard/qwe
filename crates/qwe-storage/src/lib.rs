@@ -9,7 +9,7 @@ use serde_json::json;
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 11;
+pub const SCHEMA_VERSION: i64 = 13;
 pub const IDEMPOTENCY_RETENTION_MS: i64 = 24 * 60 * 60 * 1_000;
 pub const HISTORY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 pub const HISTORY_MAX_TERMINAL_SESSIONS: i64 = 10_000;
@@ -203,7 +203,7 @@ impl Store {
             )?;
             transaction.execute_batch("PRAGMA user_version = 11;")?;
             transaction.commit()?;
-            return Ok(());
+            current = 11;
         }
         if current == 1 {
             let transaction = self.connection.transaction()?;
@@ -440,12 +440,28 @@ impl Store {
         }
         if current == 10 {
             self.migrate_v10_to_v11()?;
+            current = 11;
+        }
+        if current == 11 {
+            self.migrate_v11_to_v12()?;
+            current = 12;
+        }
+        if current == 12 {
+            self.migrate_v12_to_v13()?;
         }
         Ok(())
     }
 
     fn migrate_v10_to_v11(&mut self) -> Result<(), StorageError> {
         migrate_v10_to_v11(self)
+    }
+
+    fn migrate_v11_to_v12(&mut self) -> Result<(), StorageError> {
+        migrate_v11_to_v12(self)
+    }
+
+    fn migrate_v12_to_v13(&mut self) -> Result<(), StorageError> {
+        migrate_v12_to_v13(self)
     }
 
     #[must_use]
@@ -552,15 +568,69 @@ impl Store {
     }
 
     fn default_pane_id(&self, session_id: &str) -> Result<Option<PaneId>, StorageError> {
-        let value = self
+        let focused: Option<String> = self
             .connection
             .query_row(
-                "SELECT id FROM panes WHERE session_id = ?1 ORDER BY id LIMIT 1",
+                "SELECT sl.focused_pane_id
+                 FROM session_layouts sl
+                 JOIN pane_workers pw ON pw.pane_id = sl.focused_pane_id
+                 WHERE sl.session_id = ?1
+                   AND sl.focused_pane_id IS NOT NULL
+                   AND pw.state IN ('active', 'exited')",
                 [session_id],
                 |row| row.get(0),
             )
             .optional()
             .map_err(StorageError::from)?;
+        if let Some(value) = focused {
+            return PaneId::from_str(&value)
+                .map(Some)
+                .map_err(|error| StorageError::Invariant(error.to_string()));
+        }
+        let value = self
+            .connection
+            .query_row(
+                "SELECT id FROM panes
+                 WHERE session_id = ?1
+                   AND EXISTS (
+                       SELECT 1 FROM pane_workers pw
+                       WHERE pw.pane_id = panes.id AND pw.state IN ('active', 'exited')
+                   )
+                 ORDER BY layout_order, id LIMIT 1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StorageError::from)?;
+        let value = if let Some(value) = value {
+            Some(value)
+        } else {
+            let fallback_focus: Option<String> = self
+                .connection
+                .query_row(
+                    "SELECT focused_pane_id
+                     FROM session_layouts
+                     WHERE session_id = ?1 AND focused_pane_id IS NOT NULL",
+                    [session_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(StorageError::from)?;
+            match fallback_focus {
+                Some(value) => Some(value),
+                None => self
+                    .connection
+                    .query_row(
+                        "SELECT id FROM panes
+                         WHERE session_id = ?1
+                         ORDER BY layout_order, id LIMIT 1",
+                        [session_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()
+                    .map_err(StorageError::from)?,
+            }
+        };
         value
             .map(|value: String| {
                 PaneId::from_str(&value).map_err(|error| StorageError::Invariant(error.to_string()))
@@ -643,14 +713,38 @@ impl Store {
         release_hold: Option<(&str, u64)>,
         now_ms: i64,
     ) -> Result<(), StorageError> {
+        let pane_id = self.default_pane_id(session_id)?.ok_or_else(|| {
+            StorageError::Invariant(format!("Session '{session_id}' has no Pane"))
+        })?;
+        self.activate_attachment_for_pane(session_id, &pane_id, authority, release_hold, now_ms)
+    }
+
+    pub fn activate_attachment_for_pane(
+        &mut self,
+        session_id: &str,
+        pane_id: &PaneId,
+        authority: &AttachmentAuthority,
+        release_hold: Option<(&str, u64)>,
+        now_ms: i64,
+    ) -> Result<(), StorageError> {
         if authority.state != AttachmentAuthorityState::Active {
             return Err(StorageError::Invariant(
                 "activated attachment authority must be active".into(),
             ));
         }
-        let pane_id = self.default_pane_id(session_id)?.ok_or_else(|| {
-            StorageError::Invariant(format!("Session '{session_id}' has no Pane"))
-        })?;
+        let pane_session: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT session_id FROM panes WHERE id = ?1",
+                [pane_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if pane_session.as_deref() != Some(session_id) {
+            return Err(StorageError::Invariant(
+                "attachment Pane does not belong to the requested Session".into(),
+            ));
+        }
         let transaction = self.connection.transaction()?;
         if let Some((owner, generation)) = release_hold {
             let lease = transaction
@@ -681,7 +775,7 @@ impl Store {
                 params![session_id, authority.generation as i64, now_ms],
             )?;
         }
-        write_attachment_authority(&transaction, &pane_id, authority, now_ms)?;
+        write_attachment_authority(&transaction, pane_id, authority, now_ms)?;
         transaction.commit()?;
         Ok(())
     }
@@ -694,12 +788,44 @@ impl Store {
         deadline_ms: i64,
         now_ms: i64,
     ) -> Result<AttachmentAuthority, StorageError> {
-        let authority = AttachmentAuthority::held(owner, generation, deadline_ms);
         let pane_id = self.default_pane_id(session_id)?.ok_or_else(|| {
             StorageError::Invariant(format!("Session '{session_id}' has no Pane"))
         })?;
+        self.persist_attachment_hold_for_pane(
+            &pane_id,
+            session_id,
+            owner,
+            generation,
+            deadline_ms,
+            now_ms,
+        )
+    }
+
+    pub fn persist_attachment_hold_for_pane(
+        &mut self,
+        pane_id: &PaneId,
+        session_id: &str,
+        owner: &str,
+        generation: u64,
+        deadline_ms: i64,
+        now_ms: i64,
+    ) -> Result<AttachmentAuthority, StorageError> {
+        let authority = AttachmentAuthority::held(owner, generation, deadline_ms);
+        let pane_session: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT session_id FROM panes WHERE id = ?1",
+                [pane_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if pane_session.as_deref() != Some(session_id) {
+            return Err(StorageError::Invariant(
+                "attachment Pane does not belong to the requested Session".into(),
+            ));
+        }
         let transaction = self.connection.transaction()?;
-        write_attachment_authority(&transaction, &pane_id, &authority, now_ms)?;
+        write_attachment_authority(&transaction, pane_id, &authority, now_ms)?;
         transaction.execute(
             "
             INSERT INTO leases (
@@ -726,6 +852,7 @@ impl Store {
         pane: &PaneRecord,
         task: &TaskRecord,
     ) -> Result<(), StorageError> {
+        validate_pane_layout(pane)?;
         if task.session_id != session.id {
             return Err(StorageError::Invariant(
                 "created Task must belong to the created Session".into(),
@@ -769,8 +896,28 @@ impl Store {
             ],
         )?;
         transaction.execute(
-            "INSERT INTO panes (id, session_id, updated_at_ms) VALUES (?1, ?2, ?3)",
-            params![pane.id.to_string(), pane.session_id, pane.updated_at_ms],
+            "INSERT INTO panes (
+                id, session_id, kind, layout_order, layout_weight, z_index,
+                floating_x, floating_y, floating_rows, floating_columns, updated_at_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                pane.id.to_string(),
+                pane.session_id,
+                pane.kind.as_str(),
+                i64::from(pane.layout_order),
+                i64::from(pane.layout_weight),
+                i64::from(pane.z_index),
+                pane.floating_rect.map(|rect| i64::from(rect.x)),
+                pane.floating_rect.map(|rect| i64::from(rect.y)),
+                pane.floating_rect.map(|rect| i64::from(rect.rows)),
+                pane.floating_rect.map(|rect| i64::from(rect.columns)),
+                pane.updated_at_ms
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO session_layouts (session_id, focused_pane_id, updated_at_ms)
+             VALUES (?1, ?2, ?3)",
+            params![pane.session_id, pane.id.to_string(), pane.updated_at_ms],
         )?;
         let session_scope_id = ResourceScopeId::new();
         transaction.execute(
@@ -855,20 +1002,10 @@ impl Store {
         &self,
         session_id: &str,
     ) -> Result<Option<PaneRecord>, StorageError> {
-        self.connection
-            .query_row(
-                "SELECT p.id, p.session_id, rs.id, rs.requested_policy_json,
-                        p.updated_at_ms
-                 FROM panes p
-                 JOIN resource_scopes rs
-                   ON rs.target_kind = 'pane' AND rs.target_id = p.id
-                 WHERE p.session_id = ?1
-                 ORDER BY p.id LIMIT 1",
-                [session_id],
-                pane_from_row,
-            )
-            .optional()
-            .map_err(StorageError::from)
+        let Some(pane_id) = self.default_pane_id(session_id)? else {
+            return Ok(None);
+        };
+        self.find_pane(&pane_id)
     }
 
     pub fn list_panes_for_session(
@@ -877,21 +1014,57 @@ impl Store {
     ) -> Result<Vec<PaneRecord>, StorageError> {
         let mut statement = self.connection.prepare(
             "SELECT p.id, p.session_id, rs.id, rs.requested_policy_json,
+                    p.kind, p.layout_order, p.layout_weight, p.z_index,
+                    p.floating_x, p.floating_y, p.floating_rows, p.floating_columns,
                     p.updated_at_ms
              FROM panes p
              JOIN resource_scopes rs
                ON rs.target_kind = 'pane' AND rs.target_id = p.id
              WHERE p.session_id = ?1
-             ORDER BY p.id",
+             ORDER BY p.layout_order, p.id",
         )?;
         let rows = statement.query_map([session_id], pane_from_row)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn list_layout_panes_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<PaneRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT p.id, p.session_id, rs.id, rs.requested_policy_json,
+                    p.kind, p.layout_order, p.layout_weight, p.z_index,
+                    p.floating_x, p.floating_y, p.floating_rows, p.floating_columns,
+                    p.updated_at_ms
+             FROM panes p
+             JOIN resource_scopes rs
+               ON rs.target_kind = 'pane' AND rs.target_id = p.id
+             JOIN pane_workers pw
+               ON pw.pane_id = p.id AND pw.state IN ('active', 'exited')
+             WHERE p.session_id = ?1
+             ORDER BY p.layout_order, p.id",
+        )?;
+        let rows = statement.query_map([session_id], pane_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn list_tiled_panes_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<PaneRecord>, StorageError> {
+        Ok(self
+            .list_layout_panes_for_session(session_id)?
+            .into_iter()
+            .filter(|pane| pane.kind == qwe_core::PaneKind::Normal)
+            .collect())
     }
 
     pub fn find_pane(&self, pane_id: &PaneId) -> Result<Option<PaneRecord>, StorageError> {
         self.connection
             .query_row(
                 "SELECT p.id, p.session_id, rs.id, rs.requested_policy_json,
+                        p.kind, p.layout_order, p.layout_weight, p.z_index,
+                        p.floating_x, p.floating_y, p.floating_rows, p.floating_columns,
                         p.updated_at_ms
                  FROM panes p
                  JOIN resource_scopes rs
@@ -907,14 +1080,138 @@ impl Store {
     pub fn list_panes(&self) -> Result<Vec<PaneRecord>, StorageError> {
         let mut statement = self.connection.prepare(
             "SELECT p.id, p.session_id, rs.id, rs.requested_policy_json,
+                    p.kind, p.layout_order, p.layout_weight, p.z_index,
+                    p.floating_x, p.floating_y, p.floating_rows, p.floating_columns,
                     p.updated_at_ms
              FROM panes p
              JOIN resource_scopes rs
                ON rs.target_kind = 'pane' AND rs.target_id = p.id
-             ORDER BY p.session_id, p.id",
+             ORDER BY p.session_id, p.layout_order, p.id",
         )?;
         let rows = statement.query_map([], pane_from_row)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn next_pane_layout_order(&self, session_id: &str) -> Result<u32, StorageError> {
+        let next: i64 = self.connection.query_row(
+            "SELECT COALESCE(MAX(p.layout_order), -1) + 1
+             FROM panes p
+             JOIN pane_workers pw ON pw.pane_id = p.id
+             WHERE p.session_id = ?1 AND pw.state IN ('active', 'exited')",
+            [session_id],
+            |row| row.get(0),
+        )?;
+        u32::try_from(next)
+            .map_err(|_| StorageError::Invariant("Pane layout order overflowed u32".into()))
+    }
+
+    pub fn next_pane_z_index(&self, session_id: &str) -> Result<u32, StorageError> {
+        let next: i64 = self.connection.query_row(
+            "SELECT COALESCE(MAX(p.z_index), -1) + 1
+             FROM panes p
+             JOIN pane_workers pw ON pw.pane_id = p.id
+             WHERE p.session_id = ?1 AND pw.state IN ('active', 'exited')",
+            [session_id],
+            |row| row.get(0),
+        )?;
+        u32::try_from(next)
+            .map_err(|_| StorageError::Invariant("Pane z-index overflowed u32".into()))
+    }
+
+    pub fn session_focus(&self, session_id: &str) -> Result<Option<PaneId>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT focused_pane_id FROM session_layouts
+                 WHERE session_id = ?1 AND focused_pane_id IS NOT NULL",
+                [session_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(StorageError::from)?
+            .map(|value| {
+                PaneId::from_str(&value).map_err(|error| StorageError::Invariant(error.to_string()))
+            })
+            .transpose()
+    }
+
+    pub fn set_session_focus(
+        &mut self,
+        session_id: &str,
+        pane_id: &PaneId,
+        updated_at_ms: i64,
+    ) -> Result<(), StorageError> {
+        let changed = self.connection.execute(
+            "UPDATE session_layouts
+             SET focused_pane_id = ?2, updated_at_ms = ?3
+             WHERE session_id = ?1
+               AND EXISTS (
+                   SELECT 1 FROM panes
+                   WHERE id = ?2 AND session_id = ?1
+               )",
+            params![session_id, pane_id.to_string(), updated_at_ms],
+        )?;
+        if changed == 0 {
+            return Err(StorageError::Invariant(
+                "focused Pane does not belong to the Session".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn update_pane_floating_rect(
+        &mut self,
+        pane_id: &PaneId,
+        rect: qwe_core::LayoutRect,
+        updated_at_ms: i64,
+    ) -> Result<PaneRecord, StorageError> {
+        let pane = self
+            .find_pane(pane_id)?
+            .ok_or_else(|| StorageError::Invariant("Pane does not exist".into()))?;
+        if pane.kind != qwe_core::PaneKind::Floating {
+            return Err(StorageError::Invariant(
+                "floating bounds require a floating Pane".into(),
+            ));
+        }
+        rect.validate()
+            .map_err(|error| StorageError::Invariant(error.to_string()))?;
+        self.connection.execute(
+            "UPDATE panes
+             SET floating_x = ?2, floating_y = ?3, floating_rows = ?4,
+                 floating_columns = ?5, updated_at_ms = ?6
+             WHERE id = ?1",
+            params![
+                pane_id.to_string(),
+                i64::from(rect.x),
+                i64::from(rect.y),
+                i64::from(rect.rows),
+                i64::from(rect.columns),
+                updated_at_ms
+            ],
+        )?;
+        self.find_pane(pane_id)?
+            .ok_or_else(|| StorageError::Invariant("Pane disappeared after update".into()))
+    }
+
+    pub fn raise_floating_pane(
+        &mut self,
+        pane_id: &PaneId,
+        updated_at_ms: i64,
+    ) -> Result<PaneRecord, StorageError> {
+        let pane = self
+            .find_pane(pane_id)?
+            .ok_or_else(|| StorageError::Invariant("Pane does not exist".into()))?;
+        if pane.kind != qwe_core::PaneKind::Floating {
+            return Err(StorageError::Invariant(
+                "raising requires a floating Pane".into(),
+            ));
+        }
+        let next_z = self.next_pane_z_index(&pane.session_id)?;
+        self.connection.execute(
+            "UPDATE panes SET z_index = ?2, updated_at_ms = ?3 WHERE id = ?1",
+            params![pane_id.to_string(), i64::from(next_z), updated_at_ms],
+        )?;
+        self.find_pane(pane_id)?
+            .ok_or_else(|| StorageError::Invariant("Pane disappeared after raise".into()))
     }
 
     pub fn update_pane_resource_policy(
@@ -962,6 +1259,7 @@ impl Store {
         worker: &PaneWorkerRecord,
         task: &TaskRecord,
     ) -> Result<(), StorageError> {
+        validate_pane_layout(pane)?;
         if pane.id != worker.pane_id
             || pane.id != task.pane_id
             || pane.session_id != task.session_id
@@ -982,9 +1280,53 @@ impl Store {
                 pane.session_id
             )));
         }
+        if pane.kind == qwe_core::PaneKind::Normal {
+            transaction.execute(
+                "UPDATE panes
+                 SET layout_order = -layout_order - 1
+                 WHERE session_id = ?1 AND layout_order >= ?2
+                   AND kind = 'normal'
+                   AND EXISTS (
+                       SELECT 1 FROM pane_workers pw
+                       WHERE pw.pane_id = panes.id AND pw.state IN ('active', 'exited')
+                   )",
+                params![pane.session_id, i64::from(pane.layout_order)],
+            )?;
+            transaction.execute(
+                "UPDATE panes SET layout_order = -layout_order
+                 WHERE session_id = ?1 AND layout_order < 0
+                   AND kind = 'normal'
+                   AND EXISTS (
+                       SELECT 1 FROM pane_workers pw
+                       WHERE pw.pane_id = panes.id AND pw.state IN ('active', 'exited')
+                   )",
+                [&pane.session_id],
+            )?;
+        }
         transaction.execute(
-            "INSERT INTO panes (id, session_id, updated_at_ms) VALUES (?1, ?2, ?3)",
-            params![pane.id.to_string(), pane.session_id, pane.updated_at_ms],
+            "INSERT INTO panes (
+                id, session_id, kind, layout_order, layout_weight, z_index,
+                floating_x, floating_y, floating_rows, floating_columns, updated_at_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                pane.id.to_string(),
+                pane.session_id,
+                pane.kind.as_str(),
+                i64::from(pane.layout_order),
+                i64::from(pane.layout_weight),
+                i64::from(pane.z_index),
+                pane.floating_rect.map(|rect| i64::from(rect.x)),
+                pane.floating_rect.map(|rect| i64::from(rect.y)),
+                pane.floating_rect.map(|rect| i64::from(rect.rows)),
+                pane.floating_rect.map(|rect| i64::from(rect.columns)),
+                pane.updated_at_ms
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO session_layouts (session_id, focused_pane_id, updated_at_ms)
+             VALUES (?1, NULL, ?2)
+             ON CONFLICT(session_id) DO NOTHING",
+            params![pane.session_id, pane.updated_at_ms],
         )?;
         let session_scope: String = transaction.query_row(
             "SELECT id FROM resource_scopes
@@ -1045,6 +1387,82 @@ impl Store {
                 task.started_at_ms,
                 task.ended_at_ms
             ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn reorder_panes(
+        &mut self,
+        session_id: &str,
+        ordered: &[PaneId],
+        updated_at_ms: i64,
+    ) -> Result<(), StorageError> {
+        if ordered.is_empty() {
+            return Err(StorageError::Invariant(
+                "Pane reorder requires at least one Pane".into(),
+            ));
+        }
+        let mut expected = ordered.iter().map(ToString::to_string).collect::<Vec<_>>();
+        expected.sort();
+        if expected.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(StorageError::Invariant(
+                "Pane reorder contains duplicate identities".into(),
+            ));
+        }
+        let current = self
+            .list_tiled_panes_for_session(session_id)?
+            .into_iter()
+            .map(|pane| pane.id.to_string())
+            .collect::<Vec<_>>();
+        let mut current = current;
+        current.sort();
+        if current != expected {
+            return Err(StorageError::Invariant(
+                "Pane reorder must include every Pane in the Session exactly once".into(),
+            ));
+        }
+
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "UPDATE panes
+             SET layout_order = -layout_order - 1, updated_at_ms = ?2
+             WHERE session_id = ?1
+               AND kind = 'normal'
+               AND EXISTS (
+                   SELECT 1 FROM pane_workers pw
+                   WHERE pw.pane_id = panes.id AND pw.state IN ('active', 'exited')
+               )",
+            params![session_id, updated_at_ms],
+        )?;
+        for (order, pane_id) in ordered.iter().enumerate() {
+            let changed = transaction.execute(
+                "UPDATE panes
+                 SET layout_order = ?3, updated_at_ms = ?4
+                 WHERE session_id = ?1 AND id = ?2
+                   AND kind = 'normal'
+                   AND EXISTS (
+                       SELECT 1 FROM pane_workers pw
+                       WHERE pw.pane_id = panes.id AND pw.state IN ('active', 'exited')
+                   )",
+                params![
+                    session_id,
+                    pane_id.to_string(),
+                    i64::try_from(order).map_err(|_| {
+                        StorageError::Invariant("Pane layout order overflowed i64".into())
+                    })?,
+                    updated_at_ms
+                ],
+            )?;
+            if changed != 1 {
+                return Err(StorageError::Invariant(
+                    "Pane disappeared during reorder".into(),
+                ));
+            }
+        }
+        transaction.execute(
+            "UPDATE session_layouts SET updated_at_ms = ?2 WHERE session_id = ?1",
+            params![session_id, updated_at_ms],
         )?;
         transaction.commit()?;
         Ok(())
@@ -1130,6 +1548,38 @@ impl Store {
                 "ResourceScope '{scope_id}' does not exist"
             )));
         }
+        Ok(())
+    }
+
+    pub fn close_session_pane_records(
+        &mut self,
+        session_id: &str,
+        updated_at_ms: i64,
+    ) -> Result<(), StorageError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "UPDATE tasks
+             SET state = 'stopped', exit_code = NULL, exit_signal = NULL,
+                 ended_at_ms = ?2
+             WHERE state = 'running'
+               AND pane_id IN (SELECT id FROM panes WHERE session_id = ?1)",
+            params![session_id, updated_at_ms],
+        )?;
+        transaction.execute(
+            "UPDATE pane_workers
+             SET state = 'closed', updated_at_ms = ?2
+             WHERE pane_id IN (SELECT id FROM panes WHERE session_id = ?1)",
+            params![session_id, updated_at_ms],
+        )?;
+        transaction.execute(
+            "UPDATE resource_scopes
+             SET lifecycle_state = 'closed',
+                 cleanup_outcome = 'complete scope stopped',
+                 updated_at_ms = ?2
+             WHERE session_id = ?1 AND target_kind = 'pane'",
+            params![session_id, updated_at_ms],
+        )?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -1474,6 +1924,10 @@ impl Store {
                  WHERE session_id = ?1 AND target_kind = 'session'",
                 [&session_id],
             )? as u64;
+            transaction.execute(
+                "DELETE FROM session_layouts WHERE session_id = ?1",
+                [&session_id],
+            )?;
             report.panes += transaction
                 .execute("DELETE FROM panes WHERE session_id = ?1", [&session_id])?
                 as u64;
@@ -1632,6 +2086,25 @@ impl Store {
         )?;
         Ok(())
     }
+}
+
+fn validate_pane_layout(pane: &PaneRecord) -> Result<(), StorageError> {
+    if pane.layout_weight == 0 || pane.layout_weight > 1_000 {
+        return Err(StorageError::Invariant(format!(
+            "Pane layout weight must be between 1 and 1000, received {}",
+            pane.layout_weight
+        )));
+    }
+    if pane.kind == qwe_core::PaneKind::Normal && pane.floating_rect.is_some() {
+        return Err(StorageError::Invariant(
+            "tiled Panes cannot store floating bounds".into(),
+        ));
+    }
+    if let Some(rect) = pane.floating_rect {
+        rect.validate()
+            .map_err(|error| StorageError::Invariant(error.to_string()))?;
+    }
+    Ok(())
 }
 
 fn migrate_v10_to_v11(store: &mut Store) -> Result<(), StorageError> {
@@ -2000,6 +2473,105 @@ fn migrate_v10_to_v11(store: &mut Store) -> Result<(), StorageError> {
     Ok(())
 }
 
+fn migrate_v11_to_v12(store: &mut Store) -> Result<(), StorageError> {
+    let transaction = store.connection.transaction()?;
+    transaction.execute_batch(
+        "
+        ALTER TABLE panes ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal';
+        ALTER TABLE panes ADD COLUMN layout_order INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE panes ADD COLUMN layout_weight INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE panes ADD COLUMN z_index INTEGER NOT NULL DEFAULT 0;
+
+        UPDATE panes
+        SET layout_order = (
+            SELECT COUNT(*)
+            FROM panes AS preceding
+            WHERE preceding.session_id = panes.session_id
+              AND preceding.id < panes.id
+        );
+
+        CREATE INDEX panes_by_layout_order
+            ON panes(session_id, layout_order);
+        CREATE TABLE session_layouts (
+            session_id TEXT PRIMARY KEY
+                REFERENCES sessions(id) ON DELETE RESTRICT,
+            focused_pane_id TEXT
+                REFERENCES panes(id) ON DELETE SET NULL,
+            updated_at_ms INTEGER NOT NULL
+        );
+        INSERT INTO session_layouts (session_id, focused_pane_id, updated_at_ms)
+        SELECT p.session_id,
+               (
+                   SELECT first_pane.id
+                   FROM panes AS first_pane
+                   WHERE first_pane.session_id = p.session_id
+                   ORDER BY first_pane.layout_order, first_pane.id
+                   LIMIT 1
+               ),
+               MAX(p.updated_at_ms)
+        FROM panes AS p
+        GROUP BY p.session_id;
+        PRAGMA user_version = 12;
+        ",
+    )?;
+    let invalid_orders: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM (
+            SELECT session_id, layout_order, COUNT(*) AS count
+            FROM panes
+            GROUP BY session_id, layout_order
+            HAVING count != 1
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if invalid_orders != 0 {
+        return Err(StorageError::Invariant(format!(
+            "v12 migration produced {invalid_orders} duplicate Pane layout orders"
+        )));
+    }
+    transaction.commit()?;
+    let foreign_key_errors: i64 =
+        store
+            .connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })?;
+    if foreign_key_errors != 0 {
+        return Err(StorageError::Invariant(format!(
+            "v12 migration left {foreign_key_errors} foreign-key violations"
+        )));
+    }
+    Ok(())
+}
+
+fn migrate_v12_to_v13(store: &mut Store) -> Result<(), StorageError> {
+    let transaction = store.connection.transaction()?;
+    transaction.execute_batch(
+        "
+        ALTER TABLE panes ADD COLUMN floating_x INTEGER;
+        ALTER TABLE panes ADD COLUMN floating_y INTEGER;
+        ALTER TABLE panes ADD COLUMN floating_rows INTEGER;
+        ALTER TABLE panes ADD COLUMN floating_columns INTEGER;
+        PRAGMA user_version = 13;
+        ",
+    )?;
+    let invalid_bounds: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM panes
+         WHERE (floating_x IS NULL) != (floating_y IS NULL)
+            OR (floating_x IS NULL) != (floating_rows IS NULL)
+            OR (floating_x IS NULL) != (floating_columns IS NULL)",
+        [],
+        |row| row.get(0),
+    )?;
+    if invalid_bounds != 0 {
+        return Err(StorageError::Invariant(format!(
+            "v13 migration produced {invalid_bounds} partial floating bounds"
+        )));
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
 fn unix_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -2176,6 +2748,52 @@ fn pane_from_row(row: &Row<'_>) -> rusqlite::Result<PaneRecord> {
                 Box::new(failure),
             )
         })?;
+    let floating = [
+        row.get::<_, Option<i64>>(8)?,
+        row.get::<_, Option<i64>>(9)?,
+        row.get::<_, Option<i64>>(10)?,
+        row.get::<_, Option<i64>>(11)?,
+    ];
+    let floating_rect = match floating {
+        [None, None, None, None] => None,
+        [Some(x), Some(y), Some(rows), Some(columns)] => Some(qwe_core::LayoutRect {
+            x: u16::try_from(x).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    8,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })?,
+            y: u16::try_from(y).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    9,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })?,
+            rows: u16::try_from(rows).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    10,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })?,
+            columns: u16::try_from(columns).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    11,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })?,
+        }),
+        _ => {
+            return Err(rusqlite::Error::InvalidColumnType(
+                8,
+                "floating bounds".into(),
+                rusqlite::types::Type::Null,
+            ));
+        }
+    };
     Ok(PaneRecord {
         id: PaneId::from_str(&id).map_err(|failure| {
             rusqlite::Error::FromSqlConversionFailure(
@@ -2193,7 +2811,12 @@ fn pane_from_row(row: &Row<'_>) -> rusqlite::Result<PaneRecord> {
             )
         })?,
         resource_policy,
-        updated_at_ms: row.get(4)?,
+        kind: qwe_core::PaneKind::from_db(&row.get::<_, String>(4)?),
+        layout_order: row.get::<_, i64>(5)? as u32,
+        layout_weight: row.get::<_, i64>(6)? as u16,
+        z_index: row.get::<_, i64>(7)? as u32,
+        floating_rect,
+        updated_at_ms: row.get(12)?,
     })
 }
 
@@ -2236,6 +2859,11 @@ mod tests {
             session_id: session_id.into(),
             resource_scope_id: ResourceScopeId::new(),
             resource_policy: ResourcePolicy::empty(),
+            kind: qwe_core::PaneKind::Normal,
+            layout_order: 0,
+            layout_weight: 1,
+            z_index: 0,
+            floating_rect: None,
             updated_at_ms: 10,
         }
     }
@@ -2253,8 +2881,14 @@ mod tests {
 
     fn create_running_session(store: &mut Store, id: &str) -> PaneRecord {
         let pane = pane(id);
+        let mut record = session(id);
+        record.worker_identity = Some(ProcessIdentity {
+            pid: 900,
+            pgid: 900,
+            start_token: "worker:900".into(),
+        });
         store
-            .insert_created_session(&session(id), &pane, &task(TaskId::new(), id, &pane.id))
+            .insert_created_session(&record, &pane, &task(TaskId::new(), id, &pane.id))
             .unwrap();
         pane
     }
@@ -2313,6 +2947,183 @@ mod tests {
                 .is_err()
         );
         assert!(store.find_session("new").unwrap().is_none());
+    }
+
+    #[test]
+    fn pane_targeted_attachment_hold_does_not_write_the_default_pane() {
+        let mut store = Store::open_in_memory().unwrap();
+        let first = create_running_session(&mut store, "layout-hold");
+        let mut second = pane("layout-hold");
+        second.layout_order = 1;
+        let worker = PaneWorkerRecord {
+            pane_id: second.id.clone(),
+            identity: ProcessIdentity {
+                pid: 300,
+                pgid: 300,
+                start_token: "worker:300".into(),
+            },
+            state: "active".into(),
+            updated_at_ms: 20,
+        };
+        let second_task = task(TaskId::new(), "layout-hold", &second.id);
+        store
+            .insert_created_pane(&second, &worker, &second_task)
+            .unwrap();
+
+        store
+            .persist_attachment_hold_for_pane(&second.id, "layout-hold", "alice", 7, 1_000, 100)
+            .unwrap();
+
+        assert!(
+            store
+                .get_attachment_authority_for_pane(&first.id)
+                .unwrap()
+                .is_none()
+        );
+        let held = store
+            .get_attachment_authority_for_pane(&second.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(held.state, AttachmentAuthorityState::Held);
+        assert_eq!(held.owner.as_deref(), Some("alice"));
+        assert_eq!(held.generation, 7);
+        assert!(matches!(
+            store.persist_attachment_hold_for_pane(
+                &second.id,
+                "another-session",
+                "alice",
+                7,
+                1_000,
+                100
+            ),
+            Err(StorageError::Invariant(_))
+        ));
+    }
+
+    #[test]
+    fn pane_insertion_and_reorder_preserve_unique_layout_order() {
+        let mut store = Store::open_in_memory().unwrap();
+        let first = create_running_session(&mut store, "layout-order");
+        let mut second = pane("layout-order");
+        second.layout_order = 1;
+        let second_task = task(TaskId::new(), "layout-order", &second.id);
+        store
+            .insert_created_pane(
+                &second,
+                &PaneWorkerRecord {
+                    pane_id: second.id.clone(),
+                    identity: ProcessIdentity {
+                        pid: 300,
+                        pgid: 300,
+                        start_token: "worker:300".into(),
+                    },
+                    state: "active".into(),
+                    updated_at_ms: 20,
+                },
+                &second_task,
+            )
+            .unwrap();
+
+        let mut inserted = pane("layout-order");
+        inserted.layout_order = 1;
+        let inserted_task = task(TaskId::new(), "layout-order", &inserted.id);
+        store
+            .insert_created_pane(
+                &inserted,
+                &PaneWorkerRecord {
+                    pane_id: inserted.id.clone(),
+                    identity: ProcessIdentity {
+                        pid: 310,
+                        pgid: 310,
+                        start_token: "worker:310".into(),
+                    },
+                    state: "active".into(),
+                    updated_at_ms: 30,
+                },
+                &inserted_task,
+            )
+            .unwrap();
+        let panes = store.list_panes_for_session("layout-order").unwrap();
+        assert_eq!(
+            panes.iter().map(|pane| pane.id.clone()).collect::<Vec<_>>(),
+            vec![first.id.clone(), inserted.id.clone(), second.id.clone()]
+        );
+        assert_eq!(
+            panes
+                .iter()
+                .map(|pane| pane.layout_order)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+
+        store
+            .reorder_panes(
+                "layout-order",
+                &[second.id.clone(), first.id.clone(), inserted.id.clone()],
+                40,
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .list_panes_for_session("layout-order")
+                .unwrap()
+                .iter()
+                .map(|pane| pane.id.clone())
+                .collect::<Vec<_>>(),
+            vec![second.id.clone(), first.id.clone(), inserted.id.clone()]
+        );
+        let mut floating = pane("layout-order");
+        floating.kind = qwe_core::PaneKind::Floating;
+        floating.layout_order = 3;
+        floating.z_index = 1;
+        store
+            .insert_created_pane(
+                &floating,
+                &PaneWorkerRecord {
+                    pane_id: floating.id.clone(),
+                    identity: ProcessIdentity {
+                        pid: 320,
+                        pgid: 320,
+                        start_token: "worker:320".into(),
+                    },
+                    state: "active".into(),
+                    updated_at_ms: 45,
+                },
+                &task(TaskId::new(), "layout-order", &floating.id),
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .list_layout_panes_for_session("layout-order")
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(
+            store
+                .list_tiled_panes_for_session("layout-order")
+                .unwrap()
+                .len(),
+            3
+        );
+        let bounds = qwe_core::LayoutRect {
+            x: 7,
+            y: 2,
+            rows: 12,
+            columns: 40,
+        };
+        let updated = store
+            .update_pane_floating_rect(&floating.id, bounds, 50)
+            .unwrap();
+        assert_eq!(updated.floating_rect, Some(bounds));
+        assert!(matches!(
+            store.update_pane_floating_rect(&first.id, bounds, 55),
+            Err(StorageError::Invariant(_))
+        ));
+        assert!(matches!(
+            store.reorder_panes("layout-order", &[second.id.clone(), second.id.clone()], 50),
+            Err(StorageError::Invariant(_))
+        ));
     }
 
     #[test]
@@ -2385,7 +3196,8 @@ mod tests {
                 .count(),
             2
         );
-        let second_pane = pane("one");
+        let mut second_pane = pane("one");
+        second_pane.layout_order = 1;
         let second_worker = PaneWorkerRecord {
             pane_id: second_pane.id.clone(),
             identity: ProcessIdentity {
@@ -2401,6 +3213,18 @@ mod tests {
             .insert_created_pane(&second_pane, &second_worker, &second_pane_task)
             .unwrap();
         assert_eq!(store.list_panes_for_session("one").unwrap().len(), 2);
+        store.set_session_focus("one", &second_pane.id, 40).unwrap();
+        assert_eq!(
+            store.session_focus("one").unwrap(),
+            Some(second_pane.id.clone())
+        );
+        assert_eq!(
+            store.find_pane_for_session("one").unwrap().unwrap().id,
+            second_pane.id
+        );
+        store
+            .set_session_focus("missing-session", &second_pane.id, 50)
+            .unwrap_err();
         assert!(
             store.find_pane(&second_pane.id).unwrap().is_some(),
             "Pane lookup must not depend on the Session's first Pane"
@@ -2616,7 +3440,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_populated_v10_database_to_v11_with_backup() {
+    fn migrates_populated_v10_database_to_v13_with_backup() {
         let path = std::env::temp_dir().join(format!(
             "qwe-storage-v10-{}-{}.sqlite",
             std::process::id(),
@@ -2749,12 +3573,20 @@ mod tests {
         }
 
         let store = Store::open(path.to_str().unwrap()).unwrap();
-        assert_eq!(store.schema_version(), 11);
+        assert_eq!(store.schema_version(), 13);
         let session = store.find_session("legacy").unwrap().unwrap();
         assert_eq!(session.identity.unwrap().pid, 100);
         assert_eq!(session.worker_identity.unwrap().pid, 90);
         let pane = store.find_pane(&pane_id).unwrap().unwrap();
         assert_eq!(pane.resource_policy.memory_max_bytes, Some(134217728));
+        assert_eq!(pane.kind, qwe_core::PaneKind::Normal);
+        assert_eq!(pane.layout_order, 0);
+        assert_eq!(pane.layout_weight, 1);
+        assert_eq!(pane.z_index, 0);
+        assert_eq!(
+            store.session_focus("legacy").unwrap(),
+            Some(pane_id.clone())
+        );
         let worker = store.find_pane_worker(&pane_id).unwrap().unwrap();
         assert_eq!(worker.identity.start_token, "worker:90");
         let task = store.find_task(&task_id).unwrap().unwrap();
@@ -2779,7 +3611,7 @@ mod tests {
         assert_eq!(store.list_resource_scopes().unwrap().len(), 2);
         assert_eq!(store.local_root_principal().unwrap().epoch, 1);
 
-        let backup_prefix = format!("{}.pre-v11-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v13-", path.file_name().unwrap().to_string_lossy());
         let backup = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
             .flatten()
@@ -2789,7 +3621,7 @@ mod tests {
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().starts_with(&backup_prefix))
             })
-            .expect("v11 migration must leave a verified v10 backup");
+            .expect("v13 migration must leave a verified v10 backup");
         let backup = Connection::open(&backup).unwrap();
         let backup_version: i64 = backup
             .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -2798,7 +3630,7 @@ mod tests {
         drop(backup);
         drop(store);
 
-        let backup_prefix = format!("{}.pre-v11-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v13-", path.file_name().unwrap().to_string_lossy());
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry
                 .file_name()
@@ -2811,6 +3643,106 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
         let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    }
+
+    #[test]
+    fn migrates_v11_multi_pane_layout_with_stable_order_and_focus() {
+        let path = std::env::temp_dir().join(format!(
+            "qwe-storage-v11-layout-{}-{}.sqlite",
+            std::process::id(),
+            TaskId::new()
+        ));
+        let first = PaneId::new();
+        let second = PaneId::new();
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA foreign_keys=ON;
+                     PRAGMA user_version = 11;",
+                )
+                .unwrap();
+            connection.execute_batch(V11_SCHEMA_SQL).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sessions (
+                        id, owner, state, pid, pgid, start_token, updated_at_ms
+                     ) VALUES ('layout', 'local', 'running', NULL, NULL, NULL, 10)",
+                    [],
+                )
+                .unwrap();
+            let session_scope = ResourceScopeId::new();
+            connection
+                .execute(
+                    "INSERT INTO resource_scopes (
+                        id, session_id, target_kind, target_id, parent_scope_id, backend,
+                        requested_policy_json, lifecycle_state, cleanup_outcome, updated_at_ms
+                     ) VALUES (?1, 'layout', 'session', 'layout', NULL, 'logical', '{}',
+                               'active', NULL, 10)",
+                    [session_scope.to_string()],
+                )
+                .unwrap();
+            for pane in [&first, &second] {
+                connection
+                    .execute(
+                        "INSERT INTO panes (id, session_id, updated_at_ms)
+                         VALUES (?1, 'layout', 10)",
+                        [pane.to_string()],
+                    )
+                    .unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO resource_scopes (
+                            id, session_id, target_kind, target_id, parent_scope_id, backend,
+                            requested_policy_json, lifecycle_state, cleanup_outcome, updated_at_ms
+                         ) VALUES (?1, 'layout', 'pane', ?2, ?3, 'logical', '{}',
+                                   'active', NULL, 10)",
+                        params![
+                            ResourceScopeId::new().to_string(),
+                            pane.to_string(),
+                            session_scope.to_string()
+                        ],
+                    )
+                    .unwrap();
+            }
+            connection
+                .execute_batch("PRAGMA user_version = 11;")
+                .unwrap();
+        }
+
+        let store = Store::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(store.schema_version(), 13);
+        let panes = store.list_panes_for_session("layout").unwrap();
+        assert_eq!(panes.len(), 2);
+        let mut expected = [first.clone(), second.clone()];
+        expected.sort_by_key(ToString::to_string);
+        assert_eq!(
+            panes.iter().map(|pane| pane.id.clone()).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            panes
+                .iter()
+                .map(|pane| pane.layout_order)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert_eq!(
+            store.session_focus("layout").unwrap(),
+            Some(expected[0].clone())
+        );
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+        for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
+            if entry.file_name().to_string_lossy().starts_with(&format!(
+                "{}.pre-v13-",
+                path.file_name().unwrap().to_string_lossy()
+            )) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
     }
 
     #[test]

@@ -1,8 +1,8 @@
 # V0 Contract Test Matrices
 
-Status: Stages 1-5 complete for Linux-first V0; Stage 7 deterministic and
-Fedora installed-systemd gates pass; Ubuntu/Debian and five-hour soak pending
-Date: 2026-11-10
+Status: Stages 1-8 complete for the current baseline; installed-systemd matrix
+and extended Linux long-run qualification pass; Agent Execution ADR accepted
+Date: 2026-11-14
 
 These IDs are stable contract identifiers. An implementation test may be
 named after an ID only after it exercises the complete row with real sockets,
@@ -103,13 +103,38 @@ Detection and startup rows are required in addition to the truth table.
 | ATTACH-006 | Explicit detach either releases authority or creates the requested hold |
 | ATTACH-007 | Connection EOF releases Active authority immediately |
 | ATTACH-008 | Per-attachment output queue overflow closes that channel with `output_backpressure` |
-| ATTACH-009 | `read_only` mode returns `unsupported_mode` in V0 |
+| ATTACH-009 | `read_only` opens a qwed-owned observer that receives snapshot/output but cannot input, resize, detach, or control |
 | ATTACH-010 | Unknown frame type closes the channel with an explicit protocol error |
 | ATTACH-011 | Unknown channel version closes the channel with `incompatible_version` |
 | ATTACH-012 | Each attachment has an independent bounded 1 MiB output queue |
 | ATTACH-013 | `SNAPSHOT` precedes every `OUTPUT` frame from its recorded next offset |
 | ATTACH-014 | Every `OUTPUT` frame is at most 64 KiB |
 | ATTACH-015 | CLI detach resets Kitty keyboard, modified-key, bracketed-paste, alternate-screen, cursor, synchronized-output, and mouse modes |
+
+## Session Layout
+
+These rows cover the first Stage 8 compositor slice. They require real Pane
+workers and Pane-targeted Attach channels.
+
+| ID | Case |
+|---|---|
+| LAYOUT-001 | `SESSION_LAYOUT` deterministically tiles two Panes into non-overlapping rectangles that cover the requested viewport |
+| LAYOUT-002 | `ATTACH_OPEN` with a `pane_id` selects that Pane and the accepted/snapshot sequence identifies the same Pane |
+| LAYOUT-003 | One client can hold distinct exclusive Attach channels to two Panes in the same Session |
+| LAYOUT-004 | Raw `INPUT` on a Pane-targeted Attach reaches only the selected Pane |
+| LAYOUT-005 | The interactive compositor renders both Panes, switches focus without leaking input, and detaches cleanly |
+| LAYOUT-006 | Focus and Pane layout order survive qwed restart without changing Pane identity |
+| LAYOUT-007 | The compositor splits after the focused Pane, attaches the new worker, and closes that Pane without disturbing survivors |
+| LAYOUT-008 | Reordering through the compositor persists the new layout order and keeps input on the focused Pane |
+| LAYOUT-009 | Copy mode selects only the focused Pane's visible screen and reports clipboard provider success or failure explicitly |
+| LAYOUT-010 | Quick-menu keys are intercepted by the client and never reach the PTY |
+| LAYOUT-011 | A floating Pane overlays tiled Panes, receives focused input, and closes with its worker and ResourceScope |
+| LAYOUT-012 | Floating move/resize saves explicit bounds and `SESSION_LAYOUT` returns the persisted rectangle |
+| LAYOUT-013 | Simulated SGR mouse press/motion/release on a floating title row persists the dragged rectangle |
+| LAYOUT-014 | Dragging the floating bottom-right resize handle persists the resized rectangle |
+| LAYOUT-015 | Clicking an exposed lower floating Pane raises it above overlapping overlays and persists z-order |
+| LAYOUT-016 | Copy mode scrolls client VT scrollback and copies selected history while excluding newer off-screen lines |
+| LAYOUT-017 | Mouse press/motion/release in copy mode selects only focused-Pane text and writes the clipboard |
 
 ## Core Object Model
 
@@ -300,7 +325,7 @@ release targets.
 |---|---|---|
 | SHARED-001 | Validate the ADR 0021 shared prerequisites in a disposable spike | Two to four Pane workers run under one logical Session with isolated terminal state, per-Pane cgroup scopes, Attach targeting, a read-only observer, migration preservation, recovery, health, and complete teardown |
 | SHARED-002 | Integrate multiple Pane workers through production qwed | qwed inventories workers by Pane and owns discovery, adoption, health, cleanup, Attach routing, and observer channel persistence |
-| SHARED-003 | Migrate a populated v10 database to schema v11 | Sessions, Panes, Tasks, Leases, attachment authority, idempotency records, policy, and history survive with stable identities |
+| SHARED-003 | Migrate a populated v10 database through schema v12 | Sessions, Panes, Tasks, Leases, attachment authority, idempotency records, policy, layout metadata, and history survive with stable identities |
 | SHARED-004 | Recover multiple Pane workers through production qwed | qwed discovers, adopts, reports health for, and routes operations by Pane; one Pane loss does not mark unrelated Panes lost |
 | SHARED-005 | Exercise interactive and observer channels on one Pane | Interactive authority is exclusive for that Pane; the qwed-owned observer receives snapshot/output only and cannot input, resize, or control |
 | SHARED-006 | Tear down a Pane ResourceScope with detached jobs | The complete Pane scope closes without residual processes or controller state, and the cleanup tombstone records success |
@@ -309,8 +334,8 @@ The shared-prerequisites spike passes for two- and four-Pane runs on Fedora Linu
 systemd user cgroup v2 delegation in
 [Experiment 0028](experiments/0028-stage6-shared-prerequisites-spike.md). The
 result uses a spike-local supervisor and direct worker Attach. Production
-qwed multi-Pane inventory and recovery now pass through
-`just stage7-multi-pane`; observer-channel persistence remains open.
+qwed multi-Pane inventory, recovery, interactive channels, and qwed-owned
+observer channels now pass through `just stage7-multi-pane`.
 Experiment 0028 recommended the accepted observer projection and
 complete-scope-teardown rules.
 
@@ -318,8 +343,8 @@ Stage 6.5 accepted ADR 0021 on 2026-11-09 with Pane-first enforcement,
 Pane-keyed inventory and Attach, the qwed-owned observer projection, complete
 scope teardown, and the v11 migration invariants in
 [Storage Migration](storage-migration.md). The production shared-prerequisite
-rows are implemented under Stage 7; observer-channel persistence remains
-open.
+rows are implemented under Stage 7. Schema v12 adds the durable Pane layout
+metadata governed by ADR 0023.
 
 ## Stage 7 Resource Governance
 
@@ -337,6 +362,9 @@ rejection, requested/effective policy, crash-restart persistence, bounded
 events, short-lived startup acknowledgement, detached-job scope cleanup, and
 concurrent memory/CPU/task pressure with qwed latency. The short soak covers
 eight Sessions with two Panes, qwed restarts, churn, Attach cycles, and scope
-cleanup. Fedora installed-systemd qualification passes. Ubuntu 22.04, Ubuntu
-24.04, and Debian 12 remain blocked on unavailable real-VM targets; the
-five-hour operation-dense release soak remains open.
+cleanup. Fedora and the Ubuntu 22.04, Ubuntu 24.04, and Debian 12 real-VM
+targets pass the installed-systemd probes. The five-hour operation-dense
+release soak remains open. History-scale regressions cover startup and
+teardown with thousands of completed Panes; see
+[Experiment 0041](experiments/0041-linux-vm-qualification.md) for the restart
+reconciliation defect and its regression evidence.

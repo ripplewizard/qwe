@@ -25,7 +25,7 @@ MATRIX_PATH = ROOT / "docs/test-matrices.md"
 PROTOCOL_SOURCE = ROOT / "crates/qwe-protocol/src/lib.rs"
 TEST_ID_PATTERN = re.compile(
     r"\b(?:AUTH|LIVE|ATTACH|OBJ|IDEMP|HIST|SVC|SEC|CRED|RES|KILL|"
-    r"PACK|PERF|MAC|RG|SHARED)-\d{3}\b"
+    r"PACK|PERF|MAC|RG|SHARED|LAYOUT)-\d{3}\b"
 )
 
 
@@ -112,6 +112,7 @@ def validate_examples(schema: dict[str, Any]) -> None:
         {
             "protocol_version": 1,
             "session_id": "session-1",
+            "pane_id": "pane-1",
             "owner": "client-a",
             "rows": 24,
             "columns": 80,
@@ -133,6 +134,7 @@ def validate_examples(schema: dict[str, Any]) -> None:
         {
             "protocol_version": 1,
             "session_id": "session-1",
+            "pane_id": "pane-1",
             "owner": "client-a",
             "generation": 3,
             "reclaim_token": "opaque-token",

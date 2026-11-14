@@ -4,11 +4,16 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 mod authority;
+mod layout;
 
 pub use authority::{
     AttachmentAuthority, AttachmentOperation, AuthorityCredentials, AuthorityError,
     DEFAULT_DETACHED_HOLD_TTL_MS, DEFAULT_LEASE_TTL_MS, DEFAULT_RECLAIM_GRACE_MS, MAX_LEASE_TTL_MS,
     ReclaimTokenHash,
+};
+pub use layout::{
+    LayoutError, LayoutRect, MAX_LAYOUT_PANES, PaneKind, PaneLayout, PaneSpec, tile_pane_specs,
+    tile_panes,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -539,6 +544,11 @@ pub struct PaneRecord {
     pub session_id: String,
     pub resource_scope_id: ResourceScopeId,
     pub resource_policy: ResourcePolicy,
+    pub kind: PaneKind,
+    pub layout_order: u32,
+    pub layout_weight: u16,
+    pub z_index: u32,
+    pub floating_rect: Option<LayoutRect>,
     pub updated_at_ms: i64,
 }
 
