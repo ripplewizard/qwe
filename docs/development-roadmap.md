@@ -227,4 +227,5 @@ long-lived FD-pinned Bubblewrap shell through the PID-1 shim, persist profile
 and audit metadata atomically, and recover that metadata after qwed restart.
 Restricted terminal output, capability-audited input, interactive Attach input,
 standalone resize, and shared process namespace mode with cgroup-authoritative
-descendant teardown are implemented locally.
+descendant teardown are implemented locally. `pane_exec` commands inherit the
+parent sandbox unless an explicit profile is proven not to broaden it.

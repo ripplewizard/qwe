@@ -170,7 +170,9 @@ through qwed. The observed path is:
   dimension changes; and
 - shared process namespace Pane creation with hard cgroup scope, cgroup-only
   control, host child-PID monitoring, and detached-process teardown on shell
-  exit.
+  exit; and
+- `pane_exec` enforcement with inherited parent profiles and construction-time
+  only-tighten refinement.
 
 ## P5: Landlock ABI Distribution
 

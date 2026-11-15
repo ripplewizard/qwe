@@ -160,7 +160,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 Rows 001-034 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown. Rows
-035-046 pass local real-PTY/PID-namespace shim, control-channel, standalone
+035-047 pass local real-PTY/PID-namespace shim, control-channel, standalone
 probe, long-lived sandboxed worker, and qwed creation/lifecycle contracts; the
 new runtime rows are not yet part of the remote distribution matrix. Ubuntu
 22.04 and Debian 12 real VMs pass the complete `AGENT_EXEC` matrix. Default
@@ -220,6 +220,7 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-044 | Implement standalone `SESSION_RESIZE`; require `pane_resize` capability for sandboxed Panes, attachment authority for ordinary Panes, and verify the worker PTY dimensions change |
 | SANDBOX-045 | Keep worker Attach input fail closed unless qwed's internal `input_authorized` marker is present, preventing a direct worker Attach from bypassing capability and audit checks |
 | SANDBOX-046 | Start a sandboxed Pane with shared PID namespace and hard Pane cgroup scope, use cgroup-only control, start a detached process, and prove cgroup.kill removes it after shell/shim exit |
+| SANDBOX-047 | Require `pane_exec` for sandboxed AGENT_EXEC, inherit the parent Pane profile by default, allow only construction-time-valid refinements, and reject fixed-field change or broadening |
 
 ## Core Object Model
 

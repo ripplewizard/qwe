@@ -381,6 +381,13 @@ metadata: a sandboxed Pane may accept an ordinary management delegation, while
 and `pane_resize` remain distinct. Capability delegation cannot broaden the
 active operation or target scope.
 
+`AGENT_EXEC` targeting a sandboxed Pane requires a `pane_exec` capability;
+ordinary `agent_exec` capability issue is rejected with `pane_exec_required`.
+Without a profile, `pane_exec` inherits the Pane's exact persisted profile. A
+supplied profile is accepted only when `RefinedSandboxProfile` proves fixed
+fields equal and stackable fields do not broaden. Inherited commands report
+the parent profile/audit in status.
+
 `SESSION_RESIZE` carries `session_id`, optional `pane_id`, and positive `rows` /
 `columns`. For a sandboxed Pane it requires a matching Pane-scoped
 `pane_resize` capability. For an ordinary Pane it uses the existing

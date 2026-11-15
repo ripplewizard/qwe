@@ -73,9 +73,9 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 
 - **D6 adopted; creation implemented:** `sandboxed_pane` authorizes only
   creation of a sandboxed Pane. It grants no operation on an existing Pane.
-- **D7 adopted; operation/scope scaffold implemented:** `pane_exec` authorizes
-  injecting an `AGENT_EXEC` request into
-  an existing Pane and is constrained by D14 refinement.
+- **D7 adopted and implemented:** `pane_exec` authorizes `AGENT_EXEC` on an
+  existing sandboxed Pane and is constrained by D14 refinement. Sandboxed
+  Pane targets reject ordinary `agent_exec` capability issue.
 - **D8 adopted; high-trust issuer floor implemented:** `pane_input` is
   equivalent to arbitrary code execution in the
   target Pane. Authorization and UI text must state this explicitly.
@@ -112,9 +112,10 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
     creation, Landlock rules.
   - Fixed: mount layout, PID/IPC namespace, private `/tmp`, hidden HOME, and the
     protected-path set.
-- **D14 adopted; core type implemented:** stackable fields may only tighten.
-  Fixed fields must equal the parent. `RefinedSandboxProfile` performs
-  construction-time validation, not only command-dispatch checks.
+- **D14 adopted and runtime-connected:** stackable fields may only tighten.
+  Fixed fields must equal the parent. `RefinedSandboxProfile` validates at
+  capability construction; omission of the child profile inherits the parent
+  exactly.
 - **D15 adopted after P2:** strict seccomp alone permits nested Bubblewrap, but
   once Landlock is applied the inner Bubblewrap cannot initialize its uid map.
   Refinement therefore uses shim-stacked Landlock, seccomp, and

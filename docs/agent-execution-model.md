@@ -96,6 +96,7 @@ Capability operations are:
 
 - `manage_principals` with global scope;
 - `agent_exec` with Pane scope;
+- `pane_exec` with sandboxed Pane scope;
 - `agent_command_read` with command scope;
 - `agent_command_terminate` with command scope.
 
@@ -109,6 +110,12 @@ means every command is executed through the Linux Bubblewrap adapter; absence
 means the explicit legacy unsandboxed path. Client `AGENT_EXEC` payloads cannot
 choose or replace the profile. See
 [ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md).
+
+On a sandboxed Pane, `AGENT_EXEC` requires `pane_exec`; ordinary `agent_exec`
+capability issue fails with `pane_exec_required`. A profile-less `pane_exec`
+inherits the Pane profile exactly. A supplied profile must pass
+`RefinedSandboxProfile`, keeping fixed fields equal and allowing only monotonic
+tightening.
 
 Every capability records the issuing Principal's complete ancestor epoch chain.
 Each request reloads the current chain. A changed epoch, any revoked ancestor,
