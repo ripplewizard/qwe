@@ -116,14 +116,16 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 
 ### D. `qwe-sandbox-init` shim
 
-- **D18 adopted:** the shim is responsible for `setsid`, `TIOCSCTTY`, signal
-  forwarding, child reaping, and loading stacked Landlock/seccomp policy for a
+- **D18 adopted; initial shim implemented:** the shim reuses an inherited
+  controlling terminal and only attempts `setsid`/`TIOCSCTTY` when none exists.
+  It handles signal forwarding, child reaping, and stacked policy for a
   sandboxed Pane. It does not forward winsize. Ordinary `AGENT_EXEC` keeps its
   current non-terminal path.
 - **D19 resolved by P3:** `TIOCSWINSZ` on the qwed-owned PTY master delivers
   SIGWINCH to the foreground process group without shim involvement.
-- **D20 adopted; P4 pass:** when the shim is PID namespace init, it explicitly
-  handles SIGTERM, SIGINT, and SIGCHLD. Default-ignored signals are not
+- **D20 adopted; P4 pass and initial shim implemented:** when the shim is PID
+  namespace init, it explicitly handles SIGTERM, SIGINT, SIGHUP, and SIGCHLD.
+  Default-ignored signals are not
   acceptable.
 - **D21 adopted:** the shim applies no-new-privileges, dumpability suppression,
   and seccomp denial of ptrace. It never passes its control-channel FD to the

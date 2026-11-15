@@ -133,6 +133,11 @@ Questions:
 The first sandboxed-Pane shim must explicitly install SIGTERM, SIGINT, and
 SIGCHLD handling.
 
+The initial Rust shim now runs under a real PTY inside a PID namespace. It
+reuses the inherited controlling terminal, creates the shell process group,
+assigns it as the PTY foreground group, forwards TERM/INT/HUP, reaps children,
+and terminates a background namespace process after shell exit.
+
 ## P5: Landlock ABI Distribution
 
 Status: pass.

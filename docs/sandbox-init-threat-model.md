@@ -1,7 +1,8 @@
 # `qwe-sandbox-init` Threat Model and Fuzz Plan
 
-Date: 2026-11-15
-Status: Current for `AGENT_EXEC`; expanded scope planned by ADR 0034
+Date: 2026-11-16
+Status: Current for `AGENT_EXEC` and the initial PID-1 Pane shim; sandboxed
+Pane integration is not enabled yet
 
 ## 1. Role in the trust boundary
 
@@ -13,10 +14,14 @@ before the requested command. It is trusted computing base code because it:
 - disables its own process dumpability;
 - exports the successful Landlock ABI; and
 - replaces itself with the requested program.
+- in the hidden `--pane-init` mode, remains as PID namespace init, owns the
+  inherited controlling terminal, assigns the foreground process group,
+  forwards TERM/INT/HUP, and reaps descendants before exiting.
 
 It does not load the Bubblewrap seccomp program. Bubblewrap applies seccomp
-before executing the init helper. Any future terminal/signal behavior added for
-ADR 0034 expands this trusted computing base and requires a new review.
+before executing the init helper. The initial terminal/signal behavior from
+ADR 0034 has a dedicated real-PTY contract test; the private control channel
+and production sandboxed-Pane integration remain unimplemented.
 
 ## 2. Trusted inputs
 
@@ -43,6 +48,10 @@ No credential, environment secret, or host configuration file is an init input.
    the worker choosing whether the optional layer is available.
 8. A profile with Landlock mode `required{min_abi}` never starts when the
    observed ABI is lower; there is no best-effort fallback inside that mode.
+9. Pane-init signal handlers only record pending signals and wake the main
+   loop; forwarding and process reaping remain in normal control flow.
+10. Shell exit starts bounded descendant teardown with SIGTERM and escalates to
+    SIGKILL after the frozen grace period before the shim exits.
 
 ## 4. Threats and current controls
 
@@ -58,6 +67,9 @@ No credential, environment secret, or host configuration file is an init input.
 | Silent ABI downgrade | Ruleset mask derives from the observed ABI; unsupported future bits remain unhandled and are documented |
 | Shell replacement changing policy | Future Pane shim remains the sandbox parent and does not re-enter policy selection |
 | Landlock meets a required ABI | `required{min_abi}` is checked before init; observed ABI is audited |
+| Pane-init terminated as PID namespace init | Explicit TERM/INT/HUP handlers forward to the PTY foreground process group |
+| Orphaned descendants become zombies | SIGCHLD wakeups drain `waitpid(-1)` inside the PID namespace |
+| Detached process survives shell exit | PID-1 cleanup sends TERM, waits the frozen grace period, then KILL |
 
 The same-UID host process remains outside the threat model under ADR 0034.
 
@@ -72,6 +84,9 @@ The same-UID host process remains outside the threat model under ADR 0034.
 - Bubblewrap 0.5 lacks FD-pinned bind options. The source-path window between
   final host resolution and Bubblewrap mount setup remains residual risk.
 - ADR 0034 terminal duties will materially increase this TCB.
+- The Pane-init contract currently has local Linux PTY coverage only. Before
+  sandboxed Pane is enabled, it must run in the supported-distribution matrix
+  and the private control-channel parser must enter the fuzz corpus.
 - The Landlock adapter is custom syscall code, not a crate compatibility layer.
   It fails hard when a required ruleset operation is unsupported.
 
@@ -89,8 +104,9 @@ Before accepting terminal responsibilities:
   each path rule, after dumpability hardening, and immediately before exec;
 - verify every injected failure exits 125 and never executes a sentinel target;
 - run differential tests with Bubblewrap 0.5 and current releases;
-- fuzz signal/winsize forwarding deterministically only after ADR 0034 terminal
-  code exists; avoid sleep-based race tests.
+- fuzz the private Pane-init control channel before sandboxed Pane is enabled;
+  keep terminal signal and winsize coverage in real-PTY contract tests and
+  avoid sleep-based assertions where event oracles are available.
 
 ## 7. Dependency policy
 
@@ -102,15 +118,23 @@ review. CI should eventually enforce `cargo-deny` advisory/source policy and
 
 ## 8. Future sandboxed-Pane controls
 
-ADR 0034 assigns additional responsibilities to this TCB:
+ADR 0034 assigns additional responsibilities to this TCB. The initial shim now
+implements the terminal responsibilities below:
 
 - explicitly handle SIGTERM, SIGINT, and SIGCHLD as PID namespace init;
+- explicitly handle SIGHUP as PID namespace init;
+- assign the spawned shell its own process group and make it the PTY foreground
+  group;
+- leave window-size handling to qwed because PTY-master `TIOCSWINSZ` plus
+  kernel `SIGWINCH` is sufficient; and
+- terminate remaining namespace processes after shell exit.
+
+The following controls remain required before production sandboxed Pane:
+
 - keep a private shim control-channel FD, never inherit it into the shell;
 - bound and version control messages; reject unknown messages;
 - use inherited descriptors or `SCM_RIGHTS` for command credentials and close
-  the shim's copy after delivery; and
-- leave window-size handling out of the shim if P3 proves PTY-master
-  `TIOCSWINSZ` plus kernel `SIGWINCH` is sufficient.
+  the shim's copy after delivery.
 
 The control-channel parser and message state machine enter the fuzz corpus
 before sandboxed Pane is enabled.
