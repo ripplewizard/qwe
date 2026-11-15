@@ -101,6 +101,7 @@ SandboxProfileV1
   process_namespace: isolated | shared
   setuid: denied
   seccomp: none | strict
+  landlock: off | best_effort | required { min_abi }
 ```
 
 `workspace:readonly` is the default. `workspace:read_write` is explicit.
@@ -134,6 +135,12 @@ unsupported facility through their normal fallback path. All sandbox profiles,
 including `seccomp:none`, retain the adapter's `TIOCSTI` denial with `EPERM`.
 Unknown named profiles fail capability issue with
 `sandbox_profile_unsupported`.
+
+Landlock mode is part of the profile. `best_effort` remains the compatibility
+default for `AGENT_EXEC`; `required{min_abi}` fails before token issue when the
+observed ABI is lower than required. The audit stores the ABI only when the
+selected mode applies it. ADR 0034 sets `required` as the sandboxed-Pane
+default.
 
 Seccomp audit identifiers are content-addressed. The effective cBPF program is
 hashed with SHA-256 and returned as `sandbox_audit.seccomp_profile_hash`;

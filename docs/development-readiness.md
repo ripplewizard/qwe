@@ -274,3 +274,7 @@ node outside allowed write roots is denied.
 direction: sandboxed Pane uses a separate capability and long-lived shim, while
 interactive Agent input/resize is designed with the same terminal milestone.
 Implementation and qualification remain open.
+The adopted decision register and terminal output policy are frozen; product
+decisions D12, D25, and D48 remain open.
+P1 is complete with Bubblewrap 0.10.0 as the first observed FD-bind release;
+P2-P6 remain open.

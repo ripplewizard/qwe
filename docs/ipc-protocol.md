@@ -369,7 +369,8 @@ path. The v1 profile shape is:
   "home": "hidden",
   "private_tmp": true,
   "process_namespace": "isolated",
-  "seccomp": {"mode": "none"}
+  "seccomp": {"mode": "none"},
+  "landlock": {"mode": "best_effort"}
 }
 ```
 
@@ -382,6 +383,11 @@ Protected paths containing multi-link files also fail closed because a
 writable hardlink alias can bypass path-scoped read-only mounts.
 Workspace-relative protected-path symlinks are accepted; absolute symlinks are
 rejected by `openat2(RESOLVE_BENEATH)`.
+
+`landlock` is `off`, `best_effort`, or `required{min_abi}`. `best_effort` is
+the `AGENT_EXEC` compatibility default. `required` fails capability issue when
+the observed ABI is lower than `min_abi`; sandboxed Pane defaults to a required
+filesystem ABI and may be explicitly downgraded only by an administrator.
 Sandboxed PTY execution preserves terminal semantics and applies an internal
 `TIOCSTI`-denying seccomp filter; the profile's `seccomp:none` value does not
 disable that adapter hardening.
@@ -400,8 +406,8 @@ A sandboxed capability also returns `sandbox_audit` with `profile_hash`,
 `seccomp_profile_hash`, optional `landlock_abi`, `backend_path`,
 `backend_version`, and `probe_time_ms`. The seccomp hash is the SHA-256 of the
 exact cBPF bytes passed to Bubblewrap. `landlock_abi` is present only when the
-kernel supports Landlock defense in depth. These values are stored with the
-capability and included in live and recovered sandbox status.
+kernel supports and the selected Landlock mode applies it. These values are
+stored with the capability and included in live and recovered sandbox status.
 
 `SECURITY_PRINCIPAL_REVOKE.severity` is `administrative`, `freeze`, or
 `terminate`; omission defaults to `freeze`. Freeze grace defaults to 60000 ms

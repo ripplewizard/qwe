@@ -197,6 +197,10 @@ complete matrix without disabling the global userns restriction.
 interactive Agent PTY as the next implementation milestone. Landlock-only
 fallback, additional platform qualification, additional named seccomp profiles,
 and stronger VM/OCI backends remain deferred.
+The next gate is PoC P1-P6 plus three product decisions: revocation semantics,
+sandboxed-Pane exit behavior, and Rocky/openEuler/Kylin support.
+P1 is complete: Bubblewrap 0.10.0 is the first observed upstream release with
+FD bind support. P2-P6 remain.
 
 The explicit userns-disabled matrix passes on Ubuntu 22.04, Ubuntu 24.04, and
 Debian 12 and verifies ordinary Panes remain usable. SELinux-enforcing

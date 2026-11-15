@@ -201,6 +201,10 @@ qwed, worker, `qwe-session-exec`, Bubblewrap, and the optional Landlock init.
   groups.
 - [`qwe-sandbox-init` Threat Model](sandbox-init-threat-model.md): trusted
   computing base, failure invariants, and fuzz plan.
+- [Terminal Output Policy](terminal-output-policy.md): restricted escape
+  sequence filtering and output-to-input injection defenses.
+- [Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md): Bubblewrap FD
+  binding result and remaining nested/terminal PoC gates.
 
 ## Reading Order
 

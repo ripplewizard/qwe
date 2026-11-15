@@ -49,6 +49,8 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
   `TRUNCATE` blocks truncation outside allowed write roots;
 - on Fedora 44 Landlock ABI 7, `IOCTL_DEV` permits `/dev` ioctls and denies a
   device node outside allowed write roots;
+- profile `landlock:off` suppresses the init helper and ABI export, while a
+  `required{min_abi}` value above the observed ABI fails capability issue;
 - FD3 credentials and exact-match redaction remain intact;
 - wrapper and structured child PIDs both inherit the Pane workload cgroup;
 - sandboxed PTY commands preserve terminal size, FD3 credentials, redaction,

@@ -158,7 +158,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 ## Bubblewrap Sandbox
 
-Rows 001-024 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
+Rows 001-025 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown.
 Ubuntu 22.04 and Debian 12 real VMs pass the complete matrix. Default Ubuntu
 24.04 returns `sandbox_backend_unavailable`; with the packaged path-scoped
@@ -194,6 +194,7 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-022 | Resolve protected paths and workspace cwd with `openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)` and reject absolute symlink escapes |
 | SANDBOX-023 | Verify sandbox commands inherit only standard descriptors plus the explicit credential FD |
 | SANDBOX-024 | Confirm that a writable workspace FIFO is an intentional host IPC channel for an exposed FD3 credential |
+| SANDBOX-025 | Apply `landlock: off | best_effort | required{min_abi}` profile semantics, audit effective ABI, and fail required modes when the ABI is insufficient |
 
 ## Core Object Model
 

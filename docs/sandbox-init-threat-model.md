@@ -41,6 +41,8 @@ No credential, environment secret, or host configuration file is an init input.
 6. Absolute symlinks cannot escape the workspace under path resolution.
 7. Landlock failure is hard failure; unsupported ABI is handled before init by
    the worker choosing whether the optional layer is available.
+8. A profile with Landlock mode `required{min_abi}` never starts when the
+   observed ABI is lower; there is no best-effort fallback inside that mode.
 
 ## 4. Threats and current controls
 
@@ -55,6 +57,7 @@ No credential, environment secret, or host configuration file is an init input.
 | Seccomp absent because init failed | Target is never exec'd |
 | Silent ABI downgrade | Ruleset mask derives from the observed ABI; unsupported future bits remain unhandled and are documented |
 | Shell replacement changing policy | Future Pane shim remains the sandbox parent and does not re-enter policy selection |
+| Landlock meets a required ABI | `required{min_abi}` is checked before init; observed ABI is audited |
 
 The same-UID host process remains outside the threat model under ADR 0034.
 
@@ -69,6 +72,8 @@ The same-UID host process remains outside the threat model under ADR 0034.
 - Bubblewrap 0.5 lacks FD-pinned bind options. The source-path window between
   final host resolution and Bubblewrap mount setup remains residual risk.
 - ADR 0034 terminal duties will materially increase this TCB.
+- The Landlock adapter is custom syscall code, not a crate compatibility layer.
+  It fails hard when a required ruleset operation is unsupported.
 
 ## 6. Fuzz and adversarial test plan
 
@@ -94,3 +99,18 @@ the project runtime, and libc. Changes that add parsing frameworks, async
 runtimes, dynamic plugin loading, or network-capable crates require explicit
 review. CI should eventually enforce `cargo-deny` advisory/source policy and
 `cargo-vet` review status for this binary and its transitive dependencies.
+
+## 8. Future sandboxed-Pane controls
+
+ADR 0034 assigns additional responsibilities to this TCB:
+
+- explicitly handle SIGTERM, SIGINT, and SIGCHLD as PID namespace init;
+- keep a private shim control-channel FD, never inherit it into the shell;
+- bound and version control messages; reject unknown messages;
+- use inherited descriptors or `SCM_RIGHTS` for command credentials and close
+  the shim's copy after delivery; and
+- leave window-size handling out of the shim if P3 proves PTY-master
+  `TIOCSWINSZ` plus kernel `SIGWINCH` is sufficient.
+
+The control-channel parser and message state machine enter the fuzz corpus
+before sandboxed Pane is enabled.

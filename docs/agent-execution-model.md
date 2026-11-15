@@ -186,7 +186,9 @@ a read-write workspace, private `/tmp`, and `/dev`; reads, directory listing,
 execute, and loader behavior remain available. This is defense in depth, not a
 Landlock-only backend. The handled rights grow with the kernel ABI, including
 `REFER`, `TRUNCATE`, and device `IOCTL` where supported. The capability audit
-records the detected ABI.
+records the detected ABI. Profile `landlock` modes are `off`, `best_effort`,
+and `required{min_abi}`; `AGENT_EXEC` defaults to compatibility `best_effort`,
+while the future sandboxed Pane defaults to a required filesystem ABI.
 
 For `network:isolated_loopback`, Stage 10 verifies an UP `lo` interface, a real
 `127.0.0.1` listen/connect pair, and no default route across Bubblewrap 0.5,

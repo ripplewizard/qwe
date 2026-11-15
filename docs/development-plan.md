@@ -572,6 +572,8 @@ explicit negative coverage. [ADR 0034](adr/0034-sandboxed-pane-and-pty.md)
 accepts sandboxed Pane and interactive Agent PTY as the next milestone.
 Landlock-only fallback, additional named seccomp profiles, additional platform
 qualification, and VM/OCI backends remain later decisions.
+ADR 0034's P1-P6 PoC gates must close before its PoC-marked decisions become
+implementation contracts.
 
 ## Test and Delivery Gates
 
