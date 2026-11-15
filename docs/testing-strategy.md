@@ -297,6 +297,9 @@ the complete Stage 10 probe.
 `just sandbox-landlock-vm ubuntu2404` runs the init directly against Landlock
 ABI 4 and verifies `REFER` rename denial and `TRUNCATE` denial outside allowed
 write roots.
+The same recipe on Fedora 44 verifies Landlock ABI 7 `IOCTL_DEV`: `/dev/null`
+ioctls remain usable and a char-device node outside allowed write roots is
+denied.
 `just sandbox-selinux-vm` runs the complete probe on Fedora 44 and requires
 SELinux to remain `Enforcing`; the externally managed VM target and SSH config
 are supplied with `QWE_SELINUX_SSH_TARGET` and `QWE_SELINUX_SSH_CONFIG`.

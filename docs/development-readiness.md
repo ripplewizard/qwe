@@ -262,3 +262,5 @@ Bubblewrap confinement. The handled mask follows the detected ABI, including
 execution, and private `/tmp` available, records the ABI in capability audit
 metadata, and has no Landlock-only fallback path. Capability issue requires the
 helper to be present and executable whenever Landlock is available.
+Fedora 44 ABI 7 verification confirms `/dev` ioctls work while a char-device
+node outside allowed write roots is denied.

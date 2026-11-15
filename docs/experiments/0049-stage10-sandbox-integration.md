@@ -39,6 +39,8 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
   inside Bubblewrap and records the detected ABI in capability audit metadata;
 - on Ubuntu 24.04 Landlock ABI 4, `REFER` blocks cross-workspace rename and
   `TRUNCATE` blocks truncation outside allowed write roots;
+- on Fedora 44 Landlock ABI 7, `IOCTL_DEV` permits `/dev` ioctls and denies a
+  device node outside allowed write roots;
 - FD3 credentials and exact-match redaction remain intact;
 - wrapper and structured child PIDs both inherit the Pane workload cgroup;
 - sandboxed PTY commands preserve terminal size, FD3 credentials, redaction,
@@ -305,6 +307,10 @@ Ubuntu kernel. Cross-workspace rename is denied through `REFER`, truncation is
 denied through `TRUNCATE`, workspace and private `/tmp` writes still pass, and
 the result records `ioctl_dev:not_supported` for ABI 4.
 
+Fedora 44 exposes Landlock ABI 7. The same probe permits `TIOCGWINSZ` on
+`/dev/null` and creates a char-device test node outside `/dev`; ioctl on that
+node is denied with `EACCES`, proving ABI 5+ `IOCTL_DEV` handling.
+
 ### Filesystem and namespace escape probes
 
 A protected path can contain multiple hardlinks to the same inode. Bubblewrap's
@@ -379,4 +385,4 @@ claim that Bubblewrap succeeds inside a restricted container.
 - additional SELinux-enforcing distributions and kernels with user namespaces
   explicitly disabled;
 - additional named seccomp profiles, broader runtime compatibility coverage,
-  Landlock ABI 5+ device-ioctl behavior, and stronger VM/OCI isolation.
+  future Landlock rights, and stronger VM/OCI isolation.

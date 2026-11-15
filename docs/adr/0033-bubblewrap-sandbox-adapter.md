@@ -376,6 +376,8 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
 - `just sandbox-landlock-vm` verifies ABI 4 directly on Ubuntu 24.04:
   cross-directory rename is denied through `REFER`, truncation is denied
   through `TRUNCATE`, while workspace and private `/tmp` writes remain usable.
+- On Fedora 44 Landlock ABI 7, `IOCTL_DEV` permits normal `/dev/null` ioctls
+  and denies ioctl access to a device node outside the allowed write roots.
 - Stage 10 runs qwed from an isolated binary directory without the init helper
   and verifies capability issue fails closed with `sandbox_init_unavailable`.
 - The same probe supplies a backend with a valid `--version` but an incomplete
