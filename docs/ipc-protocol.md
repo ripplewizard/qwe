@@ -488,6 +488,9 @@ responses, SQLite, event data, or logs.
 `command_id`, Session/Pane identity, owner, worker and optional process
 identities, state, output mode, timestamps, exit result, cursors, and replay
 start. States are `starting`, `running`, `idle`, `done`, `failed`, and `lost`.
+Sandboxed commands additionally expose `sandbox.risk` flags for
+`network_inherit`, `writable_workspace`, and `credential_exposed`, plus derived
+`credential_network_exfiltration` and `credential_workspace_persistence`.
 
 `AGENT_COMMAND_WAIT_IDLE` returns `idle`, `done`, `failed`, `lost`, or `unknown`.
 Timeout returns `unknown`, never `idle`. A terminal state takes precedence over a
@@ -500,6 +503,8 @@ carry `stream` (`stdout`, `stderr`, or `pty`), a byte `cursor`, and `data_hex`. 
 order is guaranteed within a stream. Retention is approximately 1 MiB per
 command; reading an evicted cursor returns an object in `replay_gap` and never
 renumbers retained events.
+Sandboxed commands emit `sandbox_risk_observed` when any network, writable
+workspace, or credential-exposure flag is present.
 
 `AGENT_COMMAND_OBSERVE` is the push projection. It requires
 `agent_command_read` for the exact command, or the creating `agent_exec`

@@ -184,6 +184,11 @@ For `network:isolated_loopback`, Stage 10 verifies an UP `lo` interface, a real
 0.6.1, 0.8, and 0.9. Sandbox status reports `setuid_denied:true` and
 `no_new_privs:true`; `NoNewPrivs: 1` is verified inside the command.
 
+Sandbox status also reports `risk.network_inherit`,
+`risk.writable_workspace`, and `risk.credential_exposed`. Their combinations
+identify possible network exfiltration or workspace persistence. A
+`sandbox_risk_observed` event is committed when the command is accepted.
+
 Sandboxed PTY commands keep the portable-pty controlling terminal and do not use
 `--new-session`. A minimal internal seccomp filter rejects `TIOCSTI`; FD3
 credentials and redaction use the normal command path. The status response

@@ -4,8 +4,10 @@ import argparse
 import json
 import os
 import shutil
+import socket
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -171,6 +173,28 @@ def profile(
         "process_namespace": "isolated",
         "seccomp": {"mode": "none"},
     }
+
+
+def tcp_capture():
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listener.settimeout(3)
+    received = []
+
+    def accept():
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                connection.settimeout(2)
+                received.append(connection.recv(16384))
+        except OSError:
+            pass
+
+    worker = threading.Thread(target=accept, daemon=True)
+    worker.start()
+    return listener, worker, received, listener.getsockname()[1]
 
 
 def run_positive_probe(
@@ -422,6 +446,142 @@ def run_positive_probe(
     assert_done(socket_path, linked_capability, linked_command)
     assert not (protected_git / "symlink-blocked").exists()
     protected_link.unlink()
+
+    home_profile = profile(workspace)
+    home_profile["home"] = "read_only"
+    home_marker = Path(os.environ["HOME"]) / "qwe-sandbox-write"
+    if home_marker.exists():
+        home_marker.unlink()
+    home_capability = issue_capability(
+        socket_path,
+        management,
+        principal_id,
+        pane_id,
+        home_profile,
+    )["token"]
+    home_command = exec_command(
+        socket_path,
+        home_capability,
+        pane_id,
+        "/bin/sh",
+        "-c",
+        (
+            "test -d \"$HOME\" && "
+            "if printf denied > \"$HOME/qwe-sandbox-write\"; "
+            "then exit 97; else printf 'HOME_READ_ONLY'; fi"
+        ),
+    )
+    assert_done(socket_path, home_capability, home_command)
+    home_events = events(socket_path, home_capability, home_command["command_id"])
+    assert decode_stream(home_events, "stdout") == b"HOME_READ_ONLY"
+    assert not home_marker.exists()
+
+    shared_profile = profile(workspace)
+    shared_profile["process_namespace"] = "shared"
+    shared_capability = issue_capability(
+        socket_path,
+        management,
+        principal_id,
+        pane_id,
+        shared_profile,
+    )["token"]
+    shared_command = exec_command(
+        socket_path,
+        shared_capability,
+        pane_id,
+        "/bin/sh",
+        "-c",
+        (
+            f"test -e /proc/{pane['worker_pid']} && "
+            f"test -e /proc/{pane['pid']} && printf 'PID_NAMESPACE_SHARED'"
+        ),
+    )
+    assert_done(socket_path, shared_capability, shared_command)
+    shared_events = events(
+        socket_path,
+        shared_capability,
+        shared_command["command_id"],
+    )
+    assert decode_stream(shared_events, "stdout") == b"PID_NAMESPACE_SHARED"
+
+    inherited_profile = profile(workspace, network="inherit")
+    inherited_capability = issue_capability(
+        socket_path,
+        management,
+        principal_id,
+        pane_id,
+        inherited_profile,
+    )["token"]
+    inherited_listener, inherited_worker, inherited_data, inherited_port = tcp_capture()
+    inherited_script = (
+        "import os,socket,time;"
+        "secret=os.read(3,16384);"
+        f"s=socket.create_connection(('127.0.0.1',{inherited_port}),timeout=2);"
+        "s.sendall(secret);s.close();"
+        "print('NETWORK_INHERIT_CREDENTIAL_SENT');"
+        "time.sleep(0.5)"
+    )
+    inherited_command = exec_command(
+        socket_path,
+        inherited_capability,
+        pane_id,
+        "/usr/bin/python3",
+        "-c",
+        inherited_script,
+        credential="CMD_KEY",
+    )
+    inherited_status = started_sandbox(
+        socket_path,
+        inherited_capability,
+        inherited_command["command_id"],
+    )
+    risk = inherited_status["sandbox"]["risk"]
+    assert risk["network_inherit"] is True, risk
+    assert risk["credential_exposed"] is True, risk
+    assert risk["credential_network_exfiltration"] is True, risk
+    assert_done(socket_path, inherited_capability, inherited_command)
+    inherited_events = events(
+        socket_path,
+        inherited_capability,
+        inherited_command["command_id"],
+    )
+    assert any(
+        event["type"] == "sandbox_risk_observed"
+        and event["network_inherit"] is True
+        and event["credential_exposed"] is True
+        for event in inherited_events
+    ), inherited_events
+    inherited_worker.join(4)
+    inherited_listener.close()
+    assert inherited_data and inherited_data[0] == COMMAND_SECRET, inherited_data
+
+    isolated_listener, isolated_worker, isolated_data, isolated_port = tcp_capture()
+    isolated_exfil_script = (
+        "import os,socket,sys\n"
+        "secret=os.read(3,16384)\n"
+        "try:\n"
+        f"    s=socket.create_connection(('127.0.0.1',{isolated_port}),timeout=1)\n"
+        "except OSError:\n"
+        "    print('ISOLATED_EXFIL_DENIED')\n"
+        "    sys.exit(0)\n"
+        "s.sendall(secret)\n"
+        "s.close()\n"
+        "print('ISOLATED_EXFIL_LEAKED')\n"
+        "sys.exit(97)\n"
+    )
+    isolated_exfil = exec_command(
+        socket_path,
+        read_only_capability,
+        pane_id,
+        "/usr/bin/python3",
+        "-c",
+        isolated_exfil_script,
+        credential="CMD_KEY",
+    )
+    assert_done(socket_path, read_only_capability, isolated_exfil)
+    isolated_worker.join(4)
+    isolated_listener.close()
+    assert not isolated_data, isolated_data
 
     host_tmp = Path(f"/tmp/qwe-stage10-host-{os.getpid()}")
     host_tmp.write_text("host-only")
@@ -728,6 +888,11 @@ def run_positive_probe(
         "workspace_ro_rw": "pass",
         "protected_path": "pass",
         "symlink_protection": "pass",
+        "home_read_only": "pass",
+        "process_namespace_shared": "pass",
+        "network_inherit": "pass",
+        "credential_network_exfil_confirmed": "pass",
+        "sandbox_risk_audit": "pass",
         "home_and_tmp": "pass",
         "environment_and_pid_isolation": "pass",
         "filesystem_boundary": "pass",

@@ -270,6 +270,11 @@ pub enum AgentEventKind {
     SignalDelivered {
         signal: String,
     },
+    SandboxRiskObserved {
+        network_inherit: bool,
+        writable_workspace: bool,
+        credential_exposed: bool,
+    },
     RetentionGap {
         from_sequence: u64,
         to_sequence: u64,

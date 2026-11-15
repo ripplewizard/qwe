@@ -2,7 +2,8 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use qwe_core::{
     AGENT_MAX_WAIT_MS, AGENT_OUTPUT_CHUNK_BYTES, AGENT_REPLAY_LIMIT_BYTES, AgentCommandId,
     AgentCommandState, AgentEvent, AgentEventKind, AgentOutputMode, AgentOutputStream, AgentSignal,
-    AgentWaitState, ProcessIdentity, SANDBOX_PROFILE_VERSION, SandboxProfile, SandboxSeccompMode,
+    AgentWaitState, ProcessIdentity, SANDBOX_PROFILE_VERSION, SandboxNetworkMode, SandboxProfile,
+    SandboxSeccompMode, SandboxWorkspaceMode,
 };
 use qwe_protocol::ProtocolErrorBody;
 use qwe_runtime::process_identity;
@@ -58,10 +59,18 @@ struct AgentCommand {
     output_mode: AgentOutputMode,
     idle_capable: bool,
     sandbox_profile: Option<SandboxProfile>,
+    sandbox_risk: Option<SandboxRisk>,
     created_at_ms: i64,
     pty_master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     inner: Mutex<AgentCommandInner>,
     changed: Condvar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SandboxRisk {
+    network_inherit: bool,
+    writable_workspace: bool,
+    credential_exposed: bool,
 }
 
 struct AgentCommandInner {
@@ -186,14 +195,21 @@ impl AgentCommand {
         output_mode: AgentOutputMode,
         idle_capable: bool,
         sandbox_profile: Option<SandboxProfile>,
+        credential_present: bool,
     ) -> Self {
         let created_at_ms = now_ms();
+        let sandbox_risk = sandbox_profile.as_ref().map(|profile| SandboxRisk {
+            network_inherit: profile.network == SandboxNetworkMode::Inherit,
+            writable_workspace: profile.workspace_mode == SandboxWorkspaceMode::ReadWrite,
+            credential_exposed: credential_present,
+        });
         let command = Self {
             id,
             owner,
             output_mode,
             idle_capable,
             sandbox_profile,
+            sandbox_risk,
             created_at_ms,
             pty_master: Mutex::new(None),
             inner: Mutex::new(AgentCommandInner {
@@ -228,6 +244,18 @@ impl AgentCommand {
                     state: AgentCommandState::Starting,
                 },
             );
+            if let Some(risk) = command.sandbox_risk
+                && (risk.network_inherit || risk.writable_workspace || risk.credential_exposed)
+            {
+                inner.events.append(
+                    command.id.clone(),
+                    AgentEventKind::SandboxRiskObserved {
+                        network_inherit: risk.network_inherit,
+                        writable_workspace: risk.writable_workspace,
+                        credential_exposed: risk.credential_exposed,
+                    },
+                );
+            }
         });
         command
     }
@@ -490,6 +518,13 @@ impl AgentCommand {
             "sandbox": self.sandbox_profile.as_ref().map(|profile| json!({
                 "enforced": true,
                 "profile": profile,
+                "risk": self.sandbox_risk.map(|risk| json!({
+                    "network_inherit": risk.network_inherit,
+                    "writable_workspace": risk.writable_workspace,
+                    "credential_exposed": risk.credential_exposed,
+                    "credential_network_exfiltration": risk.network_inherit && risk.credential_exposed,
+                    "credential_workspace_persistence": risk.writable_workspace && risk.credential_exposed
+                })),
                 "setuid_denied": true,
                 "no_new_privs": true,
                 "signal_pgid": inner.signal_pgid,
@@ -868,6 +903,7 @@ impl AgentManager {
             },
             pty_requested && shell_program && !command_string_mode,
             sandbox_profile.clone(),
+            credential_socket.is_some(),
         ));
         let command_id = command.id.clone();
         self.commands
@@ -2338,6 +2374,7 @@ mod tests {
             AgentOutputMode::PipeSplit,
             false,
             None,
+            false,
         );
         command.fail("executable not found".into());
         let value = command.status_json(
