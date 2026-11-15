@@ -221,6 +221,11 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 - **D39 implemented:** qwed and worker paths use
   `openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)`. Absolute symlinks fail
   closed; relative symlinks must remain inside the workspace.
+- **Process identity hardening implemented:** qwed opens pidfd only after
+  start-token validation and uses it for live worker liveness/signals; worker
+  resource monitoring opens pidfd for the sandbox shim host child. Restart
+  recovery reopens pidfd after identity validation. Kernels without pidfd retain
+  the documented `/proc` start-token fallback.
 - **D40 adopted dependency:** sandboxed Pane requires FD-pinned mount sources as
   part of D1. Until then, local `openat2` does not close the concurrent sandbox
   Agent path-replacement window.

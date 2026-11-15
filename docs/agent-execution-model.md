@@ -62,6 +62,12 @@ inside the existing Pane ResourceScope.
 Worker teardown terminates agent process groups before Pane cleanup. qwed scope
 cleanup remains the final backend cleanup authority.
 
+Live worker and sandbox-shim identity is pinned with Linux `pidfd` after the
+persisted start token is validated. pidfd is used for liveness and signal
+delivery so PID reuse cannot target an unrelated process. Kernels without
+pidfd fall back to the existing boot-id/start-tick `/proc` identity check;
+restart recovery always revalidates the start token before opening a new pidfd.
+
 ## 3. Current Operations
 
 All requests and responses use the existing versioned control envelope.

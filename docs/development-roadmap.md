@@ -232,3 +232,5 @@ parent sandbox unless an explicit profile is proven not to broaden it.
 Sandboxed Panes without an operation capability or active attachment become
 durable orphans, expire after 15 minutes, and count against a global admission
 limit. Termination-level Principal revocation stops affected Panes.
+Runtime worker and sandbox-shim liveness/signals are pidfd-backed after
+start-token validation.

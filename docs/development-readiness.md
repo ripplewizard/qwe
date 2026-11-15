@@ -276,6 +276,8 @@ sandboxed Pane creation, restricted output, audited session/interactive input,
 resize, isolated/shared process namespaces with hard cgroup teardown, and
 `pane_exec` parent-profile refinement. Durable orphan TTL and
 termination-level Principal revocation now stop abandoned sandboxed Panes.
+Live worker/shim identity uses pidfd after start-token validation, with a
+documented `/proc` fallback on kernels without pidfd.
 Remote distribution and aarch64 qualification remain open. The
 adopted decision register and terminal output policy are frozen. D12 revocation
 and D25 Pane-exit semantics are resolved; D48 target-distribution scope remains

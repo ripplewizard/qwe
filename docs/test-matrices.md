@@ -160,7 +160,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 Rows 001-034 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown. Rows
-035-050 pass local real-PTY/PID-namespace shim, control-channel, standalone
+035-051 pass local real-PTY/PID-namespace shim, control-channel, standalone
 probe, long-lived sandboxed worker, and qwed creation/lifecycle contracts; the
 new runtime rows are not yet part of the remote distribution matrix. Ubuntu
 22.04 and Debian 12 real VMs pass the complete `AGENT_EXEC` matrix. Default
@@ -224,6 +224,7 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-048 | Persist the first orphan-since timestamp after all operation capabilities expire, terminate after 15 minutes, and reject new sandboxed Panes at 16 orphaned Panes |
 | SANDBOX-049 | Terminate affected sandboxed Panes immediately on termination-level Principal revocation and report `affected_sandboxed_panes` |
 | SANDBOX-050 | Preserve affected sandboxed Panes on administrative Principal revocation; explicit Session kill remains available |
+| SANDBOX-051 | Track worker and sandbox shim lifetime/signals through pidfd, open pidfd only after start-token validation, and retain `/proc` identity matching as an unsupported-kernel fallback |
 
 ## Core Object Model
 
