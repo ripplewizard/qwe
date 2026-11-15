@@ -1,7 +1,8 @@
 use qwe_core::{
     AgentCommandRecord, CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
     MAX_CAPABILITY_TTL_MS, PaneId, PrincipalEpoch, PrincipalId, PrincipalRecord, ReclaimTokenHash,
-    SANDBOX_PROFILE_VERSION, SandboxAuditRecord, SandboxLandlockMode, SandboxProfile,
+    SANDBOX_PROFILE_VERSION, SandboxAuditRecord, SandboxLandlockMode, SandboxProcessMode,
+    SandboxProfile,
 };
 use qwe_protocol::{AuthContext, ProtocolErrorBody};
 use qwe_runtime::resolve_beneath;
@@ -216,6 +217,14 @@ pub fn validate_sandbox_grant(
             "sandbox profile v1 requires a private /tmp",
         ));
     }
+    if operation == CapabilityOperation::SandboxedPane
+        && profile.process_namespace != SandboxProcessMode::Isolated
+    {
+        return Err(error(
+            "sandbox_profile_unsupported",
+            "sandboxed Pane v1 requires an isolated process namespace",
+        ));
+    }
     Ok(())
 }
 
@@ -248,6 +257,28 @@ pub fn require_agent_exec(
         now_ms,
         None,
     )
+}
+
+pub fn require_sandboxed_pane(
+    store: &Store,
+    auth_context: Option<&AuthContext>,
+    session_id: &str,
+    now_ms: i64,
+) -> Result<SecurityGrant, ProtocolErrorBody> {
+    let grant = authorize(
+        store,
+        auth_context,
+        Authorization::SandboxedPane(session_id),
+        now_ms,
+        None,
+    )?;
+    if grant.capability.sandbox_profile.is_none() || grant.capability.sandbox_audit.is_none() {
+        return Err(error(
+            "capability_invalid",
+            "sandboxed_pane capability has no enforced sandbox profile",
+        ));
+    }
+    Ok(grant)
 }
 
 pub fn require_command_read(
@@ -299,6 +330,7 @@ enum Authorization<'a> {
     Live,
     Management,
     AgentExec(&'a PaneId),
+    SandboxedPane(&'a str),
     CommandRead,
     CommandTerminate,
 }
@@ -370,6 +402,13 @@ fn authorize(
                 && active.scope
                     == (CapabilityScope::Pane {
                         pane_id: pane_id.clone(),
+                    })
+        }
+        Authorization::SandboxedPane(session_id) => {
+            active.operation == CapabilityOperation::SandboxedPane
+                && active.scope
+                    == (CapabilityScope::Session {
+                        session_id: session_id.to_string(),
                     })
         }
         Authorization::CommandRead => command.is_some_and(|command| {

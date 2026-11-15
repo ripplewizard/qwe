@@ -338,12 +338,174 @@ def run_positive_probe(
         },
         management,
     )
+    sandboxed_pane_capability = None
     if audit["fd_bind"]:
         assert sandboxed_pane.get("token"), sandboxed_pane
         assert sandboxed_pane["sandbox_audit"]["fd_bind"] is True, sandboxed_pane
+        sandboxed_pane_capability = sandboxed_pane["token"]
     else:
         assert sandboxed_pane.get("code") == "sandbox_backend_unavailable", sandboxed_pane
         assert sandboxed_pane["details"]["reason"] == "fd_bind_unavailable", sandboxed_pane
+
+    if sandboxed_pane_capability is not None:
+        sandboxed_session_id = "stage10-sandboxed-pane"
+        sandboxed_session_capability = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": principal_id,
+                "operation": "sandboxed_pane",
+                "scope": {"kind": "session", "session_id": sandboxed_session_id},
+                "sandbox_profile": read_only_profile,
+                "ttl_ms": 60000,
+            },
+            management,
+        )["token"]
+        missing_capability = request(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": sandboxed_session_id,
+                "program": "/bin/bash",
+                "sandboxed": True,
+            },
+        )
+        assert missing_capability.get("code") == "capability_missing", missing_capability
+        wrong_operation = request_with_capability(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": sandboxed_session_id,
+                "program": "/bin/bash",
+                "sandboxed": True,
+            },
+            management,
+        )
+        assert wrong_operation.get("code") == "capability_scope_denied", wrong_operation
+        client_profile = request_with_capability(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": sandboxed_session_id,
+                "program": "/bin/bash",
+                "sandboxed": True,
+                "sandbox_profile": read_only_profile,
+            },
+            sandboxed_session_capability,
+        )
+        assert (
+            client_profile.get("code") == "sandbox_profile_not_client_selectable"
+        ), client_profile
+        credential_rejected = request_with_capability(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": sandboxed_session_id,
+                "program": "/bin/bash",
+                "sandboxed": True,
+                "credential": "must-not-be-read",
+            },
+            sandboxed_session_capability,
+        )
+        assert credential_rejected.get("code") == "invalid_request", credential_rejected
+        downgrade_rejected = request_with_capability(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": sandboxed_session_id,
+                "program": "/bin/bash",
+            },
+            sandboxed_session_capability,
+        )
+        assert (
+            downgrade_rejected.get("code") == "sandbox_capability_requires_sandboxed_pane"
+        ), downgrade_rejected
+        sandboxed_session = request_with_capability(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": sandboxed_session_id,
+                "program": "/bin/bash",
+                "args": ["--noprofile", "--norc", "-i"],
+                "owner": OWNER,
+                "sandboxed": True,
+            },
+            sandboxed_session_capability,
+        )
+        assert sandboxed_session.get("running") is True, sandboxed_session
+        assert sandboxed_session["sandbox"]["enforced"] is True, sandboxed_session
+        assert sandboxed_session["sandbox"]["profile"] == read_only_profile, sandboxed_session
+        assert sandboxed_session["sandbox"]["audit"]["fd_bind"] is True, sandboxed_session
+        sandboxed_pane_id = sandboxed_session["pane_id"]
+        sandboxed_generation = claim(socket_path, sandboxed_session_id, OWNER)
+        pane_downgrade_rejected = request_with_capability(
+            socket_path,
+            "PANE_CREATE",
+            {
+                "session_id": sandboxed_session_id,
+                "owner": OWNER,
+                "generation": sandboxed_generation,
+                "program": "/bin/bash",
+            },
+            sandboxed_session_capability,
+        )
+        assert (
+            pane_downgrade_rejected.get("code")
+            == "sandbox_capability_requires_sandboxed_pane"
+        ), pane_downgrade_rejected
+        second_sandboxed_pane = request_with_capability(
+            socket_path,
+            "PANE_CREATE",
+            {
+                "session_id": sandboxed_session_id,
+                "owner": OWNER,
+                "generation": sandboxed_generation,
+                "program": "/bin/bash",
+                "args": ["--noprofile", "--norc", "-i"],
+                "sandboxed": True,
+            },
+            sandboxed_session_capability,
+        )
+        assert second_sandboxed_pane.get("running") is True, second_sandboxed_pane
+        assert second_sandboxed_pane["sandbox"]["enforced"] is True, second_sandboxed_pane
+        sandboxed_pane_status = request(
+            socket_path,
+            "PANE_STATUS",
+            {"pane_id": sandboxed_pane_id},
+        )
+        assert sandboxed_pane_status["sandbox"]["enforced"] is True, sandboxed_pane_status
+        assert (
+            sandboxed_pane_status["sandbox"]["audit"]
+            == sandboxed_session["sandbox"]["audit"]
+        ), sandboxed_pane_status
+        sandboxed_pane_input = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": low_pane_principal,
+                "operation": "pane_input",
+                "scope": {"kind": "pane", "pane_id": sandboxed_pane_id},
+                "ttl_ms": 60000,
+            },
+            low_pane_management,
+        )
+        assert sandboxed_pane_input.get("token"), sandboxed_pane_input
+        attach_blocked = request(
+            socket_path,
+            "PANE_ATTACH",
+            {"pane_id": sandboxed_pane_id},
+        )
+        assert (
+            attach_blocked.get("code") == "sandbox_terminal_filter_unavailable"
+        ), attach_blocked
+        input_blocked = request(
+            socket_path,
+            "SESSION_INPUT",
+            {"session_id": sandboxed_session_id, "data": "true\n"},
+        )
+        assert (
+            input_blocked.get("code") == "sandbox_terminal_filter_unavailable"
+        ), input_blocked
 
     landlock_off_profile = profile(workspace, landlock={"mode": "off"})
     landlock_off = issue_capability(
@@ -1465,6 +1627,10 @@ def run_positive_probe(
     return {
         "profile_authorization": "pass",
         "sandboxed_pane_capability": "pass",
+        "sandboxed_pane_runtime": (
+            "pass" if sandboxed_pane_capability is not None else "unavailable"
+        ),
+        "sandboxed_pane_terminal_fail_closed": "pass",
         "pane_input_trust_floor": "pass",
         "fd_bind_probe": "pass",
         "strict_seccomp": "pass",
@@ -1626,6 +1792,56 @@ def run_recovery_probe(
     )
     wait_cgroup_drained(teardown_cgroup)
 
+    sandboxed_session_id = "stage10-sandboxed-pane"
+    sandboxed_restart_status = request(
+        socket_path,
+        "SESSION_STATUS",
+        {"session_id": sandboxed_session_id},
+    )
+    sandboxed_restart = "unavailable"
+    if sandboxed_restart_status.get("code") != "not_found":
+        layout = request(
+            socket_path,
+            "SESSION_LAYOUT",
+            {"session_id": sandboxed_session_id, "rows": 24, "columns": 80},
+        )
+        assert layout.get("panes"), layout
+        recovered_profiles = []
+        recovered_audits = []
+        for layout_pane in layout["panes"]:
+            pane_status = request(
+                socket_path,
+                "PANE_STATUS",
+                {"pane_id": layout_pane["pane_id"]},
+            )
+            assert pane_status["sandbox"]["enforced"] is True, pane_status
+            recovered_profiles.append(pane_status["sandbox"]["profile"])
+            recovered_audits.append(pane_status["sandbox"]["audit"])
+        assert all(profile == recovered_profiles[0] for profile in recovered_profiles)
+        assert all(audit == recovered_audits[0] for audit in recovered_audits)
+        assert recovered_audits[0]["fd_bind"] is True, recovered_audits
+        sandboxed_worker_pid = request(
+            socket_path,
+            "PANE_STATUS",
+            {"pane_id": layout["panes"][0]["pane_id"]},
+        )["worker_pid"]
+        sandboxed_generation = claim(socket_path, sandboxed_session_id, OWNER)
+        sandboxed_closed = request(
+            socket_path,
+            "SESSION_KILL",
+            {
+                "session_id": sandboxed_session_id,
+                "owner": OWNER,
+                "generation": sandboxed_generation,
+            },
+        )
+        assert sandboxed_closed.get("state") == "closed", sandboxed_closed
+        wait_for(
+            lambda: process_gone(sandboxed_worker_pid),
+            "sandboxed Pane worker survived post-restart teardown",
+        )
+        sandboxed_restart = "pass"
+
     loss_session_id = "stage10-sandbox-worker-loss"
     loss_session = request(
         socket_path,
@@ -1700,6 +1916,7 @@ def run_recovery_probe(
     wait_cgroup_drained(loss_cgroup)
     return qwed, {
         "qwed_restart": "pass",
+        "sandboxed_pane_restart": sandboxed_restart,
         "pane_teardown": "pass",
         "worker_loss": "pass",
     }

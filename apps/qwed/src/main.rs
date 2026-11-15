@@ -101,6 +101,16 @@ struct WorkerHandle {
     health: Mutex<WorkerHealth>,
 }
 
+struct WorkerSpawnSpec<'a> {
+    session_id: &'a str,
+    pane_id: &'a PaneId,
+    program: &'a str,
+    arguments: &'a [String],
+    resource_policy: &'a ResourcePolicy,
+    credential: Option<(&'a str, &'a Zeroizing<Vec<u8>>)>,
+    sandbox_profile: Option<&'a SandboxProfile>,
+}
+
 struct AttachmentHub {
     next_observer_id: AtomicU64,
     observers: Mutex<HashMap<u64, mpsc::SyncSender<attach::ReceivedFrame>>>,
@@ -906,13 +916,17 @@ fn connect_health_client(
 
 fn spawn_worker(
     context: &Context,
-    session_id: &str,
-    pane_id: &PaneId,
-    program: &str,
-    arguments: &[String],
-    resource_policy: &ResourcePolicy,
-    credential: Option<(&str, &Zeroizing<Vec<u8>>)>,
+    spec: WorkerSpawnSpec<'_>,
 ) -> Result<(WorkerHandle, Value), ProtocolErrorBody> {
+    let WorkerSpawnSpec {
+        session_id,
+        pane_id,
+        program,
+        arguments,
+        resource_policy,
+        credential,
+        sandbox_profile,
+    } = spec;
     let pane_key = pane_id.to_string();
     let socket = worker_socket(&context.runtime_dir, &pane_key);
     let attach_socket = worker_attach_socket(&context.runtime_dir, &pane_key);
@@ -980,6 +994,12 @@ fn spawn_worker(
     }
     if let Some(tasks) = resource_policy.tasks_max {
         command.arg("--worker-tasks-max").arg(tasks.to_string());
+    }
+    if let Some(profile) = sandbox_profile {
+        command.arg("--worker-sandbox-profile").arg(
+            serde_json::to_string(profile)
+                .map_err(|failure| error("internal", failure.to_string()))?,
+        );
     }
     let credential_fd = credential
         .map(|(_, secret)| credential_pipe(secret))
@@ -1222,7 +1242,117 @@ fn annotate_resource_status(status: &mut Value, requested: &ResourcePolicy) {
     status["resource_policy"] = json!(requested);
 }
 
-fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolErrorBody> {
+fn sandbox_record(
+    pane_id: &PaneId,
+    grant: &security::SecurityGrant,
+    created_at_ms: i64,
+) -> qwe_core::PaneSandboxRecord {
+    qwe_core::PaneSandboxRecord {
+        pane_id: pane_id.clone(),
+        profile: grant
+            .capability
+            .sandbox_profile
+            .clone()
+            .expect("validated sandbox capability has a profile"),
+        audit: grant
+            .capability
+            .sandbox_audit
+            .clone()
+            .expect("validated sandbox capability has an audit"),
+        capability_id: grant.capability.id.clone(),
+        created_at_ms,
+    }
+}
+
+fn validate_sandbox_worker_status(
+    status: &Value,
+    pane_id: &PaneId,
+    grant: Option<&security::SecurityGrant>,
+) -> Result<(), ProtocolErrorBody> {
+    let enforced = status
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("enforced"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    match grant {
+        Some(grant) => {
+            let expected = grant
+                .capability
+                .sandbox_profile
+                .as_ref()
+                .ok_or_else(|| error("capability_invalid", "sandbox profile is missing"))?;
+            if !enforced {
+                return Err(error(
+                    "worker_contract",
+                    format!("Pane {pane_id} did not enforce its sandbox profile"),
+                ));
+            }
+            if status.pointer("/sandbox/profile") != Some(&json!(expected)) {
+                return Err(error(
+                    "worker_contract",
+                    format!("Pane {pane_id} reported a different sandbox profile"),
+                ));
+            }
+        }
+        None if enforced => {
+            return Err(error(
+                "worker_contract",
+                format!("Pane {pane_id} unexpectedly enforced a sandbox profile"),
+            ));
+        }
+        None => {}
+    }
+    Ok(())
+}
+
+fn annotate_sandbox_status(status: &mut Value, grant: Option<&security::SecurityGrant>) {
+    let Some(grant) = grant else {
+        return;
+    };
+    if !status.get("sandbox").is_some_and(Value::is_object) {
+        status["sandbox"] = json!({"enforced": true});
+    }
+    status["sandbox"]["audit"] = json!(grant.capability.sandbox_audit);
+    status["sandbox"]["capability_id"] = json!(grant.capability.id);
+}
+
+fn annotate_persisted_sandbox(status: &mut Value, sandbox: Option<&qwe_core::PaneSandboxRecord>) {
+    let Some(sandbox) = sandbox else {
+        return;
+    };
+    if !status.get("sandbox").is_some_and(Value::is_object) {
+        status["sandbox"] = json!({"enforced": true, "backend": "bubblewrap"});
+    }
+    status["sandbox"]["enforced"] = json!(true);
+    status["sandbox"]["profile"] = json!(sandbox.profile);
+    status["sandbox"]["audit"] = json!(sandbox.audit);
+    status["sandbox"]["capability_id"] = json!(sandbox.capability_id);
+}
+
+fn require_unrestricted_terminal_available(
+    context: &Context,
+    pane_id: &PaneId,
+) -> Result<(), ProtocolErrorBody> {
+    let sandbox = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .find_pane_sandbox(pane_id)
+        .map_err(storage_error)?;
+    if sandbox.is_some() {
+        return Err(error(
+            "sandbox_terminal_filter_unavailable",
+            "sandboxed Pane Attach and input require the restricted terminal output policy",
+        ));
+    }
+    Ok(())
+}
+
+fn create_session(
+    context: &Context,
+    payload: Value,
+    auth_context: Option<&qwe_protocol::AuthContext>,
+) -> Result<Value, ProtocolErrorBody> {
     let _creation = context
         .creation_lock
         .lock()
@@ -1248,6 +1378,48 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
             ));
         }
     }
+    if payload.get("sandbox_profile").is_some() {
+        return Err(error(
+            "sandbox_profile_not_client_selectable",
+            "sandbox profiles are selected only by capability issuance",
+        ));
+    }
+    let sandboxed = match payload.get("sandboxed") {
+        None => false,
+        Some(value) => value.as_bool().ok_or_else(|| {
+            error(
+                "invalid_request",
+                "sandboxed must be a boolean when provided",
+            )
+        })?,
+    };
+    let sandbox_grant = if sandboxed {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Some(security::require_sandboxed_pane(
+            &store,
+            auth_context,
+            &session_id,
+            now_ms(),
+        )?)
+    } else {
+        if auth_context.is_some() {
+            let store = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let grant = security::require_live_token(&store, auth_context, now_ms())?;
+            if grant.capability.operation == CapabilityOperation::SandboxedPane {
+                return Err(error(
+                    "sandbox_capability_requires_sandboxed_pane",
+                    "sandboxed_pane capability cannot create an unsandboxed Session",
+                ));
+            }
+        }
+        None
+    };
     let program = payload
         .get("program")
         .and_then(Value::as_str)
@@ -1272,6 +1444,12 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
             return Err(error("invalid_request", "credential must be a string"));
         }
     };
+    if sandboxed && credential_name.is_some() {
+        return Err(error(
+            "invalid_request",
+            "sandboxed Panes do not accept long-lived credentials",
+        ));
+    }
     let credential = credential_name
         .map(|name| {
             context
@@ -1284,14 +1462,19 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
     let pane_id = PaneId::new();
     let (handle, mut status) = spawn_worker(
         context,
-        &session_id,
-        &pane_id,
-        program,
-        &arguments,
-        &resource_policy,
-        credential
-            .as_ref()
-            .map(|(name, secret)| (name.as_str(), secret)),
+        WorkerSpawnSpec {
+            session_id: &session_id,
+            pane_id: &pane_id,
+            program,
+            arguments: &arguments,
+            resource_policy: &resource_policy,
+            credential: credential
+                .as_ref()
+                .map(|(name, secret)| (name.as_str(), secret)),
+            sandbox_profile: sandbox_grant
+                .as_ref()
+                .and_then(|grant| grant.capability.sandbox_profile.as_ref()),
+        },
     )?;
     let now = now_ms();
     let running = status.get("running").and_then(Value::as_bool) == Some(true);
@@ -1303,6 +1486,7 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
     };
     let task_id = TaskId::new();
     let persisted = (|| {
+        validate_sandbox_worker_status(&status, &pane_id, sandbox_grant.as_ref())?;
         let identity = parse_process_identity(&status)?;
         let session = session_record(
             &session_id,
@@ -1340,11 +1524,14 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
             started_at_ms: now,
             ended_at_ms: (!running).then_some(now),
         };
+        let pane_sandbox = sandbox_grant
+            .as_ref()
+            .map(|grant| sandbox_record(&pane_id, grant, now));
         context
             .store
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert_created_session(&session, &pane, &task)
+            .insert_created_session_with_sandbox(&session, &pane, &task, pane_sandbox.as_ref())
             .map_err(storage_error)
     })();
     if let Err(failure) = persisted {
@@ -1371,6 +1558,7 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
     status["task_id"] = json!(task_id);
     status["pane_id"] = json!(pane_id);
     annotate_resource_status(&mut status, &resource_policy);
+    annotate_sandbox_status(&mut status, sandbox_grant.as_ref());
     if let Some(response) = status.as_object_mut() {
         response.remove("total_written");
         response.remove("truncated_from");
@@ -1378,7 +1566,11 @@ fn create_session(context: &Context, payload: Value) -> Result<Value, ProtocolEr
     Ok(status)
 }
 
-fn create_pane(context: &Context, payload: Value) -> Result<Value, ProtocolErrorBody> {
+fn create_pane(
+    context: &Context,
+    payload: Value,
+    auth_context: Option<&qwe_protocol::AuthContext>,
+) -> Result<Value, ProtocolErrorBody> {
     let _creation = context
         .creation_lock
         .lock()
@@ -1407,6 +1599,48 @@ fn create_pane(context: &Context, payload: Value) -> Result<Value, ProtocolError
             now_ms(),
         )?;
     }
+    if payload.get("sandbox_profile").is_some() {
+        return Err(error(
+            "sandbox_profile_not_client_selectable",
+            "sandbox profiles are selected only by capability issuance",
+        ));
+    }
+    let sandboxed = match payload.get("sandboxed") {
+        None => false,
+        Some(value) => value.as_bool().ok_or_else(|| {
+            error(
+                "invalid_request",
+                "sandboxed must be a boolean when provided",
+            )
+        })?,
+    };
+    let sandbox_grant = if sandboxed {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Some(security::require_sandboxed_pane(
+            &store,
+            auth_context,
+            &session_id,
+            now_ms(),
+        )?)
+    } else {
+        if auth_context.is_some() {
+            let store = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let grant = security::require_live_token(&store, auth_context, now_ms())?;
+            if grant.capability.operation == CapabilityOperation::SandboxedPane {
+                return Err(error(
+                    "sandbox_capability_requires_sandboxed_pane",
+                    "sandboxed_pane capability cannot create an unsandboxed Pane",
+                ));
+            }
+        }
+        None
+    };
     let after_pane_id = payload
         .get("after_pane_id")
         .and_then(Value::as_str)
@@ -1491,6 +1725,12 @@ fn create_pane(context: &Context, payload: Value) -> Result<Value, ProtocolError
         Some(Value::String(value)) => Some(value.as_str()),
         Some(_) => return Err(error("invalid_request", "credential must be a string")),
     };
+    if sandboxed && credential_name.is_some() {
+        return Err(error(
+            "invalid_request",
+            "sandboxed Panes do not accept long-lived credentials",
+        ));
+    }
     let credential = credential_name
         .map(|name| {
             context
@@ -1504,14 +1744,19 @@ fn create_pane(context: &Context, payload: Value) -> Result<Value, ProtocolError
     let task_id = TaskId::new();
     let (handle, mut status) = spawn_worker(
         context,
-        &session_id,
-        &pane_id,
-        program,
-        &arguments,
-        &resource_policy,
-        credential
-            .as_ref()
-            .map(|(name, secret)| (name.as_str(), secret)),
+        WorkerSpawnSpec {
+            session_id: &session_id,
+            pane_id: &pane_id,
+            program,
+            arguments: &arguments,
+            resource_policy: &resource_policy,
+            credential: credential
+                .as_ref()
+                .map(|(name, secret)| (name.as_str(), secret)),
+            sandbox_profile: sandbox_grant
+                .as_ref()
+                .and_then(|grant| grant.capability.sandbox_profile.as_ref()),
+        },
     )?;
     let now = now_ms();
     let running = status.get("running").and_then(Value::as_bool) == Some(true);
@@ -1534,6 +1779,7 @@ fn create_pane(context: &Context, payload: Value) -> Result<Value, ProtocolError
         updated_at_ms: now,
     };
     let persisted = (|| {
+        validate_sandbox_worker_status(&status, &pane_id, sandbox_grant.as_ref())?;
         let identity = parse_process_identity(&status)?;
         let task = TaskRecord {
             id: task_id.clone(),
@@ -1556,11 +1802,14 @@ fn create_pane(context: &Context, payload: Value) -> Result<Value, ProtocolError
             started_at_ms: now,
             ended_at_ms: (!running).then_some(now),
         };
+        let pane_sandbox = sandbox_grant
+            .as_ref()
+            .map(|grant| sandbox_record(&pane_id, grant, now));
         context
             .store
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert_created_pane(&pane, &worker, &task)
+            .insert_created_pane_with_sandbox(&pane, &worker, &task, pane_sandbox.as_ref())
             .map_err(storage_error)
     })();
     if let Err(failure) = persisted {
@@ -1593,6 +1842,7 @@ fn create_pane(context: &Context, payload: Value) -> Result<Value, ProtocolError
     status["z_index"] = json!(pane.z_index);
     status["floating_rect"] = json!(pane.floating_rect);
     annotate_resource_status(&mut status, &resource_policy);
+    annotate_sandbox_status(&mut status, sandbox_grant.as_ref());
     if let Some(response) = status.as_object_mut() {
         response.remove("total_written");
         response.remove("truncated_from");
@@ -3832,14 +4082,18 @@ fn probe_sandbox_profile(
 ) -> Result<SandboxAuditRecord, ProtocolErrorBody> {
     let probe_pane_id = PaneId::new();
     let probe_session_id = format!("sandbox-probe-{probe_pane_id}");
+    let probe_policy = ResourcePolicy::empty();
     let (handle, _) = spawn_worker(
         context,
-        &probe_session_id,
-        &probe_pane_id,
-        "/usr/bin/true",
-        &[],
-        &ResourcePolicy::empty(),
-        None,
+        WorkerSpawnSpec {
+            session_id: &probe_session_id,
+            pane_id: &probe_pane_id,
+            program: "/usr/bin/true",
+            arguments: &[],
+            resource_policy: &probe_policy,
+            credential: None,
+            sandbox_profile: None,
+        },
     )?;
     let result = handle
         .client
@@ -3992,10 +4246,22 @@ fn security_capability_issue(
             .high_trust
     };
     if operation == CapabilityOperation::PaneInput && !diagnostics_trusted {
-        return Err(error(
-            "insufficient_trust",
-            "pane_input is equivalent to code execution and currently requires a high-trust issuer",
-        ));
+        let sandboxed_target = match &scope {
+            CapabilityScope::Pane { pane_id } => context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .find_pane_sandbox(pane_id)
+                .map_err(storage_error)?
+                .is_some(),
+            _ => false,
+        };
+        if !sandboxed_target {
+            return Err(error(
+                "insufficient_trust",
+                "pane_input for an unsandboxed Pane requires a high-trust issuer",
+            ));
+        }
     }
     let sandbox_grant = if let Some(profile) = &sandbox_profile {
         let audit = match operation {
@@ -4371,8 +4637,16 @@ fn client_operation(
             &request.payload,
             request.auth_context.as_ref(),
         ),
-        "SESSION_CREATE" => create_session(context, request.payload.clone()),
-        "PANE_CREATE" => create_pane(context, request.payload.clone()),
+        "SESSION_CREATE" => create_session(
+            context,
+            request.payload.clone(),
+            request.auth_context.as_ref(),
+        ),
+        "PANE_CREATE" => create_pane(
+            context,
+            request.payload.clone(),
+            request.auth_context.as_ref(),
+        ),
         "PANE_FOCUS" => pane_focus(context, &request.payload),
         "PANE_REORDER" => pane_reorder(context, &request.payload),
         "PANE_FLOATING_UPDATE" => pane_floating_update(context, &request.payload),
@@ -4406,6 +4680,14 @@ fn client_operation(
         "SERVER_KILL" => kill_server(context, &request.payload),
         "SESSION_INPUT" => {
             let session_id = required_string(&request.payload, "session_id")?;
+            let pane = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .find_pane_for_session(session_id)
+                .map_err(storage_error)?
+                .ok_or_else(|| error("terminal_lost", "session has no Pane"))?;
+            require_unrestricted_terminal_available(context, &pane.id)?;
             let input_bytes = request
                 .payload
                 .get("data")
@@ -4455,6 +4737,9 @@ fn client_operation(
                 .find_pane(&pane_id)
                 .map_err(storage_error)?
                 .ok_or_else(|| error("not_found", "Pane not found"))?;
+            if request.operation == "PANE_ATTACH" {
+                require_unrestricted_terminal_available(context, &pane.id)?;
+            }
             let operation = if request.operation == "PANE_STATUS" {
                 "SESSION_STATUS"
             } else {
@@ -4469,10 +4754,27 @@ fn client_operation(
             )?;
             apply_pane_status(context, &pane_id, &status)?;
             annotate_resource_status(&mut status, &pane.resource_policy);
+            let sandbox = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .find_pane_sandbox(&pane_id)
+                .map_err(storage_error)?;
+            annotate_persisted_sandbox(&mut status, sandbox.as_ref());
             Ok(status)
         }
         "SESSION_STATUS" | "SESSION_ATTACH" => {
             let session_id = required_string(&request.payload, "session_id")?;
+            if request.operation == "SESSION_ATTACH" {
+                let pane = context
+                    .store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .find_pane_for_session(session_id)
+                    .map_err(storage_error)?
+                    .ok_or_else(|| error("terminal_lost", "session has no Pane"))?;
+                require_unrestricted_terminal_available(context, &pane.id)?;
+            }
             let mut status = match call_worker(
                 context,
                 session_id,
@@ -4506,6 +4808,13 @@ fn client_operation(
                 .map_err(storage_error)?;
             if let Some(pane) = pane {
                 annotate_resource_status(&mut status, &pane.resource_policy);
+                let sandbox = context
+                    .store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .find_pane_sandbox(&pane.id)
+                    .map_err(storage_error)?;
+                annotate_persisted_sandbox(&mut status, sandbox.as_ref());
             }
             Ok(status)
         }
