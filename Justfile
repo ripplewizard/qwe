@@ -1125,6 +1125,13 @@ stage9-check:
 bubblewrap-poc:
     cargo test -p qwe-worker --test bubblewrap_contract -- --nocapture
 
+sandbox-pane-poc:
+    cargo test -p qwe-worker --test bubblewrap_contract -- --nocapture
+    cargo test -p qwe-worker --bin qwe-worker \
+      strict_seccomp_nested_bubblewrap_gate -- --nocapture
+    cargo test -p qwe-worker --bin qwe-worker \
+      seccomp_socket_denial_preserves_inherited_socket -- --nocapture
+
 landlock-poc:
     cargo test -p qwe-worker --test landlock_contract -- --nocapture
     cargo build -p qwe-worker --bin qwe-sandbox-init

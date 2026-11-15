@@ -4,7 +4,7 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
-use std::os::unix::process::CommandExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -368,6 +368,204 @@ fn bwrap_pty_preserves_resize_signals_and_job_control_without_new_session() {
 
     child.kill().unwrap();
     child.wait().unwrap();
+}
+
+#[test]
+fn bwrap_pty_master_resize_delivers_sigwinch_without_shim() {
+    if skip_without_bubblewrap() {
+        return;
+    }
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
+    let mut builder = CommandBuilder::new("bwrap");
+    builder.args(BWRAP_SHELL);
+    builder.args(["/bin/bash", "--noprofile", "--norc", "-i"]);
+    let mut child = pair.slave.spawn_command(builder).unwrap();
+    drop(pair.slave);
+    let outer_pid = child.process_id().unwrap();
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut buffer = [0_u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => return,
+                Ok(count) => {
+                    if sender.send(buffer[..count].to_vec()).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    });
+    let mut writer = pair.master.take_writer().unwrap();
+    let mut output = Vec::new();
+    writer
+        .write_all(b"trap 'printf \"\\nWINCH_SEEN\\n\"' WINCH; printf 'RESIZE_READY\\n'\n")
+        .unwrap();
+    writer.flush().unwrap();
+    read_until(
+        &receiver,
+        &mut output,
+        b"RESIZE_READY",
+        Duration::from_secs(2),
+    );
+    let foreground_before = unsafe { libc::tcgetpgrp(pair.master.as_raw_fd().unwrap()) };
+    assert!(foreground_before > 0, "PTY has no foreground process group");
+    pair.master
+        .resize(PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
+    read_until(
+        &receiver,
+        &mut output,
+        b"WINCH_SEEN",
+        Duration::from_secs(2),
+    );
+    let foreground_after = unsafe { libc::tcgetpgrp(pair.master.as_raw_fd().unwrap()) };
+    eprintln!(
+        "PTY resize outer pid={outer_pid} foreground_before={foreground_before} foreground_after={foreground_after}"
+    );
+    assert_eq!(foreground_before, foreground_after);
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+#[test]
+fn bwrap_pid1_ignores_default_sigterm_without_a_handler() {
+    if skip_without_bubblewrap() {
+        return;
+    }
+    let (status_read, status_write) = pipe_above_ten().unwrap();
+    let mut command = Command::new("bwrap");
+    command
+        .args(BWRAP_SHELL)
+        .arg("--json-status-fd")
+        .arg(status_write.to_string())
+        .args([
+            "/usr/bin/python3",
+            "-c",
+            "import time; print('PID1_READY', flush=True); time.sleep(60)",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    unsafe {
+        command.pre_exec(move || clear_close_on_exec(status_write));
+    }
+    let mut child = command.spawn().unwrap();
+    unsafe {
+        libc::close(status_write);
+    }
+    let (child_pid, _status_reader) = read_bwrap_child_pid(status_read);
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    assert!(line.contains("PID1_READY"), "{line:?}");
+    assert_eq!(unsafe { libc::kill(child_pid, libc::SIGTERM) }, 0);
+    thread::sleep(Duration::from_millis(250));
+    assert_eq!(
+        unsafe { libc::kill(child_pid, 0) },
+        0,
+        "PID 1 exited on default SIGTERM behavior"
+    );
+    unsafe {
+        libc::kill(child_pid, libc::SIGKILL);
+    }
+    let _ = child.wait();
+}
+
+#[test]
+fn bwrap_pid1_explicit_signal_and_reaper_handlers_work() {
+    if skip_without_bubblewrap() {
+        return;
+    }
+    let script = concat!(
+        "import os,signal,sys,time\n",
+        "reaped=[]\n",
+        "def on_chld(sig,frame):\n",
+        " while True:\n",
+        "  try: pid,status=os.waitpid(-1,os.WNOHANG)\n",
+        "  except ChildProcessError: return\n",
+        "  if pid == 0: return\n",
+        "  reaped.append(pid); print('PID1_REAPED',flush=True)\n",
+        "def on_term(sig,frame): print('PID1_TERM',flush=True)\n",
+        "def on_int(sig,frame): print('PID1_INT',flush=True); sys.exit(0)\n",
+        "signal.signal(signal.SIGCHLD,on_chld)\n",
+        "signal.signal(signal.SIGTERM,on_term)\n",
+        "signal.signal(signal.SIGINT,on_int)\n",
+        "pid=os.fork()\n",
+        "if pid == 0: os._exit(7)\n",
+        "print('PID1_READY',flush=True)\n",
+        "while not reaped: time.sleep(0.05)\n",
+        "while True: time.sleep(1)\n",
+    );
+    let (status_read, status_write) = pipe_above_ten().unwrap();
+    let mut command = Command::new("bwrap");
+    command
+        .args(BWRAP_SHELL)
+        .arg("--json-status-fd")
+        .arg(status_write.to_string())
+        .args(["/usr/bin/python3", "-c", script])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    unsafe {
+        command.pre_exec(move || clear_close_on_exec(status_write));
+    }
+    let mut child = command.spawn().unwrap();
+    unsafe {
+        libc::close(status_write);
+    }
+    let (child_pid, _status_reader) = read_bwrap_child_pid(status_read);
+    let stdout = child.stdout.take().unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = stdout;
+        let mut buffer = [0_u8; 4096];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => return,
+                Ok(count) => {
+                    if sender.send(buffer[..count].to_vec()).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    });
+    let mut output = Vec::new();
+    read_until(
+        &receiver,
+        &mut output,
+        b"PID1_REAPED",
+        Duration::from_secs(2),
+    );
+    assert_eq!(unsafe { libc::kill(child_pid, libc::SIGTERM) }, 0);
+    read_until(&receiver, &mut output, b"PID1_TERM", Duration::from_secs(2));
+    assert_eq!(unsafe { libc::kill(child_pid, libc::SIGINT) }, 0);
+    read_until(&receiver, &mut output, b"PID1_INT", Duration::from_secs(2));
+    let status = child.wait().unwrap();
+    assert!(
+        status.success() || status.signal() == Some(libc::SIGINT),
+        "unexpected PID-1 terminal status: {status:?}"
+    );
+}
+
+fn read_bwrap_child_pid(status_read: RawFd) -> (i32, BufReader<File>) {
+    let mut status_reader = BufReader::new(unsafe { File::from_raw_fd(status_read) });
+    let mut start_line = String::new();
+    status_reader.read_line(&mut start_line).unwrap();
+    let start: serde_json::Value = serde_json::from_str(&start_line).unwrap();
+    (start["child-pid"].as_u64().unwrap() as i32, status_reader)
 }
 
 fn read_until(

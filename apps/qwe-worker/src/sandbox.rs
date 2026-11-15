@@ -919,6 +919,7 @@ fn invalid_input(message: impl Into<String>) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::CommandExt;
 
     fn evidence(stderr: &str) -> ProbeEvidence {
         ProbeEvidence {
@@ -1025,5 +1026,258 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn strict_seccomp_nested_bubblewrap_gate() {
+        if probe_bubblewrap(SandboxLandlockMode::Off).is_err() {
+            eprintln!("SKIP: bubblewrap namespaces are unavailable");
+            return;
+        }
+        let seccomp_fd = match create_seccomp_filter_fd(&SandboxSeccompMode::Named {
+            profile: SANDBOX_SECCOMP_STRICT_PROFILE.into(),
+        }) {
+            Ok(descriptor) => descriptor,
+            Err(failure) if failure.kind() == io::ErrorKind::Unsupported => {
+                eprintln!("SKIP: strict seccomp is unsupported on this architecture");
+                return;
+            }
+            Err(failure) => panic!("failed to create strict seccomp filter: {failure}"),
+        };
+        let seccomp_arg = seccomp_fd.to_string();
+        let mut command = Command::new(bubblewrap_executable());
+        command
+            .args([
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--symlink",
+                "usr/bin",
+                "/bin",
+                "--ro-bind-try",
+                "/lib",
+                "/lib",
+                "--symlink",
+                "usr/lib64",
+                "/lib64",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--tmpfs",
+                "/tmp",
+                "--unshare-user",
+                "--unshare-pid",
+                "--as-pid-1",
+                "--die-with-parent",
+                "--seccomp",
+                &seccomp_arg,
+                "--",
+                "/usr/bin/bwrap",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--symlink",
+                "usr/bin",
+                "/bin",
+                "--ro-bind-try",
+                "/lib",
+                "/lib",
+                "--symlink",
+                "usr/lib64",
+                "/lib64",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--unshare-user",
+                "--unshare-pid",
+                "--as-pid-1",
+                "--die-with-parent",
+                "--",
+                "/bin/true",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = match command.spawn() {
+            Ok(child) => child,
+            Err(failure) => {
+                unsafe {
+                    libc::close(seccomp_fd);
+                }
+                panic!("failed to start outer bubblewrap: {failure}");
+            }
+        };
+        unsafe {
+            libc::close(seccomp_fd);
+        }
+        let output = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("nested bwrap status={} stderr={stderr}", output.status);
+        assert!(
+            output.status.success() || !stderr.is_empty(),
+            "nested bubblewrap neither succeeded nor reported a diagnostic"
+        );
+    }
+
+    #[test]
+    fn seccomp_socket_denial_preserves_inherited_socket() {
+        if probe_bubblewrap(SandboxLandlockMode::Off).is_err() {
+            eprintln!("SKIP: bubblewrap namespaces are unavailable");
+            return;
+        }
+        #[cfg(target_arch = "x86_64")]
+        const SYS_SOCKET: u32 = 41;
+        #[cfg(target_arch = "aarch64")]
+        const SYS_SOCKET: u32 = 198;
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            eprintln!("SKIP: socket-denial filter is unsupported on this architecture");
+            return;
+        }
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        {
+            const SECCOMP_DATA_NR: u32 = 0;
+            const SECCOMP_DATA_ARCH: u32 = 4;
+            const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
+            #[cfg(target_arch = "x86_64")]
+            const AUDIT_ARCH: u32 = 0xc000_003e;
+            #[cfg(target_arch = "aarch64")]
+            const AUDIT_ARCH: u32 = 0xc000_00b7;
+            let filters = vec![
+                bpf(
+                    libc::BPF_LD | libc::BPF_W | libc::BPF_ABS,
+                    SECCOMP_DATA_ARCH,
+                ),
+                bpf_jump(
+                    libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K,
+                    AUDIT_ARCH,
+                    1,
+                    0,
+                ),
+                bpf_return(SECCOMP_RET_KILL_PROCESS),
+                bpf(libc::BPF_LD | libc::BPF_W | libc::BPF_ABS, SECCOMP_DATA_NR),
+                bpf_jump(
+                    libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K,
+                    SYS_SOCKET,
+                    0,
+                    1,
+                ),
+                bpf_return(libc::SECCOMP_RET_ERRNO | libc::EPERM as u32),
+                bpf_return(libc::SECCOMP_RET_ALLOW),
+            ];
+            let seccomp_fd = test_seccomp_fd(&filters);
+            let mut sockets = [-1_i32; 2];
+            assert_eq!(
+                unsafe {
+                    libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sockets.as_mut_ptr())
+                },
+                0
+            );
+            let child_socket = sockets[1];
+            let seccomp_arg = seccomp_fd.to_string();
+            let mut command = Command::new(bubblewrap_executable());
+            command
+                .args([
+                    "--ro-bind",
+                    "/usr",
+                    "/usr",
+                    "--symlink",
+                    "usr/bin",
+                    "/bin",
+                    "--ro-bind-try",
+                    "/lib",
+                    "/lib",
+                    "--symlink",
+                    "usr/lib64",
+                    "/lib64",
+                    "--proc",
+                    "/proc",
+                    "--dev",
+                    "/dev",
+                    "--unshare-user",
+                    "--unshare-pid",
+                    "--as-pid-1",
+                    "--die-with-parent",
+                    "--seccomp",
+                    &seccomp_arg,
+                    "--",
+                    "/usr/bin/python3",
+                    "-c",
+                    concat!(
+                        "import errno,os,socket,sys\n",
+                        "s=socket.socket(fileno=3)\n",
+                        "s.sendall(b'existing-socket-ok')\n",
+                        "s.close()\n",
+                        "try: socket.socket(socket.AF_INET,socket.SOCK_STREAM)\n",
+                        "except OSError as error:\n",
+                        " print('NEW_SOCKET_DENIED',error.errno,flush=True)\n",
+                        " sys.exit(0 if error.errno == errno.EPERM else 97)\n",
+                        "print('NEW_SOCKET_ALLOWED',flush=True)\n",
+                        "sys.exit(98)\n",
+                    ),
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            unsafe {
+                command.pre_exec(move || {
+                    if child_socket != 3 {
+                        if libc::dup2(child_socket, 3) < 0 {
+                            return Err(io::Error::last_os_error());
+                        }
+                        libc::close(child_socket);
+                    }
+                    let flags = libc::fcntl(3, libc::F_GETFD);
+                    if flags < 0 || libc::fcntl(3, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            let output = match command.output() {
+                Ok(output) => output,
+                Err(failure) => panic!("failed to run socket-denial probe: {failure}"),
+            };
+            unsafe {
+                libc::close(seccomp_fd);
+                libc::close(child_socket);
+            }
+            assert!(
+                output.status.success(),
+                "stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("NEW_SOCKET_DENIED"),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            let mut inherited = unsafe { std::fs::File::from_raw_fd(sockets[0]) };
+            let mut received = String::new();
+            inherited.read_to_string(&mut received).unwrap();
+            assert_eq!(received, "existing-socket-ok");
+        }
+    }
+
+    fn test_seccomp_fd(filters: &[libc::sock_filter]) -> RawFd {
+        let mut pipe = [-1_i32; 2];
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+        let bytes = filter_bytes(filters);
+        let mut writer = unsafe { std::fs::File::from_raw_fd(pipe[1]) };
+        writer.write_all(bytes).unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+        let inherited = unsafe { libc::fcntl(pipe[0], libc::F_DUPFD_CLOEXEC, 10) };
+        unsafe {
+            libc::close(pipe[0]);
+        }
+        assert!(inherited >= 0);
+        let flags = unsafe { libc::fcntl(inherited, libc::F_GETFD) };
+        assert!(flags >= 0);
+        assert!(unsafe { libc::fcntl(inherited, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } >= 0);
+        inherited
     }
 }

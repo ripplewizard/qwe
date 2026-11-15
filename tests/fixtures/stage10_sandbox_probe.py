@@ -406,6 +406,92 @@ def run_positive_probe(
     )
     assert b"STRICT_PTY_OK" in decode_stream(strict_pty_events, "pty")
 
+    nested_profile = profile(workspace, landlock={"mode": "off"})
+    nested_profile["seccomp"] = {"mode": "named", "profile": "strict"}
+    nested_capability = issue_capability(
+        socket_path,
+        management,
+        principal_id,
+        pane_id,
+        nested_profile,
+    )["token"]
+    nested_bwrap = exec_command(
+        socket_path,
+        nested_capability,
+        pane_id,
+        "/usr/bin/bwrap",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--symlink",
+        "usr/bin",
+        "/bin",
+        "--ro-bind-try",
+        "/lib",
+        "/lib",
+        "--symlink",
+        "usr/lib64",
+        "/lib64",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+        "--unshare-user",
+        "--unshare-pid",
+        "--as-pid-1",
+        "--die-with-parent",
+        "--",
+        "/bin/true",
+    )
+    assert_done(socket_path, nested_capability, nested_bwrap)
+
+    landlock_nested = exec_command(
+        socket_path,
+        strict_capability["token"],
+        pane_id,
+        "/usr/bin/bwrap",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--symlink",
+        "usr/bin",
+        "/bin",
+        "--ro-bind-try",
+        "/lib",
+        "/lib",
+        "--symlink",
+        "usr/lib64",
+        "/lib64",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+        "--unshare-user",
+        "--unshare-pid",
+        "--as-pid-1",
+        "--die-with-parent",
+        "--",
+        "/bin/true",
+    )
+    assert_done(
+        socket_path,
+        strict_capability["token"],
+        landlock_nested,
+        expected_code=1,
+    )
+    landlock_nested_events = events(
+        socket_path,
+        strict_capability["token"],
+        landlock_nested["command_id"],
+    )
+    assert b"setting up uid map" in decode_stream(
+        landlock_nested_events, "stderr"
+    )
+
     basic = exec_command(
         socket_path,
         read_only_capability,
@@ -1277,6 +1363,8 @@ def run_positive_probe(
     return {
         "profile_authorization": "pass",
         "strict_seccomp": "pass",
+        "nested_bubblewrap": "pass",
+        "nested_bubblewrap_landlock_denied": "pass",
         "landlock_profile_modes": "pass",
         "request_cannot_enable": "pass",
         "request_cannot_downgrade": "pass",
