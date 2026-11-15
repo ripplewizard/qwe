@@ -106,13 +106,17 @@ SandboxProfileV1
 `workspace:readonly` is the default. `workspace:read_write` is explicit.
 `protected_paths` are re-mounted read-only after the workspace bind. This is a
 risk reduction, not a claim that a writable workspace is trusted by host-side
-processes.
+processes. Capability issue rejects a protected path containing any
+multi-link file: a writable hardlink alias elsewhere in the workspace would
+otherwise mutate the same inode despite the read-only path mount.
 
 Bubblewrap's `--unshare-net` provides an isolated network namespace containing
 an UP loopback interface on the tested Bubblewrap 0.5, 0.6.1, 0.8, and 0.9
 versions. QWE calls this `isolated_loopback`; there is no separate
 `network:none` promise in v1. Stage 10 verifies both a real `127.0.0.1`
-listen/connect pair and the absence of a default route.
+listen/connect pair and the absence of a default route. Abstract Unix sockets
+are reachable under `network:inherit` and isolated under
+`network:isolated_loopback`.
 
 Setuid privilege gain is denied by Bubblewrap's no-new-privileges state.
 Sandbox status reports `setuid_denied:true` and `no_new_privs:true`; Stage 10
@@ -364,6 +368,8 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
 - `just stage10-sandbox` verifies the `strict` named seccomp profile in both
   pipe-split and PTY commands, including denial return codes and the distinct
   seccomp content hash in capability audit metadata.
+- Stage 10 rejects protected-path hardlink aliases and verifies abstract Unix
+  socket namespace behavior for inherited and isolated networks.
 - `just landlock-poc` verifies Landlock ABI detection, RW/RO workspace write
   enforcement, denial outside allowed write roots, preservation of reads and
   private `/tmp`, and whichever ABI-specific rights the host kernel exposes.

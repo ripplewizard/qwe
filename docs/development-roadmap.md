@@ -203,6 +203,9 @@ Fedora 44 coverage passes with SELinux `Enforcing`. Bubblewrap 0.5.0 passes the
 complete matrix on all three Ubuntu/Debian VMs. Additional SELinux distributions
 remain open.
 
+Escape probes now cover protected-path hardlinks, shared-PID proc roots, and
+abstract Unix socket namespace isolation.
+
 Capability issue now checks the backend's required-option help contract in
 addition to namespace viability. A backend with an insufficient feature set is
 rejected as `bwrap_version_incompatible` before a capability token is issued.

@@ -23,11 +23,17 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
 - an existing protected path inside a writable workspace remains read-only;
 - protected-path symlinks resolve inside the canonical workspace and remain
   read-only;
+- protected paths containing hardlinked files are rejected before capability
+  issue, preventing a writable alias from mutating the same inode;
 - host `$HOME` is absent and `/tmp` is private;
 - host PIDs, `/etc/shadow`, `/sys`, and host environment values are absent;
 - workspace symlinks to host paths outside the mount policy are inaccessible;
 - isolated networking has no default route, keeps `lo` UP, and supports a
   local `127.0.0.1` listen/connect pair;
+- abstract Unix sockets are reachable with `network:inherit` and isolated under
+  `network:isolated_loopback`;
+- shared PID namespace visibility does not turn
+  `/proc/<same-uid-pid>/root` into a mount-policy escape;
 - `NoNewPrivs: 1` makes setuid privilege gain denial an observable guarantee;
 - on Landlock-capable kernels, the optional init applies write confinement
   inside Bubblewrap and records the detected ABI in capability audit metadata;
@@ -298,6 +304,20 @@ Ubuntu 22.04 VM kernel also exposes Landlock.
 Ubuntu kernel. Cross-workspace rename is denied through `REFER`, truncation is
 denied through `TRUNCATE`, workspace and private `/tmp` writes still pass, and
 the result records `ioctl_dev:not_supported` for ABI 4.
+
+### Filesystem and namespace escape probes
+
+A protected path can contain multiple hardlinks to the same inode. Bubblewrap's
+read-only bind protects the path, but not an independently linked writable
+alias. Stage 10 reproduced this bypass, then added recursive protected-path
+inspection at both capability issue and worker validation. A protected path
+containing any multi-link file now fails with
+`sandbox_profile_unsupported`.
+
+In the shared PID namespace, `/proc/<worker-pid>/root` remains inaccessible;
+process visibility alone therefore does not bypass the mount policy. Abstract
+Unix sockets are scoped by the network namespace: inherited networking reaches
+the host listener, while isolated networking receives a connection error.
 
 Capability issue validates that the init helper exists, is executable, and is
 adjacent to the worker whenever Landlock is available. The Stage 10 probe runs

@@ -378,6 +378,8 @@ path. The v1 profile shape is:
 `process_namespace` is `isolated` or `shared`. Unknown fields, non-v1 profiles,
 named seccomp values other than the exact profile name `strict`, a missing
 workspace, or a missing protected path fail closed.
+Protected paths containing multi-link files also fail closed because a
+writable hardlink alias can bypass path-scoped read-only mounts.
 Sandboxed PTY execution preserves terminal semantics and applies an internal
 `TIOCSTI`-denying seccomp filter; the profile's `seccomp:none` value does not
 disable that adapter hardening.
@@ -388,6 +390,9 @@ adds a deny-focused cBPF layer. It rejects `ptrace`, `bpf`, `keyctl`,
 `io_uring_setup` with `ENOSYS` so runtime feature detection can fall back.
 `strict` is a stable profile name, but it is not a syscall allowlist or a
 complete syscall sandbox. Unknown names are rejected rather than downgraded.
+
+`network:inherit` reaches abstract Unix sockets in the host network namespace.
+`network:isolated_loopback` cannot connect to them.
 
 A sandboxed capability also returns `sandbox_audit` with `profile_hash`,
 `seccomp_profile_hash`, optional `landlock_abi`, `backend_path`,

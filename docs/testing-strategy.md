@@ -276,11 +276,13 @@ tmp, network policy, sandboxed PTY, `TIOCSTI` denial, qwed restart, worker loss,
 Pane teardown, the content-hashed `strict` named seccomp denylist, and rejection
 of a backend missing a production-required option. It explicitly confirms that
 a writable workspace can persist a credential and reports the corresponding
-risk. `just landlock-poc` separately verifies write confinement and read/private
-tmp preservation; Stage 10 confirms the ABI is applied through the full
-Bubblewrap process chain and fails capability issue when the init helper is
-missing. It also verifies that a backend failure followed by repair is observed
-by the next capability issue without restarting qwed or the worker.
+risk. It also rejects protected-path hardlink aliases, verifies
+`/proc/<pid>/root` cannot escape the mount policy, and checks abstract Unix
+socket isolation. `just landlock-poc` separately verifies write confinement and
+read/private tmp preservation; Stage 10 confirms the ABI is applied through the
+full Bubblewrap process chain and fails capability issue when the init helper
+is missing. It also verifies that a backend failure followed by repair is
+observed by the next capability issue without restarting qwed or the worker.
 `just sandbox-container-matrix` verifies fail-closed behavior on Ubuntu 22.04,
 Ubuntu 24.04, and Debian 12 when Podman disallows Bubblewrap's nested mount/PID
 setup.

@@ -567,6 +567,8 @@ The userns-disabled matrix passes on all three QWE VMs while ordinary Pane
 commands remain available.
 Fedora 44 passes the complete matrix under SELinux `Enforcing`, and Bubblewrap
 0.5.0 passes the complete matrix on all three Ubuntu/Debian VMs.
+Protected-path hardlinks, shared-PID proc roots, and abstract Unix sockets have
+explicit negative coverage.
 Session/Pane startup-program sandboxing, Landlock-only fallback, additional
 named seccomp profiles, additional platform qualification, and VM/OCI backends
 remain later decisions.
