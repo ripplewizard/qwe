@@ -1238,6 +1238,95 @@ sandbox-vm-matrix hosts="ubuntu2204 ubuntu2404 debian12":
       fi
     done
 
+sandbox-bubblewrap-oldest-vm-matrix hosts="ubuntu2204 ubuntu2404 debian12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="$lab/ssh_config"
+    cache_dir="${QWE_VM_CACHE:-$root/.scratch/vm-cache}"
+    archive="$cache_dir/bubblewrap-v0.5.0.tar.gz"
+    expected_sha=9910917c031bc4305e5620e53a602161fdd676de9c9f7da5c082a508a880912c
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    mkdir -p "$cache_dir"
+    if [ ! -f "$archive" ]; then
+      curl -L --fail --retry 3 \
+        -o "$archive" \
+        https://github.com/containers/bubblewrap/archive/refs/tags/v0.5.0.tar.gz
+    fi
+    printf '%s  %s\n' "$expected_sha" "$archive" | sha256sum -c -
+    cd "$root"
+    cargo build --release -p qwe-worker -p qwed
+    for host in {{ hosts }}; do
+      printf '==> %s\n' "$host"
+      target="qwe-$host"
+      remote_dir="/home/qwe/bianca/qwe-bwrap-0.5"
+      ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+      scp -q -F "$ssh_config" \
+        "$archive" \
+        target/release/qwed \
+        target/release/qwe-worker \
+        target/release/qwe-session-exec \
+        target/release/qwe-sandbox-init \
+        packaging/apparmor/qwe-bwrap \
+        packaging/apparmor/install.sh \
+        tests/fixtures/apparmor_profile_probe.py \
+        tests/fixtures/bubblewrap_oldest_probe.sh \
+        tests/fixtures/stage7_resource_probe.py \
+        tests/fixtures/stage10_sandbox_probe.py \
+        "$target:$remote_dir/"
+      ssh -F "$ssh_config" "$target" "
+        bash $remote_dir/bubblewrap_oldest_probe.sh \
+          $remote_dir/bubblewrap-v0.5.0.tar.gz \
+          $remote_dir/qwed \
+          $remote_dir/stage10_sandbox_probe.py \
+          $remote_dir/apparmor_profile_probe.py \
+          $remote_dir/qwe-bwrap \
+          $remote_dir/install.sh
+      "
+    done
+
+sandbox-selinux-vm host="fedora44":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="${QWE_SELINUX_SSH_CONFIG:-$lab/ssh_config}"
+    target="${QWE_SELINUX_SSH_TARGET:-qwe-{{ host }}}"
+    remote_dir="${QWE_SELINUX_REMOTE_DIR:-/home/qwe/bianca/qwe-selinux}"
+    [ -r "$ssh_config" ] || {
+      printf 'SELinux VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    cd "$root"
+    cargo build --release -p qwe-worker -p qwed
+    ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+    scp -q -F "$ssh_config" \
+      target/release/qwed \
+      target/release/qwe-worker \
+      target/release/qwe-session-exec \
+      target/release/qwe-sandbox-init \
+      tests/fixtures/selinux_probe.py \
+      tests/fixtures/stage7_resource_probe.py \
+      tests/fixtures/stage10_sandbox_probe.py \
+      "$target:$remote_dir/"
+    ssh -F "$ssh_config" "$target" "
+      set -e
+      sudo dnf install -y -q bubblewrap python3 policycoreutils >/dev/null
+      test \"\$(getenforce)\" = Enforcing
+      root=\$(mktemp -d /tmp/qwe-selinux-vm.XXXXXX)
+      PYTHONPATH=$remote_dir python3 $remote_dir/selinux_probe.py \
+        --qwed $remote_dir/qwed \
+        --socket \"\$root/qwed.sock\" \
+        --stage10-fixture $remote_dir/stage10_sandbox_probe.py
+      rc=\$?
+      find \"\$root\" -depth -delete 2>/dev/null || true
+      exit \$rc
+    "
+
 sandbox-apparmor-vm host="ubuntu2404":
     #!/usr/bin/env bash
     set -euo pipefail
