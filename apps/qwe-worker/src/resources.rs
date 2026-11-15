@@ -414,8 +414,12 @@ impl ResourceController {
     }
 
     fn monitor(&self, pid: u32, pgid: u32) {
+        let pidfd = qwe_runtime::PidFd::open(pid).ok();
         loop {
-            let alive = process_alive(pid);
+            let alive = pidfd
+                .as_ref()
+                .and_then(|pidfd| pidfd.is_running().ok())
+                .unwrap_or_else(|| process_alive(pid));
             #[cfg(target_os = "linux")]
             {
                 let _ = self.sample_linux();

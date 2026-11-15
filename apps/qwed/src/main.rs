@@ -96,6 +96,7 @@ struct WorkerHandle {
     pane_id: String,
     session_id: String,
     worker_pid: u32,
+    pidfd: Option<qwe_runtime::PidFd>,
     worker_identity: ProcessIdentity,
     client: Option<Arc<WorkerClient>>,
     health_client: Option<Arc<WorkerClient>>,
@@ -380,6 +381,7 @@ fn worker_handle(
         attach_socket,
         socket,
         worker_pid,
+        pidfd: qwe_runtime::PidFd::open(worker_pid).ok(),
         worker_identity,
         client,
         health_client,
@@ -411,6 +413,38 @@ fn worker_json(handle: &WorkerHandle) -> Value {
     })
 }
 
+fn worker_is_running(handle: &WorkerHandle) -> bool {
+    handle
+        .pidfd
+        .as_ref()
+        .and_then(|pidfd| pidfd.is_running().ok())
+        .unwrap_or_else(|| process_identity_is_running(&handle.worker_identity))
+}
+
+fn process_identity_is_running(identity: &ProcessIdentity) -> bool {
+    qwe_runtime::PidFd::open(identity.pid)
+        .and_then(|pidfd| pidfd.is_running())
+        .unwrap_or_else(|_| qwe_runtime::process_matches(identity))
+}
+
+fn signal_worker(handle: &WorkerHandle, signal: libc::c_int) -> std::io::Result<()> {
+    if let Some(pidfd) = &handle.pidfd {
+        match pidfd.send_signal(signal) {
+            Ok(()) => return Ok(()),
+            Err(failure) if failure.raw_os_error() == Some(libc::ESRCH) => return Ok(()),
+            Err(_) => {}
+        }
+    }
+    if unsafe { libc::kill(handle.worker_pid as libc::pid_t, signal) } < 0 {
+        let failure = std::io::Error::last_os_error();
+        if failure.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(());
+        }
+        return Err(failure);
+    }
+    Ok(())
+}
+
 fn cleanup_worker_scope(handle: &WorkerHandle) {
     let _ = qwe_runtime::stop_pane_scope(&handle.pane_id);
 }
@@ -427,6 +461,7 @@ fn unreachable_worker_handle(
         session_id: session_id.to_string(),
         attach_socket: worker_attach_socket(&context.runtime_dir, pane_id),
         worker_pid: worker_identity.pid,
+        pidfd: qwe_runtime::PidFd::open(worker_identity.pid).ok(),
         worker_identity,
         socket,
         client: None,
@@ -1607,9 +1642,7 @@ fn create_session(
                 WORKER_MAINTENANCE_TIMEOUT,
             );
         }
-        unsafe {
-            libc::kill(handle.worker_pid as libc::pid_t, libc::SIGTERM);
-        }
+        let _ = signal_worker(&handle, libc::SIGTERM);
         cleanup_worker_scope(&handle);
         let _ = fs::remove_file(&handle.socket);
         let _ = fs::remove_file(&handle.attach_socket);
@@ -1895,9 +1928,7 @@ fn create_pane(
             );
         }
         cleanup_worker_scope(&handle);
-        unsafe {
-            libc::kill(handle.worker_pid as libc::pid_t, libc::SIGTERM);
-        }
+        let _ = signal_worker(&handle, libc::SIGTERM);
         let _ = fs::remove_file(&handle.socket);
         let _ = fs::remove_file(&handle.attach_socket);
         return Err(failure);
@@ -2727,7 +2758,7 @@ fn task_kill_batch(context: &Context, payload: &Value) -> Result<Value, Protocol
                 WORKER_MAINTENANCE_TIMEOUT,
             ) {
                 Ok(status) => status,
-                Err(_) if qwe_runtime::process_matches(&task.identity) => {
+                Err(_) if process_identity_is_running(&task.identity) => {
                     unsafe {
                         libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
                     }
@@ -2866,7 +2897,7 @@ fn teardown_session(
                     .find_task_for_pane(&pane.id)
                     .map_err(storage_error)?
                 {
-                    if qwe_runtime::process_matches(&task.identity) {
+                    if process_identity_is_running(&task.identity) {
                         unsafe {
                             libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
                         }
@@ -2890,12 +2921,7 @@ fn teardown_session(
             .remove(&pane_key);
         if let Some(handle) = &handle {
             cleanup_worker_scope(handle);
-            unsafe {
-                libc::kill(
-                    handle.worker_pid as libc::pid_t,
-                    if forced { libc::SIGKILL } else { libc::SIGTERM },
-                );
-            }
+            let _ = signal_worker(handle, if forced { libc::SIGKILL } else { libc::SIGTERM });
             let _ = fs::remove_file(&handle.socket);
             let _ = fs::remove_file(&handle.attach_socket);
         }
@@ -3003,7 +3029,7 @@ fn teardown_pane(
                 .find_task_for_pane(&pane_id)
                 .map_err(storage_error)?
             {
-                if qwe_runtime::process_matches(&task.identity) {
+                if process_identity_is_running(&task.identity) {
                     unsafe {
                         libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
                     }
@@ -3026,12 +3052,7 @@ fn teardown_pane(
         .remove(&pane_key);
     if let Some(handle) = &handle {
         cleanup_worker_scope(handle);
-        unsafe {
-            libc::kill(
-                handle.worker_pid as libc::pid_t,
-                if forced { libc::SIGKILL } else { libc::SIGTERM },
-            );
-        }
+        let _ = signal_worker(handle, if forced { libc::SIGKILL } else { libc::SIGTERM });
         let _ = fs::remove_file(&handle.socket);
         let _ = fs::remove_file(&handle.attach_socket);
     }
@@ -3149,7 +3170,7 @@ fn stop_all_sessions(context: &Context) -> Result<(Vec<String>, Vec<Value>), Pro
                     .find_task_for_pane(&pane.id)
                     .map_err(storage_error)?
                 {
-                    if qwe_runtime::process_matches(&task.identity) {
+                    if process_identity_is_running(&task.identity) {
                         unsafe {
                             libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
                         }
@@ -3158,9 +3179,7 @@ fn stop_all_sessions(context: &Context) -> Result<(Vec<String>, Vec<Value>), Pro
             }
             if let Some(handle) = &handle {
                 cleanup_worker_scope(handle);
-                unsafe {
-                    libc::kill(handle.worker_pid as libc::pid_t, libc::SIGKILL);
-                }
+                let _ = signal_worker(handle, libc::SIGKILL);
                 let _ = fs::remove_file(&handle.socket);
                 let _ = fs::remove_file(&handle.attach_socket);
             }
@@ -3697,7 +3716,7 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
             .or_else(|| socket.exists().then_some(socket.clone()));
         let Some(runtime_path) = runtime_path else {
             if let Some(worker) = stored_workers.get(&pane.id) {
-                if qwe_runtime::process_matches(&worker.identity) {
+                if process_identity_is_running(&worker.identity) {
                     remember_unreachable(context, &session.id, &pane_key, worker.identity.clone());
                 } else if pane_requires_loss_update(
                     Some(&worker.state),
@@ -3785,7 +3804,7 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
             }
             Err(_) => {
                 if let Some(worker) = stored_workers.get(&pane.id) {
-                    if qwe_runtime::process_matches(&worker.identity) {
+                    if process_identity_is_running(&worker.identity) {
                         remember_unreachable(
                             context,
                             &session.id,
@@ -3845,7 +3864,7 @@ fn reconnect_worker_handle(
     context: &Context,
     previous: &WorkerHandle,
 ) -> Option<Arc<WorkerHandle>> {
-    if !qwe_runtime::process_matches(&previous.worker_identity) || !previous.socket.exists() {
+    if !worker_is_running(previous) || !previous.socket.exists() {
         return None;
     }
     let (client, status) = connect_existing_worker(
@@ -3887,7 +3906,7 @@ fn safety_scan(context: &Context) {
         .map(|(id, handle)| (id.clone(), Arc::clone(handle)))
         .collect();
     for (pane_id, handle) in handles {
-        if !qwe_runtime::process_matches(&handle.worker_identity) {
+        if !worker_is_running(&handle) {
             let _ = mark_pane_lost(context, &pane_id);
             context
                 .workers
@@ -4189,9 +4208,7 @@ fn probe_sandbox_profile(
             WORKER_MAINTENANCE_TIMEOUT,
         );
     }
-    unsafe {
-        libc::kill(handle.worker_pid as libc::pid_t, libc::SIGTERM);
-    }
+    let _ = signal_worker(&handle, libc::SIGTERM);
     cleanup_worker_scope(&handle);
     let _ = fs::remove_file(&handle.socket);
     let _ = fs::remove_file(&handle.attach_socket);
@@ -4755,9 +4772,7 @@ fn terminate_sandboxed_pane_internal(
         .remove(&pane_key);
     if let Some(handle) = &handle {
         cleanup_worker_scope(handle);
-        unsafe {
-            libc::kill(handle.worker_pid as libc::pid_t, libc::SIGKILL);
-        }
+        let _ = signal_worker(handle, libc::SIGKILL);
         remove_worker_files(context, &pane_key);
     }
     let now = now_ms();
