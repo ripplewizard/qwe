@@ -284,6 +284,8 @@ Debian 12 pass the complete Stage 10 probe. Ubuntu 24.04 currently rejects user
 ID mapping under the tested AppArmor/userns policy, and qwed must fail closed.
 `just sandbox-userns-disabled-vm` temporarily disables userns on Ubuntu 22.04
 and requires classified `userns_disabled`, restoring sysctls afterward.
+`just sandbox-systemd-properties` verifies Bubblewrap RW workspace mounts under
+the packaged user-service hardening properties.
 
 ## ADR 0012-0015 Contract Matrices
 

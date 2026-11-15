@@ -192,6 +192,10 @@ that Bubblewrap cannot mount.
 - `just sandbox-userns-disabled-vm`: temporarily sets the Ubuntu 22.04
   namespace sysctls to zero, verifies reason `userns_disabled`, and restores
   the original sysctl values through a shell trap.
+- `just sandbox-systemd-properties`: runs Bubblewrap 0.13.1 under the packaged
+  `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`, and
+  `PrivateTmp` properties. RW workspace writes pass under both `/run/user` and
+  `$HOME`.
 
 The container matrix verifies fail-closed deployment behavior only. It does not
 claim that Bubblewrap succeeds inside a restricted container.

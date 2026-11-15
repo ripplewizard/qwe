@@ -588,6 +588,7 @@ just stage10-check
 just sandbox-container-matrix
 just sandbox-vm-matrix
 just sandbox-userns-disabled-vm
+just sandbox-systemd-properties
 just stage4-capabilities
 just stage4-check
 just credential-smoke

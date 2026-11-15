@@ -274,6 +274,8 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
 - `just sandbox-vm-matrix` passes the complete Stage 10 probe on Ubuntu 22.04
   and Debian 12. Ubuntu 24.04 rejects user-ID mapping under its tested
   AppArmor/userns policy and qwed returns `sandbox_backend_unavailable`.
+- `just sandbox-systemd-properties` verifies an RW workspace under `/run/user`
+  and `$HOME` with the packaged systemd hardening properties.
 
 Remaining qualification before production:
 

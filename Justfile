@@ -1270,6 +1270,44 @@ sandbox-userns-disabled-vm host="ubuntu2204":
         --expected-reason userns_disabled
     "
 
+sandbox-systemd-properties:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'systemd sandbox property probe must run on Linux\n' >&2
+      exit 2
+    }
+    bwrap_path="${QWE_BWRAP_PATH:-$(command -v bwrap)}"
+    [ -x "$bwrap_path" ] || {
+      printf 'bwrap is unavailable: %s\n' "$bwrap_path" >&2
+      exit 2
+    }
+    for base in "/run/user/$(id -u)" "$HOME"; do
+      workspace="$(mktemp -d "$base/qwe-systemd-properties.XXXXXX")"
+      unit="qwe-systemd-properties-$$-$(basename "$workspace")"
+      systemd-run --user --unit="$unit" --wait --collect --quiet \
+        --property=NoNewPrivileges=yes \
+        --property=ProtectSystem=strict \
+        --property=ProtectHome=read-only \
+        --property=PrivateTmp=yes \
+        -- "$bwrap_path" \
+          --bind "$workspace" "$workspace" \
+          --ro-bind /usr /usr \
+          --ro-bind-try /bin /bin \
+          --ro-bind-try /lib /lib \
+          --ro-bind-try /lib64 /lib64 \
+          --proc /proc --dev /dev \
+          --unshare-user --unshare-pid --as-pid-1 --die-with-parent \
+          -- /bin/sh -c "printf ok > '$workspace/marker'"
+      [ "$(cat "$workspace/marker" 2>/dev/null)" = ok ] || {
+        printf 'sandboxed workspace write failed under %s\n' "$base" >&2
+        exit 1
+      }
+      find "$workspace" -depth -delete 2>/dev/null || true
+      printf '{"case":"SANDBOX-SYSTEMD-001","base":"%s","status":"pass","bwrap":"%s"}\n' \
+        "$base" "$bwrap_path"
+    done
+
 state-matrix:
     cargo test -p qwe-core authority::tests
     cargo test -p qwe-core tests::session_state_machine_rejects_resurrection
