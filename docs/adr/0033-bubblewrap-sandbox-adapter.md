@@ -210,21 +210,25 @@ Landlock is optional defense in depth on Linux; Bubblewrap remains the only
 primary sandbox backend and there is no Landlock-only mode. When the kernel
 reports Landlock ABI 1 or newer, the adapter binds `qwe-sandbox-init` into the
 Bubblewrap mount namespace. The init process enables `PR_SET_NO_NEW_PRIVS`,
-applies an ABI-v1 write-access ruleset, and then executes the requested
+applies an ABI-aware write-access ruleset, and then executes the requested
 program.
 
 The ruleset handles file writes, removals, and file/directory/socket/FIFO/device
 creation. It allows those mutations only beneath the workspace when
 `workspace:read_write`, private `/tmp`, and `/dev`. Read, directory listing, and
 execute are intentionally not handled, preserving runtime and loader behavior.
+ABI 2 adds cross-directory `REFER`, ABI 3 adds `TRUNCATE`, and ABI 5 adds
+device `IOCTL` handling. Landlock ABI 4's TCP access rights are not handled
+because `network:isolated_loopback` and Bubblewrap remain the network policy.
 
 This is narrower than a complete filesystem sandbox:
 
 - Bubblewrap remains authoritative for mount visibility and protected paths;
-- Landlock v1 cannot express a write deny beneath an allowed writable
-  workspace, so protected-path enforcement still depends on Bubblewrap;
-- unhandled operations such as metadata changes and truncation remain outside
-  this ruleset unless a later ABI-specific extension adds them; and
+- Landlock path-beneath rules cannot express a write deny beneath an allowed
+  writable workspace, so protected-path enforcement still depends on
+  Bubblewrap;
+- unhandled operations such as metadata changes remain outside this ruleset;
+  and
 - when Landlock is unavailable, the command still runs through mandatory
   Bubblewrap confinement but without this extra layer.
 
@@ -353,8 +357,11 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
   pipe-split and PTY commands, including denial return codes and the distinct
   seccomp content hash in capability audit metadata.
 - `just landlock-poc` verifies Landlock ABI detection, RW/RO workspace write
-  enforcement, denial outside allowed write roots, and preservation of reads
-  and private `/tmp`.
+  enforcement, denial outside allowed write roots, preservation of reads and
+  private `/tmp`, and whichever ABI-specific rights the host kernel exposes.
+- `just sandbox-landlock-vm` verifies ABI 4 directly on Ubuntu 24.04:
+  cross-directory rename is denied through `REFER`, truncation is denied
+  through `TRUNCATE`, while workspace and private `/tmp` writes remain usable.
 - Stage 10 runs qwed from an isolated binary directory without the init helper
   and verifies capability issue fails closed with `sandbox_init_unavailable`.
 - The same probe supplies a backend with a valid `--version` but an incomplete

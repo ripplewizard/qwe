@@ -158,7 +158,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 ## Bubblewrap Sandbox
 
-Rows 001-013 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
+Rows 001-014 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown.
 Ubuntu 22.04 and Debian 12 real VMs pass the complete matrix. Default Ubuntu
 24.04 returns `sandbox_backend_unavailable`; with the packaged path-scoped
@@ -183,6 +183,7 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-011 | Apply optional Landlock write confinement inside mandatory Bubblewrap confinement, record the detected ABI, and preserve reads, execution, and private `/tmp` |
 | SANDBOX-012 | Fail capability issue closed with `sandbox_init_unavailable` when Landlock is available but the init helper is missing or non-executable |
 | SANDBOX-013 | On Ubuntu 24.04, load the path-scoped Bubblewrap AppArmor profile while preserving the global userns restriction and pass the complete sandbox matrix |
+| SANDBOX-014 | On Landlock ABI 4, enforce cross-workspace `REFER` and outside-workspace `TRUNCATE` while preserving workspace, private tmp, and read behavior |
 
 ## Core Object Model
 

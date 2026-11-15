@@ -184,7 +184,9 @@ When Landlock is available, `qwe-sandbox-init` applies a write-focused ruleset
 inside Bubblewrap before executing the command. It permits mutations only under
 a read-write workspace, private `/tmp`, and `/dev`; reads, directory listing,
 execute, and loader behavior remain available. This is defense in depth, not a
-Landlock-only backend. The capability audit records the detected ABI.
+Landlock-only backend. The handled rights grow with the kernel ABI, including
+`REFER`, `TRUNCATE`, and device `IOCTL` where supported. The capability audit
+records the detected ABI.
 
 For `network:isolated_loopback`, Stage 10 verifies an UP `lo` interface, a real
 `127.0.0.1` listen/connect pair, and no default route across Bubblewrap 0.5,

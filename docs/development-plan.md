@@ -557,15 +557,15 @@ fail-closed behavior, PTY terminal semantics, and internal `TIOCSTI` denial.
 Sandboxed restart recovery and Pane-teardown qualification pass locally and on
 Ubuntu 22.04/Debian 12 real VMs. Ubuntu 24.04 fails closed under the tested
 default AppArmor/userns policy; the packaged path-scoped profile passes with the
-global restriction still enabled. The content-hashed `strict` named seccomp denylist
-passes pipe-split and PTY execution, and capability issue rejects backends
-missing a production-required option. Credential boundary tests confirm both
-network exfiltration and writable-workspace persistence. Landlock ABI 1+
-provides optional write confinement inside mandatory Bubblewrap confinement,
-with capability issue rejecting a missing init helper. Session/Pane
-startup-program sandboxing, Landlock-only fallback, additional named seccomp
-profiles, additional platform qualification, and VM/OCI backends remain later
-decisions.
+global restriction still enabled. The content-hashed `strict` named seccomp
+denylist passes pipe-split and PTY execution, and capability issue rejects
+backends missing a production-required option. Credential boundary tests confirm
+both network exfiltration and writable-workspace persistence. Landlock ABI 1+
+provides optional ABI-aware write confinement inside mandatory Bubblewrap
+confinement, with capability issue rejecting a missing init helper.
+Session/Pane startup-program sandboxing, Landlock-only fallback, additional
+named seccomp profiles, additional platform qualification, and VM/OCI backends
+remain later decisions.
 
 ## Test and Delivery Gates
 

@@ -246,7 +246,8 @@ inherited networking reaches a host listener, and a writable workspace retains
 the FD3 credential in a host-visible file.
 
 Landlock ABI 1+ is used as write-focused defense in depth inside mandatory
-Bubblewrap confinement. The init helper leaves reads, execution, and private
-`/tmp` available, records the ABI in capability audit metadata, and has no
-Landlock-only fallback path. Capability issue requires the helper to be present
-and executable whenever Landlock is available.
+Bubblewrap confinement. The handled mask follows the detected ABI, including
+`REFER`, `TRUNCATE`, and ABI 5+ device `IOCTL`. The init helper leaves reads,
+execution, and private `/tmp` available, records the ABI in capability audit
+metadata, and has no Landlock-only fallback path. Capability issue requires the
+helper to be present and executable whenever Landlock is available.

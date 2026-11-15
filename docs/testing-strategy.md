@@ -292,6 +292,9 @@ closed.
 `just sandbox-apparmor-vm` installs the packaged path-scoped Bubblewrap profile
 on Ubuntu 24.04, verifies the global restriction remains enabled, and passes
 the complete Stage 10 probe.
+`just sandbox-landlock-vm ubuntu2404` runs the init directly against Landlock
+ABI 4 and verifies `REFER` rename denial and `TRUNCATE` denial outside allowed
+write roots.
 `just sandbox-userns-disabled-vm` temporarily disables userns on Ubuntu 22.04
 and requires classified `userns_disabled`, restoring sysctls afterward.
 `just sandbox-systemd-properties` verifies Bubblewrap RW workspace mounts under
