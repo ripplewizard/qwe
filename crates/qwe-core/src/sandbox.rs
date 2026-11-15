@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 
 pub const SANDBOX_PROFILE_VERSION: u16 = 1;
 pub const SANDBOX_SECCOMP_STRICT_PROFILE: &str = "strict";
+pub const SANDBOXED_PANE_ORPHAN_TTL_MS: i64 = 15 * 60 * 1_000;
+pub const MAX_ORPHANED_SANDBOXED_PANES: usize = 16;
+pub const SANDBOXED_PANE_SHUTDOWN_GRACE_MS: u64 = 5_000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -215,5 +218,12 @@ mod tests {
             serialized["landlock"],
             serde_json::json!({"mode": "required", "min_abi": 3})
         );
+    }
+
+    #[test]
+    fn sandboxed_pane_resource_defaults_are_stable() {
+        assert_eq!(SANDBOXED_PANE_ORPHAN_TTL_MS, 900_000);
+        assert_eq!(MAX_ORPHANED_SANDBOXED_PANES, 16);
+        assert_eq!(SANDBOXED_PANE_SHUTDOWN_GRACE_MS, 5_000);
     }
 }
