@@ -361,6 +361,32 @@ pub fn stop_pane_scope(pane_id: &str) -> io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
+pub fn kill_cgroup(cgroup: &Path) -> io::Result<()> {
+    let kill_path = cgroup.join("cgroup.kill");
+    if kill_path.exists() {
+        return fs::write(kill_path, b"1");
+    }
+    let processes = fs::read_to_string(cgroup.join("cgroup.procs"))?;
+    for pid in processes
+        .split_whitespace()
+        .filter_map(|value| value.parse::<libc::pid_t>().ok())
+    {
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn kill_cgroup(_cgroup: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "cgroup killing is only available on Linux",
+    ))
+}
+
+#[cfg(target_os = "linux")]
 pub fn read_enforcement_event(path: &Path) -> io::Result<Option<String>> {
     if let Ok(events) = fs::read_to_string(path.join("memory.events")) {
         let violated = events.lines().any(|line| {

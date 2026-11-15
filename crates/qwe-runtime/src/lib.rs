@@ -10,9 +10,9 @@ mod terminal_output;
 
 pub use cgroup::{
     CgroupStats, Pressure, ResourceSupport, apply_resource_policy, current_cgroup_path,
-    detect_resource_support, pane_scope_unit, read_cgroup_stats, read_cpu_usage_microseconds,
-    read_effective_resource_policy, read_enforcement_event, read_resource_usage, stop_pane_scope,
-    stop_systemd_scope, systemd_scope_available,
+    detect_resource_support, kill_cgroup, pane_scope_unit, read_cgroup_stats,
+    read_cpu_usage_microseconds, read_effective_resource_policy, read_enforcement_event,
+    read_resource_usage, stop_pane_scope, stop_systemd_scope, systemd_scope_available,
 };
 pub use landlock::{
     LandlockError, LandlockPolicy, abi_version as landlock_abi_version, apply as apply_landlock,
