@@ -10,7 +10,11 @@ enum WorkspaceMode {
 }
 
 #[derive(Debug, Parser)]
-#[command(version, about = "Internal QWE Landlock sandbox initializer")]
+#[command(
+    name = "qwe-sandbox-init",
+    version,
+    about = "Internal QWE Landlock sandbox initializer"
+)]
 struct Args {
     #[arg(long)]
     workspace: PathBuf,

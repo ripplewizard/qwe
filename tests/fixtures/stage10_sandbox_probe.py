@@ -246,7 +246,10 @@ def fifo_capture(path):
 def run_positive_probe(
     socket_path,
     workspace,
+    sandbox_init,
 ):
+    runtime_init = workspace / "qwe-sandbox-init"
+    shutil.copy2(sandbox_init, runtime_init)
     bootstrap_path = Path(f"{socket_path}.runtime/security.bootstrap")
     management = bootstrap_path.read_text().strip()
     bootstrap = request_with_capability(
@@ -491,6 +494,55 @@ def run_positive_probe(
     assert b"setting up uid map" in decode_stream(
         landlock_nested_events, "stderr"
     )
+
+    runtime_script = (
+        "import json,os,ssl,subprocess,threading\n"
+        "seen=[]\n"
+        "t=threading.Thread(target=lambda:seen.append('thread'))\n"
+        "t.start();t.join()\n"
+        "subprocess.run(['/bin/sh','-c','exit 0'],check=True)\n"
+        "os.stat('.');os.access('.',os.R_OK)\n"
+        "r,w=os.pipe();os.write(w,b'x');os.close(w);assert os.read(r,1)==b'x';os.close(r)\n"
+        "assert ssl.OPENSSL_VERSION\n"
+        "print('STRICT_RUNTIME_PYTHON_OK')"
+    )
+    runtime_python = exec_command(
+        socket_path,
+        strict_capability["token"],
+        pane_id,
+        "/usr/bin/python3",
+        "-c",
+        runtime_script,
+    )
+    assert_done(socket_path, strict_capability["token"], runtime_python)
+    runtime_python_events = events(
+        socket_path,
+        strict_capability["token"],
+        runtime_python["command_id"],
+    )
+    assert (
+        decode_stream(runtime_python_events, "stdout")
+        == b"STRICT_RUNTIME_PYTHON_OK\n"
+    )
+
+    if landlock_expected:
+        rust_runtime = exec_command(
+            socket_path,
+            strict_capability["token"],
+            pane_id,
+            str(runtime_init),
+            "--version",
+        )
+        assert_done(socket_path, strict_capability["token"], rust_runtime)
+        rust_runtime_events = events(
+            socket_path,
+            strict_capability["token"],
+            rust_runtime["command_id"],
+        )
+        rust_output = decode_stream(
+            rust_runtime_events, "stdout"
+        ) + decode_stream(rust_runtime_events, "stderr")
+        assert b"qwe-sandbox-init" in rust_output, rust_output
 
     basic = exec_command(
         socket_path,
@@ -1365,6 +1417,7 @@ def run_positive_probe(
         "strict_seccomp": "pass",
         "nested_bubblewrap": "pass",
         "nested_bubblewrap_landlock_denied": "pass",
+        "strict_runtime_compatibility": "pass",
         "landlock_profile_modes": "pass",
         "request_cannot_enable": "pass",
         "request_cannot_downgrade": "pass",
@@ -1883,6 +1936,7 @@ def main():
         results = run_positive_probe(
             args.socket,
             workspace,
+            Path(args.qwed).with_name("qwe-sandbox-init"),
         )
         results, pane_id, capability = results
         qwed, recovery_results = run_recovery_probe(

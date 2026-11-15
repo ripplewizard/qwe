@@ -1400,6 +1400,31 @@ sandbox-landlock-vm host="ubuntu2404":
     ssh -F "$ssh_config" "$target" \
       "python3 $remote_dir/landlock_abi_probe.py --init $remote_dir/qwe-sandbox-init"
 
+sandbox-landlock-matrix hosts="ubuntu2204 ubuntu2404 debian12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="$lab/ssh_config"
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    cd "$root"
+    cargo build --release -p qwe-worker --bin qwe-sandbox-init
+    for host in {{ hosts }}; do
+      printf '==> %s\n' "$host"
+      target="qwe-$host"
+      remote_dir="/home/qwe/bianca/qwe-landlock-matrix"
+      ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+      scp -q -F "$ssh_config" \
+        target/release/qwe-sandbox-init \
+        tests/fixtures/landlock_abi_probe.py \
+        "$target:$remote_dir/"
+      ssh -F "$ssh_config" "$target" \
+        "python3 $remote_dir/landlock_abi_probe.py --init $remote_dir/qwe-sandbox-init"
+    done
+
 sandbox-userns-disabled-vm host="ubuntu2204":
     just --justfile "{{ justfile() }}" sandbox-userns-disabled-vm-matrix "{{ host }}"
 
