@@ -93,13 +93,16 @@ struct SandboxLaunch {
     invocation: crate::sandbox::BubblewrapInvocation,
     mount_manifest: PathBuf,
     seccomp_file: PathBuf,
-    control_path: PathBuf,
-    control_receiver: mpsc::Receiver<Result<UnixStream, String>>,
+    status_path: PathBuf,
+    status_receiver: agent::SandboxStatusReceiver,
+    control_path: Option<PathBuf>,
+    control_receiver: Option<mpsc::Receiver<Result<UnixStream, String>>>,
 }
 
 struct WorkerSession {
     pane_id: String,
     pid: u32,
+    sandbox_child_pid: Option<u32>,
     identity: ProcessIdentity,
     worker_identity: ProcessIdentity,
     resources: resources::ResourceController,
@@ -551,10 +554,11 @@ fn prepare_sandbox_launch(
     program: &str,
     arguments: &[String],
     profile: &SandboxProfile,
+    hard_scope_available: bool,
 ) -> Result<SandboxLaunch, Box<dyn std::error::Error>> {
-    if profile.process_namespace != SandboxProcessMode::Isolated {
+    if profile.process_namespace == SandboxProcessMode::Shared && !hard_scope_available {
         return Err(
-            "sandboxed Pane v1 requires an isolated process namespace until non-PID-1 tree teardown is implemented"
+            "process_namespace:shared requires a hard Pane cgroup scope for descendant teardown"
                 .into(),
         );
     }
@@ -611,30 +615,7 @@ fn prepare_sandbox_launch(
             return Err(failure.into());
         }
     };
-    let invocation = match crate::sandbox::bubblewrap_invocation(
-        profile,
-        &program,
-        arguments,
-        None,
-        crate::sandbox::BubblewrapOptions {
-            status_fd: None,
-            seccomp_fd: Some(11),
-            credential_present: false,
-            term: Some("xterm-256color"),
-            sandbox_init: sandbox_init.as_deref(),
-            pane_init: true,
-            control_fd: Some(10),
-            pane_fd_pins: Some(&pins),
-        },
-    ) {
-        Ok(invocation) => invocation,
-        Err(failure) => {
-            let _ = fs::remove_file(&mount_manifest);
-            let _ = fs::remove_file(&seccomp_file);
-            return Err(failure.into());
-        }
-    };
-    let (control_path, control_receiver) = match start_pane_control_listener(runtime_dir) {
+    let (status_path, status_receiver) = match agent::start_sandbox_status_listener(runtime_dir) {
         Ok(listener) => listener,
         Err(failure) => {
             let _ = fs::remove_file(&mount_manifest);
@@ -642,19 +623,65 @@ fn prepare_sandbox_launch(
             return Err(failure.into());
         }
     };
+    let control_fd = (profile.process_namespace == SandboxProcessMode::Isolated).then_some(10_i32);
+    let invocation = match crate::sandbox::bubblewrap_invocation(
+        profile,
+        &program,
+        arguments,
+        None,
+        crate::sandbox::BubblewrapOptions {
+            status_fd: Some(12),
+            seccomp_fd: Some(11),
+            credential_present: false,
+            term: Some("xterm-256color"),
+            sandbox_init: sandbox_init.as_deref(),
+            pane_init: true,
+            control_fd,
+            pane_fd_pins: Some(&pins),
+        },
+    ) {
+        Ok(invocation) => invocation,
+        Err(failure) => {
+            let _ = fs::remove_file(&mount_manifest);
+            let _ = fs::remove_file(&seccomp_file);
+            let _ = fs::remove_file(&status_path);
+            return Err(failure.into());
+        }
+    };
+    let (control_path, control_receiver) = if control_fd.is_some() {
+        let (path, receiver) = match start_pane_control_listener(runtime_dir) {
+            Ok(listener) => listener,
+            Err(failure) => {
+                let _ = fs::remove_file(&mount_manifest);
+                let _ = fs::remove_file(&seccomp_file);
+                let _ = fs::remove_file(&status_path);
+                return Err(failure.into());
+            }
+        };
+        (Some(path), Some(receiver))
+    } else {
+        (None, None)
+    };
     Ok(SandboxLaunch {
         invocation,
         mount_manifest,
         seccomp_file,
+        status_path,
+        status_receiver,
         control_path,
         control_receiver,
     })
 }
 
 fn add_sandbox_launcher_args(command: &mut CommandBuilder, sandbox: &SandboxLaunch) {
-    command.arg("--control-socket");
-    command.arg(&sandbox.control_path);
-    command.args(["--control-fd", "10"]);
+    if let Some(path) = &sandbox.control_path {
+        command.arg("--control-socket");
+        command.arg(path);
+        command.args(["--control-fd", "10"]);
+    }
+    command.arg("--sandbox-status-socket");
+    command.arg(&sandbox.status_path);
+    command.args(["--sandbox-status-fd", "12"]);
     command.arg("--sandbox-seccomp-file");
     command.arg(&sandbox.seccomp_file);
     command.args(["--sandbox-seccomp-fd", "11"]);
@@ -711,7 +738,15 @@ impl WorkerSession {
         };
         let sandbox = sandbox_profile
             .as_ref()
-            .map(|profile| prepare_sandbox_launch(runtime_dir, program, arguments, profile))
+            .map(|profile| {
+                prepare_sandbox_launch(
+                    runtime_dir,
+                    program,
+                    arguments,
+                    profile,
+                    use_systemd_scope || use_existing_scope,
+                )
+            })
             .transpose()?;
         let executable = std::env::current_exe()?.with_file_name("qwe-session-exec");
         let mut command = if use_systemd_scope {
@@ -783,27 +818,31 @@ impl WorkerSession {
         let child = pair.slave.spawn_command(command);
         let mut child = child?;
         let pane_control = if let Some(sandbox) = &sandbox {
-            match sandbox
-                .control_receiver
-                .recv_timeout(Duration::from_secs(3))
-            {
-                Ok(Ok(stream)) => Some(stream),
-                Ok(Err(failure)) => {
-                    let _ = child.kill();
-                    let _ = fs::remove_file(&sandbox.control_path);
-                    let _ = fs::remove_file(&sandbox.mount_manifest);
-                    let _ = fs::remove_file(&sandbox.seccomp_file);
-                    return Err(format!("Pane control broker failed: {failure}").into());
-                }
-                Err(failure) => {
-                    let _ = child.kill();
-                    let _ = fs::remove_file(&sandbox.control_path);
-                    let _ = fs::remove_file(&sandbox.mount_manifest);
-                    let _ = fs::remove_file(&sandbox.seccomp_file);
-                    return Err(
-                        format!("Pane control broker handshake timed out: {failure}").into(),
-                    );
-                }
+            match &sandbox.control_receiver {
+                None => None,
+                Some(receiver) => match receiver.recv_timeout(Duration::from_secs(3)) {
+                    Ok(Ok(stream)) => Some(stream),
+                    Ok(Err(failure)) => {
+                        let _ = child.kill();
+                        if let Some(path) = &sandbox.control_path {
+                            let _ = fs::remove_file(path);
+                        }
+                        let _ = fs::remove_file(&sandbox.mount_manifest);
+                        let _ = fs::remove_file(&sandbox.seccomp_file);
+                        return Err(format!("Pane control broker failed: {failure}").into());
+                    }
+                    Err(failure) => {
+                        let _ = child.kill();
+                        if let Some(path) = &sandbox.control_path {
+                            let _ = fs::remove_file(path);
+                        }
+                        let _ = fs::remove_file(&sandbox.mount_manifest);
+                        let _ = fs::remove_file(&sandbox.seccomp_file);
+                        return Err(
+                            format!("Pane control broker handshake timed out: {failure}").into(),
+                        );
+                    }
+                },
             }
         } else {
             None
@@ -866,6 +905,26 @@ impl WorkerSession {
                 return Err(format!("Session topology acknowledgement failed: {failure}").into());
             }
         }
+        let sandbox_child_pid = if let Some(sandbox) = &sandbox {
+            let status_stream = match sandbox.status_receiver.recv_timeout(Duration::from_secs(3)) {
+                Ok(Some(stream)) => stream,
+                Ok(None) | Err(_) => {
+                    let _ = child.kill();
+                    resources.cleanup_cgroup();
+                    return Err("Bubblewrap Pane status channel did not connect".into());
+                }
+            };
+            match agent::await_bubblewrap_startup_stream(status_stream) {
+                Ok(pid) => Some(pid),
+                Err(failure) => {
+                    let _ = child.kill();
+                    resources.cleanup_cgroup();
+                    return Err(format!("Bubblewrap Pane startup failed: {failure}").into());
+                }
+            }
+        } else {
+            None
+        };
         let worker_identity = process_identity(std::process::id())?;
         let agents = agent::AgentManager::new(
             session_id,
@@ -877,6 +936,7 @@ impl WorkerSession {
         let session = Arc::new(Self {
             pane_id: pane_id.to_string(),
             pid,
+            sandbox_child_pid,
             identity,
             worker_identity,
             resources,
@@ -892,7 +952,9 @@ impl WorkerSession {
             pane_control: Mutex::new(pane_control),
             agents,
         });
-        session.resources.start_monitor(pid, pgid);
+        session
+            .resources
+            .start_monitor(sandbox_child_pid.unwrap_or(pid), pgid);
         let reader_session = Arc::clone(&session);
         thread::spawn(move || {
             let mut buffer = [0_u8; 8192];
@@ -995,7 +1057,15 @@ impl WorkerSession {
                 "enforced": true,
                 "backend": "bubblewrap",
                 "profile": profile,
-                "control_protocol_version": 1,
+                "child_pid": self.sandbox_child_pid,
+                "control_channel": if profile.process_namespace == SandboxProcessMode::Isolated {
+                    "fd"
+                } else {
+                    "cgroup_only"
+                },
+                "control_protocol_version": (profile.process_namespace
+                    == SandboxProcessMode::Isolated)
+                    .then_some(1),
                 "output_policy": "restricted",
                 "input_policy": "audited_session_input"
             }),

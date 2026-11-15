@@ -92,7 +92,7 @@ fn signal_shim_and_expect(
     terminal
         .write_all(
             format!(
-                "/usr/bin/python3 -c 'import signal,time; signal.signal(signal.{python_signal}, lambda *_: (print(\"{forwarded_marker}\", flush=True), exit(0))); print(\"{ready_marker}\", flush=True); time.sleep(30)'\n"
+                "/usr/bin/python3 -c 'import os,signal,time; signal.signal(signal.{python_signal}, lambda *_: (os.write(1,b\"{forwarded_marker}\\n\"), os._exit(0))); print(\"{ready_marker}\", flush=True); time.sleep(30)'\n"
             )
             .as_bytes(),
         )

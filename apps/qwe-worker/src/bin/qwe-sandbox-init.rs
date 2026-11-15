@@ -228,16 +228,12 @@ fn run_pane_init(args: &Args) -> Result<i32, Box<dyn std::error::Error>> {
             }
         }
         if shell_status.is_some() && cleanup_deadline.is_none() {
-            unsafe {
-                libc::kill(-1, libc::SIGTERM);
-            }
+            signal_pane_tree(shell_pid, libc::SIGTERM);
             cleanup_deadline =
                 Some(Instant::now() + Duration::from_millis(SANDBOXED_PANE_SHUTDOWN_GRACE_MS));
         }
         if cleanup_deadline.is_some_and(|deadline| Instant::now() >= deadline) && !killed {
-            unsafe {
-                libc::kill(-1, libc::SIGKILL);
-            }
+            signal_pane_tree(shell_pid, libc::SIGKILL);
             killed = true;
             kill_deadline = Some(Instant::now() + Duration::from_secs(1));
         }
@@ -291,6 +287,18 @@ fn run_pane_init(args: &Args) -> Result<i32, Box<dyn std::error::Error>> {
     Ok(status
         .code()
         .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)))
+}
+
+#[cfg(target_os = "linux")]
+fn signal_pane_tree(shell_pid: libc::pid_t, signal: libc::c_int) {
+    let target = if unsafe { libc::getpid() } == 1 {
+        -1
+    } else {
+        -shell_pid
+    };
+    unsafe {
+        libc::kill(target, signal);
+    }
 }
 
 #[cfg(target_os = "linux")]

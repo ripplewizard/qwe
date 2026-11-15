@@ -1,8 +1,7 @@
 use qwe_core::{
     AgentCommandRecord, CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
     MAX_CAPABILITY_TTL_MS, PaneId, PrincipalEpoch, PrincipalId, PrincipalRecord, ReclaimTokenHash,
-    SANDBOX_PROFILE_VERSION, SandboxAuditRecord, SandboxLandlockMode, SandboxProcessMode,
-    SandboxProfile,
+    SANDBOX_PROFILE_VERSION, SandboxAuditRecord, SandboxLandlockMode, SandboxProfile,
 };
 use qwe_protocol::{AuthContext, ProtocolErrorBody};
 use qwe_runtime::resolve_beneath;
@@ -215,14 +214,6 @@ pub fn validate_sandbox_grant(
         return Err(error(
             "sandbox_profile_unsupported",
             "sandbox profile v1 requires a private /tmp",
-        ));
-    }
-    if operation == CapabilityOperation::SandboxedPane
-        && profile.process_namespace != SandboxProcessMode::Isolated
-    {
-        return Err(error(
-            "sandbox_profile_unsupported",
-            "sandboxed Pane v1 requires an isolated process namespace",
         ));
     }
     Ok(())
@@ -568,7 +559,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qwe_core::{SandboxLandlockMode, SandboxSeccompMode};
+    use qwe_core::{SandboxLandlockMode, SandboxProcessMode, SandboxSeccompMode};
     use std::path::PathBuf;
 
     fn profile() -> SandboxProfile {
@@ -585,6 +576,13 @@ mod tests {
         validate_sandbox_grant(CapabilityOperation::SandboxedPane, Some(&profile())).unwrap();
         let failure = validate_sandbox_grant(CapabilityOperation::SandboxedPane, None).unwrap_err();
         assert_eq!(failure.code, "invalid_request");
+    }
+
+    #[test]
+    fn sandboxed_pane_accepts_isolated_and_shared_process_profiles() {
+        let mut shared = profile();
+        shared.process_namespace = SandboxProcessMode::Shared;
+        validate_sandbox_grant(CapabilityOperation::SandboxedPane, Some(&shared)).unwrap();
     }
 
     #[test]

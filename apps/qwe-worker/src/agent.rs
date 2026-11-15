@@ -122,7 +122,7 @@ struct SpawnedAgent {
 }
 
 type PtyTopologyReceiver = Receiver<Option<(u32, UnixStream)>>;
-type SandboxStatusReceiver = Receiver<Option<UnixStream>>;
+pub(crate) type SandboxStatusReceiver = Receiver<Option<UnixStream>>;
 
 struct PtySpawnPlan {
     builder: CommandBuilder,
@@ -1728,7 +1728,7 @@ fn await_bubblewrap_startup(status_fd: RawFd) -> std::io::Result<u32> {
 }
 
 #[cfg(target_os = "linux")]
-fn await_bubblewrap_startup_stream(stream: UnixStream) -> std::io::Result<u32> {
+pub(crate) fn await_bubblewrap_startup_stream(stream: UnixStream) -> std::io::Result<u32> {
     await_bubblewrap_startup_reader(stream)
 }
 
@@ -2109,7 +2109,7 @@ fn start_pty_topology_listener(
     Ok((path, receiver))
 }
 
-fn start_sandbox_status_listener(
+pub(crate) fn start_sandbox_status_listener(
     runtime_dir: &Path,
 ) -> std::io::Result<(PathBuf, SandboxStatusReceiver)> {
     let path = runtime_socket_path(runtime_dir, "sandbox-status")?;

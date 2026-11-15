@@ -454,6 +454,10 @@ impl ResourceController {
             }
             thread::sleep(SAMPLE_INTERVAL);
         }
+        #[cfg(target_os = "linux")]
+        if let Some(cgroup) = &self.cgroup_dir {
+            let _ = qwe_runtime::kill_cgroup(cgroup);
+        }
         for _ in 0..50 {
             if self.final_sample_taken.load(Ordering::SeqCst) {
                 break;

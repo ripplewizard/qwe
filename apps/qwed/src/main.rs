@@ -13,8 +13,8 @@ use qwe_core::{
     DEFAULT_FREEZE_GRACE_MS, DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_FREEZE_GRACE_MS,
     MAX_LEASE_TTL_MS, PaneId, PaneKind, PaneRecord, PaneSpec, PaneWorkerRecord, PrincipalId,
     ProcessIdentity, ReclaimTokenHash, ReconciliationDisposition, ResourcePolicy, ResourceProfile,
-    ResourceScopeId, RevocationSeverity, SandboxAuditRecord, SandboxProfile, SandboxRiskRecord,
-    SessionRecord, TaskId, TaskRecord, TaskState, WorkerHealth, tile_pane_specs,
+    ResourceScopeId, RevocationSeverity, SandboxAuditRecord, SandboxProcessMode, SandboxProfile,
+    SandboxRiskRecord, SessionRecord, TaskId, TaskRecord, TaskState, WorkerHealth, tile_pane_specs,
 };
 use qwe_protocol::{
     ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope,
@@ -1358,6 +1358,21 @@ fn record_pane_input_audit(
         .map_err(storage_error)
 }
 
+fn validate_sandbox_runtime_support(
+    context: &Context,
+    profile: &SandboxProfile,
+) -> Result<(), ProtocolErrorBody> {
+    if profile.process_namespace == SandboxProcessMode::Shared
+        && !context.resource_support.hard_scope_available()
+    {
+        return Err(error(
+            "unsupported_capability",
+            "process_namespace:shared requires a hard Pane cgroup scope",
+        ));
+    }
+    Ok(())
+}
+
 fn create_session(
     context: &Context,
     payload: Value,
@@ -1430,6 +1445,12 @@ fn create_session(
         }
         None
     };
+    if let Some(profile) = sandbox_grant
+        .as_ref()
+        .and_then(|grant| grant.capability.sandbox_profile.as_ref())
+    {
+        validate_sandbox_runtime_support(context, profile)?;
+    }
     let program = payload
         .get("program")
         .and_then(Value::as_str)
@@ -1651,6 +1672,12 @@ fn create_pane(
         }
         None
     };
+    if let Some(profile) = sandbox_grant
+        .as_ref()
+        .and_then(|grant| grant.capability.sandbox_profile.as_ref())
+    {
+        validate_sandbox_runtime_support(context, profile)?;
+    }
     let after_pane_id = payload
         .get("after_pane_id")
         .and_then(Value::as_str)
@@ -4246,6 +4273,11 @@ fn security_capability_issue(
         .transpose()
         .map_err(|failure| error("invalid_request", failure.to_string()))?;
     security::validate_sandbox_grant(operation, sandbox_profile.as_ref())?;
+    if operation == CapabilityOperation::SandboxedPane
+        && let Some(profile) = sandbox_profile.as_ref()
+    {
+        validate_sandbox_runtime_support(context, profile)?;
+    }
     let diagnostics_trusted = {
         let store = context
             .store

@@ -211,6 +211,20 @@ def profile(
     return value
 
 
+def process_with_arg_exists(marker):
+    target = marker.encode()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            cmdline = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if target in cmdline.split(b"\0"):
+            return True
+    return False
+
+
 def tcp_capture():
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -369,6 +383,7 @@ def run_positive_probe(
     sandboxed_pane_capability = None
     sandboxed_input_secret = None
     interactive_input_secret = None
+    sandboxed_shared_result = "unavailable"
     if audit["fd_bind"]:
         assert sandboxed_pane.get("token"), sandboxed_pane
         assert sandboxed_pane["sandbox_audit"]["fd_bind"] is True, sandboxed_pane
@@ -683,6 +698,72 @@ def run_positive_probe(
             resized_status["terminal"]["rows"],
             resized_status["terminal"]["columns"],
         ) == (40, 120), resized_status
+
+        shared_session_id = "stage10-sandboxed-pane-shared"
+        shared_profile = profile(workspace)
+        shared_profile["workspace_mode"] = "read_write"
+        shared_profile["process_namespace"] = "shared"
+        shared_issue = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": principal_id,
+                "operation": "sandboxed_pane",
+                "scope": {"kind": "session", "session_id": shared_session_id},
+                "sandbox_profile": shared_profile,
+                "ttl_ms": 60000,
+            },
+            management,
+        )
+        if shared_issue.get("code") is None:
+            marker = f"qwe-shared-detached-{os.getpid()}-{time.time_ns()}"
+            marker_file = workspace / "shared-detached-started"
+            marker_file.unlink(missing_ok=True)
+            shared_session = request_with_capability(
+                socket_path,
+                "SESSION_CREATE",
+                {
+                    "session_id": shared_session_id,
+                    "program": "/bin/bash",
+                    "args": [
+                        "-c",
+                        f"setsid /bin/bash -c 'touch {marker_file}; "
+                        "trap \"\" TERM HUP; "
+                        "while :; do /bin/sleep 1; done' "
+                        f"{marker} & /bin/sleep 1; exit 0",
+                    ],
+                    "owner": OWNER,
+                    "sandboxed": True,
+                },
+                shared_issue["token"],
+            )
+            assert shared_session["sandbox"]["profile"]["process_namespace"] == "shared"
+            wait_for(
+                marker_file.exists,
+                "shared-namespace detached process did not start",
+                3,
+            )
+            marker_file.unlink(missing_ok=True)
+            wait_for(
+                lambda: not process_with_arg_exists(marker),
+                "shared-namespace detached process survived shell exit and cgroup teardown",
+                8,
+            )
+            shared_generation = claim(socket_path, shared_session_id, OWNER)
+            shared_closed = request(
+                socket_path,
+                "SESSION_KILL",
+                {
+                    "session_id": shared_session_id,
+                    "owner": OWNER,
+                    "generation": shared_generation,
+                },
+            )
+            assert shared_closed.get("state") == "closed", shared_closed
+            sandboxed_shared_result = "pass"
+        else:
+            assert shared_issue.get("code") == "unsupported_capability", shared_issue
+            sandboxed_shared_result = "unavailable"
 
     landlock_off_profile = profile(workspace, landlock={"mode": "off"})
     landlock_off = issue_capability(
@@ -1827,6 +1908,7 @@ def run_positive_probe(
         "sandboxed_pane_input_audit": "pass",
         "sandboxed_pane_attach_input_audit": "pass",
         "sandboxed_pane_resize": "pass",
+        "sandboxed_pane_shared_namespace": sandboxed_shared_result,
         "pane_input_trust_floor": "pass",
         "fd_bind_probe": "pass",
         "strict_seccomp": "pass",
