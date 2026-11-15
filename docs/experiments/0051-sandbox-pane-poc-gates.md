@@ -162,8 +162,10 @@ through qwed. The observed path is:
   filtered read-only observation;
 - restricted output filtering before journal/VT/Attach retention, with OSC
   title/clipboard and terminal-query sequences removed; and
-- worker-level rejection of sandboxed Attach input until bounded input audit
-  lands.
+- bounded metadata-only audit before sandboxed `SESSION_INPUT`, with content
+  absent from SQLite; and
+- worker-level rejection of direct Attach input, which has no audited qwed
+  write path.
 
 ## P5: Landlock ABI Distribution
 

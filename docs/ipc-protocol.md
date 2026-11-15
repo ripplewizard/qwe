@@ -132,9 +132,11 @@ capability cannot be downgraded into ordinary Pane creation. Responses and
 persisted Pane status expose `sandbox.enforced`, `profile`, `audit`, and
 `capability_id`.
 Sandboxed Pane output is filtered before journal retention and Attach delivery.
-Read-only observation is available, but PTY `SESSION_INPUT` still fails with
-`sandbox_input_audit_unavailable`; the worker also rejects direct Attach input
-with `sandbox_input_disabled` until bounded input audit is implemented.
+Read-only observation is available. `SESSION_INPUT` requires a matching
+`pane_input` capability and inserts a bounded metadata-only audit row before
+forwarding. The response includes `input_audit`; content and hashes are never
+stored. Direct Attach input remains fail closed with `sandbox_input_disabled`
+because it has no qwed audit-before-write path.
 
 `CONTROL_STATUS` computes reconciliation from current durable and worker state.
 It returns `sessions`, `panes`, `tasks`, `workers`, and a `reconciliation`

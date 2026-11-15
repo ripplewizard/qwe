@@ -60,6 +60,8 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 - **D4 adopted:** input audit defaults to length, time, target, Principal,
   effective Landlock level, and profile version. Content requires explicit
   opt-in. No content or hash is recorded when terminal ECHO is disabled.
+  Sandboxed `SESSION_INPUT` now writes this metadata before forwarding and
+  retains the newest 4096 rows; direct Attach input remains disabled.
 - **D5 adopted:** add profile field
   `landlock: off | best_effort | required{min_abi}`. `AGENT_EXEC` retains an
   optional default; sandboxed Pane defaults to `required{min_abi}` where
@@ -181,6 +183,8 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 - **D30 adopted:** resize and output/input events share a deterministic ordered
   stream for replay and debugging.
 - **D31 adopted:** without `pane_input`, PTY writes are rejected.
+  Sandboxed `SESSION_INPUT` now enforces the capability at qwed; direct worker
+  Attach writes remain disabled so they cannot bypass audit.
 
 ### F. Credentials and audit
 

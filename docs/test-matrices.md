@@ -160,7 +160,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 Rows 001-034 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown. Rows
-035-042 pass local real-PTY/PID-namespace shim, control-channel, standalone
+035-043 pass local real-PTY/PID-namespace shim, control-channel, standalone
 probe, long-lived sandboxed worker, and qwed creation/lifecycle contracts; the
 new runtime rows are not yet part of the remote distribution matrix. Ubuntu
 22.04 and Debian 12 real VMs pass the complete `AGENT_EXEC` matrix. Default
@@ -215,7 +215,8 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-039 | Require a matching `sandboxed_pane` capability for `SESSION_CREATE` / `PANE_CREATE`, reject client profiles and long-lived credentials, persist profile/audit metadata atomically, and recover it through Pane status |
 | SANDBOX-040 | Apply the restricted terminal-output state machine before journal/VT/attachment retention; preserve fragmented display sequences and drop OSC title/clipboard, terminal queries, unknown CSI, and malformed escapes |
 | SANDBOX-041 | Grade `pane_input` capability issuance by persisted target metadata: ordinary management delegation for a sandboxed Pane, high-trust issuer for an unsandboxed Pane |
-| SANDBOX-042 | Permit filtered read-only sandboxed Pane observation while rejecting PTY input with `sandbox_input_audit_unavailable` and worker-level `sandbox_input_disabled` until bounded input audit exists |
+| SANDBOX-042 | Require a matching `pane_input` capability for sandboxed `SESSION_INPUT`, persist bounded metadata-only input audit before forwarding, return audit metadata, and never store content or hashes |
+| SANDBOX-043 | Keep direct sandboxed Pane Attach input fail closed with `sandbox_input_disabled`, preventing bypass of qwed's pane-input capability and audit path |
 
 ## Core Object Model
 
@@ -354,7 +355,7 @@ measurements pass.
 | MAC-001 | Create, use, expose, and remove the temporary local signing identity | Dedicated Keychain signs all four executables; package records `local-self-signed` and `public_trust: false`; public gate rejects it; cleanup removes Keychain/trust and restores the user search list |
 | PACK-001 | Build a native release package | All four executables report the manifest version; payload paths are portable; a safely extractable archive, SHA-256 checksums, and `qwe-release/v1` metadata are present |
 | PACK-002 | Verify and install a package into an isolated prefix | Checksums pass, executable modes are correct, native service assets are rendered without a checkout path, and no service is started |
-| PACK-003 | Reinstall while preserving state, restart qwed, and migrate v9 state | SQLite is preserved during install; the same worker/task are adopted; startup migrates schema v9 through the current schema v18 |
+| PACK-003 | Reinstall while preserving state, restart qwed, and migrate v9 state | SQLite is preserved during install; the same worker/task are adopted; startup migrates schema v9 through the current schema v19 |
 | PACK-004 | Sign, notarize, and assess the public macOS artifact | Developer ID signatures are verified, notarization is accepted, and Gatekeeper assessment passes |
 | PACK-005 | Exercise the installed Linux service through systemd | The installed unit starts qwed; binary reinstall preserves state; SIGKILL restarts the service; the same worker/task are adopted; stop cleans processes and persists closed/stopped state |
 | PERF-001 | Run release-mode Attach and soak | Eight independent Sessions complete real Attach/snapshot/detach cycles within configured latency and aggregate-RSS limits throughout the soak |

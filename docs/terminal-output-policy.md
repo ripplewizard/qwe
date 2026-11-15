@@ -2,8 +2,9 @@
 
 Date: 2026-11-15
 Status: Restricted output filtering is implemented before journal, VT, and
-Attach retention. Sandboxed Pane PTY input remains fail closed until bounded
-input audit is implemented.
+Attach retention. Sandboxed `SESSION_INPUT` uses a capability-authorized,
+bounded metadata-only audit before forwarding; direct Attach input remains fail
+closed.
 
 ## Scope
 
@@ -85,6 +86,10 @@ replay cannot reintroduce a dropped sequence.
 - When terminal ECHO is disabled, raw input and any hash are omitted even when
   content audit is enabled.
 - Input and resize events share the same ordered stream as output.
+
+The v19 implementation retains the newest 4096 metadata rows globally. Audit
+insertion happens before PTY forwarding and failure rejects the input. Content
+opt-in remains intentionally unimplemented; no content or hash is stored.
 
 ## Configuration Rules
 

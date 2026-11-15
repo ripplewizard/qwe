@@ -1,6 +1,6 @@
 # Storage Migration: Pane Layout, Agent Security, and Sandbox Profiles
 
-Status: Implemented through sandboxed Pane creation; schema v18 is current
+Status: Implemented through sandboxed Pane input audit; schema v19 is current
 Date: 2026-11-16
 Authority: [ADR 0021](adr/0021-shared-prerequisites.md) and the v11 schema in
 `crates/qwe-storage`; Pane layout metadata is governed by
@@ -277,6 +277,13 @@ Schema v17 adds:
 Existing rows migrate with null audit metadata. The migration is transactional
 and sets `PRAGMA user_version = 17`. A v16 binary must refuse a v17 database.
 
+- Bounds are clamped to the current usable viewport at render time.
+- Migration leaves every existing floating Pane with null bounds, preserving
+  the centered popup default.
+
+`PANE_FLOATING_UPDATE` persists a complete rectangle under LayoutMutation
+authority and preserves Pane, worker, Task, and ResourceScope identity.
+
 ## 15. v17 to v18: Pane Sandbox Metadata
 
 Schema v18 adds `pane_sandboxes`, keyed by Pane ID:
@@ -294,9 +301,16 @@ Pane, never an unknown downgrade. Deleting a Pane cascades its sandbox metadata.
 The migration is transactional and sets `PRAGMA user_version = 18`. A v17
 binary must refuse a v18 database.
 
-- Bounds are clamped to the current usable viewport at render time.
-- Migration leaves every existing floating Pane with null bounds, preserving
-  the centered popup default.
+## 16. v18 to v19: Pane Input Audit
 
-`PANE_FLOATING_UPDATE` persists a complete rectangle under LayoutMutation
-authority and preserves Pane, worker, Task, and ResourceScope identity.
+Schema v19 adds `pane_input_audits` with:
+
+- Pane, Principal, and `pane_input` capability identity;
+- timestamp, input byte length, configured maximum, profile version, and
+  effective Landlock ABI;
+- `content_recorded = 0`, because content-bearing audit is not implemented.
+
+Rows are inserted before sandboxed input is forwarded. The table retains the
+newest 4096 rows globally. A failed insert rejects the input. The migration is
+transactional and sets `PRAGMA user_version = 19`; a v18 binary must refuse a
+v19 database.
