@@ -175,6 +175,53 @@ through qwed. The observed path is:
   only-tighten refinement; and
 - durable orphan TTL enforcement, orphan-count admission control, and
   termination-level Principal revocation of affected sandboxed Panes.
+- restricted output filtering for Agent command stdout, stderr, and PTY
+  streams before cursor advancement and event retention, after credential
+  redaction; and
+- a production Pane control decoder shared by the shim and a `cargo-fuzz`
+  target, with deterministic exhaustive input tests for both the control
+  decoder and restricted terminal filter.
+
+The shared fuzz harnesses are run with:
+
+```sh
+just fuzz-sandbox-control 10000
+just fuzz-terminal-output 10000
+```
+
+On 2026-11-16, both targets completed 10,000 nightly runs without a crash or
+counterexample. The deterministic exhaustive tests remain in the normal
+workspace test suite so parser/filter regressions do not depend on a local
+fuzz-toolchain installation.
+
+Keep fuzz harnesses under `fuzz/fuzz_targets/` and import production parsers
+and state machines from `qwe-runtime`; do not duplicate their state in a
+harness.
+
+## Current x86_64 Distribution Requalification
+
+On 2026-11-16, the current sandboxed-Pane and `pane_exec` implementation was
+run against the configured real VMs:
+
+| Target | Result |
+|---|---|
+| Ubuntu 22.04 | complete Stage 10 pass |
+| Debian 12 | complete Stage 10 pass |
+| Ubuntu 24.04 default | fail closed with `sandbox_backend_unavailable`; ordinary Pane pass |
+| Ubuntu 24.04 packaged AppArmor | complete Stage 10 pass |
+| Fedora 44, SELinux `Enforcing` | complete Stage 10 pass |
+
+The same current revision also reran the pinned Bubblewrap 0.5.0 matrix.
+Ubuntu 22.04, Debian 12, and Ubuntu 24.04 with the packaged AppArmor profile
+pass every applicable `AGENT_EXEC` check. Bubblewrap 0.5.0 has no FD bind, so
+the sandboxed-Pane paths correctly report `sandbox_backend_unavailable` /
+`fd_bind_unavailable` and remain `unavailable` rather than falling back to an
+unsandboxed Pane. This requalifies
+`SANDBOX-017` against the current probe.
+
+The current `pane_exec` fixture injects OSC title and OSC 52 payloads and
+requires the Agent stdout event to equal only `PANE_EXEC_INHERITED`. This
+covers `SANDBOX-052` on the local and supported remote paths.
 
 ## P5: Landlock ABI Distribution
 

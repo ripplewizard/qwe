@@ -1,10 +1,11 @@
 # Terminal Output Policy
 
 Date: 2026-11-15
-Status: Restricted output filtering is implemented before journal, VT, and
-Attach retention. Sandboxed `SESSION_INPUT` uses a capability-authorized,
-bounded metadata-only audit before forwarding. Interactive Attach Input uses
-the same model and revalidates `pane_input` on every frame.
+Status: Restricted output filtering is implemented for sandboxed Panes and
+Agent command stdout, stderr, and PTY streams before journal, VT, and Attach
+retention. Sandboxed `SESSION_INPUT` uses a capability-authorized, bounded
+metadata-only audit before forwarding. Interactive Attach Input uses the same
+model and revalidates `pane_input` on every frame.
 
 ## Scope
 
@@ -69,7 +70,8 @@ a query, its response types and byte length must be explicitly bounded.
 
 Filtering happens before:
 
-- command event retention;
+- sandboxed-Pane event retention;
+- Agent command cursor advancement and event retention;
 - Attach output offsets;
 - terminal-state replay;
 - logging; and
@@ -104,6 +106,11 @@ only accepts input when qwed marks the internal attach as authorized.
 ## Verification
 
 - unit vectors for every allowed and denied sequence, including split chunks;
+- deterministic arbitrary-input tests for the control decoder and terminal
+  filter;
+- shared production-code `cargo-fuzz` targets for the Pane control decoder and
+  restricted terminal-output state machine, each exercised for 10,000 runs
+  without a crash or counterexample;
 - title-set followed by title-report cannot create PTY input;
 - OSC 52 cannot write the host clipboard;
 - alternate-screen TUI rendering remains functional in restricted mode;

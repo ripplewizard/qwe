@@ -278,7 +278,11 @@ resize, isolated/shared process namespaces with hard cgroup teardown, and
 termination-level Principal revocation now stop abandoned sandboxed Panes.
 Live worker/shim identity uses pidfd after start-token validation, with a
 documented `/proc` fallback on kernels without pidfd.
-Remote distribution and aarch64 qualification remain open. The
-adopted decision register and terminal output policy are frozen. D12 revocation
-and D25 Pane-exit semantics are resolved; D48 target-distribution scope remains
-a product input.
+The current x86_64 matrix requalified the complete sandboxed-Pane path on
+Ubuntu 22.04, Debian 12, Ubuntu 24.04 with the packaged AppArmor profile, and
+Fedora 44 with SELinux `Enforcing`. Default Ubuntu 24.04 still fails closed.
+Bubblewrap 0.5.0 also passes the full matrix where supported and reports
+sandboxed-Pane capability unavailable because FD bind is absent. aarch64 and
+the openEuler/Kylin/Rocky expansion remain open. The adopted decision register
+and terminal output policy are frozen. D12 revocation and D25 Pane-exit
+semantics are resolved; D48 target-distribution scope remains a product input.

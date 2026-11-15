@@ -160,11 +160,12 @@ The accepted Agent Execution first delivery covers all rows below.
 
 Rows 001-034 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown. Rows
-035-051 pass local real-PTY/PID-namespace shim, control-channel, standalone
-probe, long-lived sandboxed worker, and qwed creation/lifecycle contracts; the
-new runtime rows are not yet part of the remote distribution matrix. Ubuntu
-22.04 and Debian 12 real VMs pass the complete `AGENT_EXEC` matrix. Default
-Ubuntu
+035-054 pass local real-PTY/PID-namespace shim, control-channel, standalone
+probe, long-lived sandboxed worker, and qwed creation/lifecycle contracts.
+Rows 035-052 are also covered by the current x86_64 distribution matrix; rows
+053-054 are local fuzz-toolchain gates with deterministic workspace-test
+fallbacks. Ubuntu 22.04 and Debian 12 real VMs pass the complete matrix,
+including sandboxed Pane and `pane_exec` filtered output. Default Ubuntu
 24.04 returns `sandbox_backend_unavailable`; with the packaged path-scoped
 AppArmor profile and the global userns restriction still enabled, its complete
 matrix passes.
@@ -225,6 +226,9 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-049 | Terminate affected sandboxed Panes immediately on termination-level Principal revocation and report `affected_sandboxed_panes` |
 | SANDBOX-050 | Preserve affected sandboxed Panes on administrative Principal revocation; explicit Session kill remains available |
 | SANDBOX-051 | Track worker and sandbox shim lifetime/signals through pidfd, open pidfd only after start-token validation, and retain `/proc` identity matching as an unsupported-kernel fallback |
+| SANDBOX-052 | Filter Agent command stdout, stderr, and PTY streams before cursor advancement or event retention, after credential redaction, and prove an OSC title/clipboard payload cannot enter replay |
+| SANDBOX-053 | Share the production Pane control decoder between the shim and a `cargo-fuzz` target; reject malformed frames without panic and retain the deterministic exhaustive input test |
+| SANDBOX-054 | Fuzz the restricted terminal-output state machine with arbitrary fragmented and coalesced input without panic, while retaining deterministic allow/deny sequence vectors |
 
 ## Core Object Model
 

@@ -1,8 +1,7 @@
 # `qwe-sandbox-init` Threat Model and Fuzz Plan
 
 Date: 2026-11-16
-Status: Current for `AGENT_EXEC` and the initial PID-1 Pane shim; sandboxed
-Pane integration is not enabled yet
+Status: Current for `AGENT_EXEC` and the production sandboxed-Pane shim
 
 ## 1. Role in the trust boundary
 
@@ -20,11 +19,13 @@ before the requested command. It is trusted computing base code because it:
   reaps descendants before exiting.
 
 It does not load the Bubblewrap seccomp program. Bubblewrap applies seccomp
-before executing the init helper. The initial terminal/signal and private
-control-channel behavior from ADR 0034 has a dedicated real-PTY contract test;
-production creation now runs this path for isolated-process-namespace
-sandboxed Panes. Restricted terminal Attach/input and parser fuzzing remain
-open release gates.
+before executing the init helper. The terminal/signal and private-control-
+channel behavior from ADR 0034 has a dedicated real-PTY contract test.
+Production creation now runs this path for isolated-process-namespace
+sandboxed Panes and uses the worker-owned cgroup for shared-process-namespace
+teardown. Restricted terminal Attach/input is implemented, and the Pane control
+decoder lives in `qwe-runtime` so the shim and fuzz target exercise the same
+production parser.
 
 ## 2. Trusted inputs
 
@@ -91,9 +92,9 @@ The same-UID host process remains outside the threat model under ADR 0034.
 - Bubblewrap 0.5 lacks FD-pinned bind options. The source-path window between
   final host resolution and Bubblewrap mount setup remains residual risk.
 - ADR 0034 terminal duties will materially increase this TCB.
-- The Pane-init contract currently has local Linux PTY coverage only. Before
-  release, it must run in the supported-distribution matrix and the private
-  control-channel parser must enter the fuzz corpus.
+- The Pane-init contract has local Linux PTY coverage and current x86_64
+  Ubuntu, Debian, and Fedora coverage. aarch64 and the OEM distribution
+  expansion remain environment/product gates.
 - The Landlock adapter is custom syscall code, not a crate compatibility layer.
   It fails hard when a required ruleset operation is unsupported.
 
@@ -111,9 +112,9 @@ Before accepting terminal responsibilities:
   each path rule, after dumpability hardening, and immediately before exec;
 - verify every injected failure exits 125 and never executes a sentinel target;
 - run differential tests with Bubblewrap 0.5 and current releases;
-- fuzz the implemented Pane-init control parser before sandboxed Pane is
-  enabled; keep terminal signal and winsize coverage in real-PTY contract
-  tests and avoid sleep-based assertions where event oracles are available.
+- keep the implemented Pane-init control parser in the shared `cargo-fuzz`
+  corpus; keep terminal signal and winsize coverage in real-PTY contract tests
+  and avoid sleep-based assertions where event oracles are available.
 
 ## 7. Dependency policy
 
@@ -147,5 +148,8 @@ sandboxed Pane:
 - use inherited descriptors or `SCM_RIGHTS` for command credentials and close
   the shim's copy after delivery.
 
-The control-channel parser and message state machine enter the fuzz corpus
-before the sandboxed-Pane release gate.
+The control-channel parser and message state machine are shared with the
+`fuzz/fuzz_targets/sandbox_control.rs` harness. The restricted terminal-output
+state machine has a separate `terminal_output` fuzz target. On 2026-11-16,
+each target completed 10,000 local nightly runs without a crash or
+counterexample.

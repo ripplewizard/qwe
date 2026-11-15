@@ -1,6 +1,7 @@
 # ADR 0034: Sandboxed Pane, Interactive PTY, and Path Trust
 
-Status: Accepted for the next sandbox milestone; implementation not started
+Status: Implemented through the sandboxed-Pane P3 slice; remote distribution
+qualification remains
 Date: 2026-11-15
 Extends: [ADR 0032](0032-agent-execution-model.md),
 [ADR 0033](0033-bubblewrap-sandbox-adapter.md)
@@ -24,7 +25,7 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 |---|---|---|---|
 | D1 | Sandboxed Pane Bubblewrap capability | Adopted; P1 pass | `AGENT_EXEC` keeps 0.5 compatibility; sandboxed Pane requires FD-binding features detected at runtime; first observed upstream support is 0.10.0 |
 | D2 | Capability split | Adopted; scaffold implemented | Separate `sandboxed_pane`, `pane_exec`, `pane_input`, and `pane_resize`; target-type enforcement activates with Pane sandbox metadata |
-| D3 | Terminal sequence policy | Adopted | Restricted output uses a display-only whitelist; host-sensitive control and query sequences are dropped |
+| D3 | Terminal sequence policy | Adopted; implemented | Restricted output uses a display-only whitelist; host-sensitive control and query sequences are dropped before retention |
 | D4 | Input audit | Adopted | Metadata only by default; no content hashes; no content when PTY ECHO is off |
 | D5 | Landlock | Adopted | Profile field `off | best_effort | required{min_abi}`; sandboxed Pane defaults to required |
 | D8 | `pane_input` authority | Adopted | Treated as arbitrary code execution in the target Pane |
@@ -159,7 +160,8 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   1024-byte decoder bound. Unknown versions or message kinds, oversized frames,
   malformed signal payloads, and signals outside INT/TERM/HUP/QUIT fail closed.
   A same-UID launcher broker transfers the FD after `portable-pty` cleanup; the
-  target shell does not inherit it. The parser corpus remains a fuzz target.
+  target shell does not inherit it. The decoder lives in `qwe-runtime` and is
+  shared by the shim and a `cargo-fuzz` target.
 - **D23 adopted:** seccomp/Landlock/control-channel setup failure terminates
   before target exec and is surfaced as `sandbox_setup_failed`.
 - **D24 decided:** replacing the shell with `exec bash`, `exec zsh`, or another
@@ -285,12 +287,13 @@ P1-P6 evidence is recorded in
 1. Freeze the adopted decision register and terminal output policy.
 2. P1-P6 are complete; nested refinement, shim behavior, Landlock distribution,
    and current strict runtime compatibility are fixed.
-3. Add `landlock` to the typed profile and enforce effective-level audit.
-4. Sandboxed Pane capability, shim, creation, persistence, and lifecycle are
-   implemented. Nested refinement and terminal filtering remain.
-5. `pane_input`, `pane_resize`, bounded audit, and restricted output are
-   implemented. Interactive audited Attach input remains.
-6. Resolve D12, D25, and D48 before their dependent behavior ships.
+3. Landlock is part of the typed profile and effective-level audit.
+4. Sandboxed Pane capability, shim, creation, persistence, lifecycle, nested
+   refinement, and terminal filtering are implemented.
+5. `pane_input`, `pane_resize`, bounded audit, restricted output, and audited
+   interactive Attach input are implemented.
+6. D12 and D25 are resolved. D48 target-distribution scope remains a product
+   input to the public distribution matrix.
 
 ## Consequences
 
