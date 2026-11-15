@@ -160,10 +160,10 @@ The accepted Agent Execution first delivery covers all rows below.
 
 Rows 001-034 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown. Rows
-035-036 pass local real-PTY/PID-namespace shim and control-channel contracts;
-they are not yet part of production sandboxed Pane or the remote distribution
-matrix. Ubuntu 22.04 and Debian 12 real VMs pass the complete `AGENT_EXEC`
-matrix. Default Ubuntu
+035-037 pass local real-PTY/PID-namespace shim, control-channel, and standalone
+probe contracts; they are not yet part of production sandboxed Pane or the
+remote distribution matrix. Ubuntu 22.04 and Debian 12 real VMs pass the
+complete `AGENT_EXEC` matrix. Default Ubuntu
 24.04 returns `sandbox_backend_unavailable`; with the packaged path-scoped
 AppArmor profile and the global userns restriction still enabled, its complete
 matrix passes.
@@ -209,6 +209,7 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-034 | Accept the `sandboxed_pane`, `pane_exec`, `pane_input`, and `pane_resize` capability operations only with their intended scopes; require a high-trust issuer for `pane_input` |
 | SANDBOX-035 | Run the PID-1 shim under a real PTY, inherit the controlling terminal, forward TERM/INT/HUP, deliver resize SIGWINCH, reap children, and terminate background namespace processes after shell exit |
 | SANDBOX-036 | Transfer a private Pane control FD through the same-UID launcher broker, keep it hidden from the shell, accept only bounded versioned safe signals, and reject malformed or unknown control messages |
+| SANDBOX-037 | Probe a `sandboxed_pane` profile through the standalone worker before a Session exists, returning backend and seccomp audit evidence without requiring a live Pane |
 
 ## Core Object Model
 

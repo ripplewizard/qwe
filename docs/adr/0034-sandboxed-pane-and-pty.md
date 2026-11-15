@@ -45,8 +45,11 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   features fail `sandbox_backend_unavailable` with the missing feature named.
   P1 found upstream 0.10.0 as the first observed release with FD binding.
   Runtime qualification uses a help check plus a harmless FD mount; the result
-  is stored as `sandbox_audit.fd_bind`.
-- **D2 adopted:** see capability model below.
+  is stored as `sandbox_audit.fd_bind`. `sandboxed_pane` capability issue now
+  rejects a false result with reason `fd_bind_unavailable`.
+- **D2 adopted:** see capability model below. `sandboxed_pane` issue requires a
+  Session-scoped v1 profile and probes it before a Session exists; it never
+  falls back to the unsandboxed Pane path.
 - **D3 adopted:** restricted terminal output uses a whitelist, not an OSC 52
   blacklist. Filtering occurs before every Attach client and is defined in
   [Terminal Output Policy](../terminal-output-policy.md).

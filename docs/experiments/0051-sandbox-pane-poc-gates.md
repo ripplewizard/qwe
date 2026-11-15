@@ -58,7 +58,11 @@ Bubblewrap check and must not replace it with path-only assumptions.
 
 The worker now performs the harmless FD mount during `SANDBOX_PROBE`, reports
 `fd_bind`, and qwed persists it in capability sandbox audit metadata. The
-current `AGENT_EXEC` path does not require the feature; sandboxed Pane will.
+current `AGENT_EXEC` path does not require the feature. Sandboxed-Pane
+capability issue now uses an ephemeral worker to probe the Session-scoped
+profile before a Pane exists. Backends without FD binding remain usable for
+`AGENT_EXEC` but fail `sandboxed_pane` issue with
+`sandbox_backend_unavailable` / `fd_bind_unavailable`.
 
 ## P2: Nested Sandbox
 

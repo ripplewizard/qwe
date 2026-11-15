@@ -365,9 +365,14 @@ durable idempotency response table. Tokens default to 24 hours and are capped at
 SQLite stores only token hashes plus the Principal's complete ancestor epoch
 snapshot.
 
-`sandbox_profile` is valid only for an `agent_exec` capability. Its presence
-makes the capability sandboxed; omission preserves the explicit unsandboxed
-path. The v1 profile shape is:
+`sandbox_profile` is valid for `agent_exec` and `sandboxed_pane` capabilities.
+For `agent_exec` it is optional and requires Pane scope; omission preserves the
+explicit unsandboxed path. `sandboxed_pane` requires Session scope and a
+profile, otherwise capability issue fails with `invalid_request`. Before issue,
+qwed probes the profile through an ephemeral worker even when no Pane exists.
+`sandboxed_pane` also requires the `fd_bind` probe to report `true`; otherwise
+issue fails with `sandbox_backend_unavailable` and reason
+`fd_bind_unavailable`. The v1 profile shape is:
 
 ```json
 {
@@ -419,8 +424,8 @@ exact cBPF bytes passed to Bubblewrap. `landlock_abi` is present only when the
 kernel supports and the selected Landlock mode applies it. These values are
 stored with the capability and included in live and recovered sandbox status.
 `fd_bind` reports the harmless probe result for
-`--bind-fd`/`--ro-bind-fd`; `AGENT_EXEC` does not require it, while sandboxed
-Pane does.
+`--bind-fd`/`--ro-bind-fd`; `AGENT_EXEC` records it without requiring it, while
+`sandboxed_pane` issue fails unless it is true.
 
 `SECURITY_PRINCIPAL_REVOKE.severity` is `administrative`, `freeze`, or
 `terminate`; omission defaults to `freeze`. Freeze grace defaults to 60000 ms
