@@ -73,6 +73,7 @@ No credential, environment secret, or host configuration file is an init input.
 | Pane-init terminated as PID namespace init | Explicit TERM/INT/HUP handlers forward to the PTY foreground process group |
 | Orphaned descendants become zombies | SIGCHLD wakeups drain `waitpid(-1)` inside the PID namespace |
 | Detached process survives shell exit | PID-1 cleanup sends TERM, waits the frozen grace period, then KILL |
+| Shared namespace detached process survives shell exit | The shim signals only its shell group; worker `cgroup.kill` tears down the hard Pane scope |
 | Control channel leaks into the target shell | The shim sets `FD_CLOEXEC` before spawning the shell; the real-PTY contract checks the FD is absent |
 | Malformed or excessive control traffic | Versioned four-byte header, eight-byte payload cap, 1024-byte decoder cap, unknown-kind rejection, and signal whitelist |
 | Arbitrary signal injection through the control channel | Only INT, TERM, HUP, and QUIT are accepted; KILL remains outside this channel |
@@ -136,6 +137,9 @@ implements the terminal responsibilities below:
 - leave window-size handling to qwed because PTY-master `TIOCSWINSZ` plus
   kernel `SIGWINCH` is sufficient; and
 - terminate remaining namespace processes after shell exit.
+- when PID namespace isolation is shared, report the host child PID through
+  Bubblewrap status and rely on the worker-owned hard Pane cgroup for complete
+  descendant teardown.
 
 The following control remains required for nested credentials inside a
 sandboxed Pane:

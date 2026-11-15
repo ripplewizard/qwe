@@ -225,5 +225,6 @@ Sandboxed Pane creation is now implemented for Linux: `SESSION_CREATE` and
 `PANE_CREATE` consume a Session-scoped `sandboxed_pane` capability, launch a
 long-lived FD-pinned Bubblewrap shell through the PID-1 shim, persist profile
 and audit metadata atomically, and recover that metadata after qwed restart.
-Sandboxed Attach and PTY input remain fail closed until the restricted terminal
-output policy is implemented.
+Restricted terminal output, capability-audited input, interactive Attach input,
+standalone resize, and shared process namespace mode with cgroup-authoritative
+descendant teardown are implemented locally.

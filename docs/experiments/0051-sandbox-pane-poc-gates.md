@@ -167,7 +167,10 @@ through qwed. The observed path is:
 - interactive Attach capability binding plus per-Input audit, while unmarked
   direct worker Attach input remains fail closed; and
 - standalone `SESSION_RESIZE` capability authorization with observed PTY
-  dimension changes.
+  dimension changes; and
+- shared process namespace Pane creation with hard cgroup scope, cgroup-only
+  control, host child-PID monitoring, and detached-process teardown on shell
+  exit.
 
 ## P5: Landlock ABI Distribution
 

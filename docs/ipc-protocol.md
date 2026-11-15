@@ -422,9 +422,14 @@ issue fails with `sandbox_backend_unavailable` and reason
 `process_namespace` is `isolated` or `shared`. Unknown fields, non-v1 profiles,
 named seccomp values other than the exact profile name `strict`, a missing
 workspace, or a missing protected path fail closed.
-`sandboxed_pane` v1 currently requires `process_namespace:isolated`; Pane
-creation rejects `shared` until non-PID-1 descendant tracking provides the same
-bounded tree teardown guarantee.
+`sandboxed_pane` supports both process modes:
+
+- `isolated` uses Bubblewrap PID namespace PID-1, the normal shim control FD,
+  and namespace-tree teardown.
+- `shared` requires a hard Pane cgroup scope. The shim only signals its shell
+  process group; worker teardown uses the Bubblewrap `child-pid` status
+  handshake and `cgroup.kill` for detached descendants. This mode uses a
+  cgroup-only control channel and does not expose the shim control FD.
 Protected paths containing multi-link files also fail closed because a
 writable hardlink alias can bypass path-scoped read-only mounts.
 Workspace-relative protected-path symlinks are accepted; absolute symlinks are

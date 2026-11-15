@@ -136,12 +136,18 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   with a PID namespace, FD-pinned mutable mounts, internal seccomp,
   `qwe-session-exec`, and the PID-1 shim. `SESSION_CLOSE`/`SESSION_KILL` retain
   cgroup-backed teardown authority.
+- **D18 shared-namespace mode implemented:** `process_namespace:shared`
+  launches without a PID namespace and omits the shim control FD. Bubblewrap's
+  status handshake reports the host child PID; the worker monitors that shim
+  and applies Pane-level `cgroup.kill` when it exits.
 - **D19 resolved by P3:** `TIOCSWINSZ` on the qwed-owned PTY master delivers
   SIGWINCH to the foreground process group without shim involvement.
 - **D20 adopted; P4 pass and initial shim implemented:** when the shim is PID
   namespace init, it explicitly handles SIGTERM, SIGINT, SIGHUP, and SIGCHLD.
   Default-ignored signals are not
   acceptable.
+  In shared namespace mode the shim is not PID-1 and sends cleanup signals only
+  to its shell process group.
 - **D21 adopted; initial control-FD path implemented:** the shim applies
   no-new-privileges and dumpability suppression. Bubblewrap seccomp hardens the
   policy path, and the shim marks its control FD close-on-exec before spawning
@@ -165,6 +171,8 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
     `SANDBOXED_PANE_SHUTDOWN_GRACE_MS` freezes the grace period.
   - This intentionally differs from an ordinary Pane where detached background
     processes may survive. Work that must outlive the shell uses `AGENT_EXEC`.
+  - In shared namespace mode detached descendants are not signaled by the shim;
+    the worker's Pane cgroup remains the authoritative teardown path.
   - Exit records identify normal exit, signal, `terminate`, revocation, TTL, or
     teardown cause.
 
