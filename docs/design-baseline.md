@@ -1,7 +1,7 @@
 # QWE Design Baseline
 
 Status: Active Development Baseline
-Updated: 2026-11-10
+Updated: 2026-11-16
 
 ## 1. Purpose
 
@@ -13,12 +13,12 @@ history rather than versioned filenames.
 | ID | Decision |
 |---|---|
 | D036 | `qwed` is the sole authority for SQLite Session, Task, and Lease state. |
-| D037 | One `qwed` supervisor is authoritative for the public API, SQLite, worker inventory, and control state. V0 inventory keys by Session; the accepted multi-Pane target keys by Pane. |
+| D037 | One `qwed` supervisor is authoritative for the public API, SQLite, worker inventory, and control state. Worker inventory keys by Pane. |
 | D038 | Startup reconciliation completes before clients are accepted; runtime worker loss is event-first with a maximum 2 second safety scan. |
-| D039 | Worker rediscovery validates socket path, worker PID/start token, and Session ID; the accepted multi-Pane target also validates Pane ID. |
+| D039 | Worker rediscovery validates socket path, worker PID/start token, Session ID, and Pane ID. |
 | D040 | A missing or identity-mismatched worker becomes `lost`; a live but unresponsive worker is `unreachable` and is not declared exited. |
-| D053 | V0 runs one worker per Session. The accepted multi-Pane topology runs one worker per Pane; a Session is a logical grouping of Pane workers. |
-| D054 | The accepted multi-Pane target has qwed address persisted worker identity, runtime discovery, health, recovery, and cleanup by Pane. |
+| D053 | The runtime runs one worker per Pane; a Session is a logical grouping of Pane workers. |
+| D054 | qwed addresses persisted worker identity, runtime discovery, health, recovery, and cleanup by Pane. |
 | D055 | ResourceScope targets Session, Pane, or Task; Linux enforcement starts at Pane scope with Session as the logical parent. |
 | D056 | ChannelProfile carries an opaque AuthContext and a projection/capability policy; human observer is a qwed-owned read-only projection. |
 | D057 | Principal is a first-class identity anchor with `parent_id`, monotonic `epoch`, and tombstone `revoked_at`. |
@@ -73,7 +73,7 @@ client and worker operations are documented in [IPC Protocol](ipc-protocol.md).
 
 | ID | Decision |
 |---|---|
-| D046 | The journal is per Pane worker, not per client. V0 instantiates one Pane per Session. |
+| D046 | The journal is per Pane worker, not per client or Session. |
 | D047 | Each Attach gets a private 1 MiB journal tail and, after the Stage 2 cutover, an independent 1 MiB live-output queue. |
 | D048 | Journal tail is diagnostic-only and never a replay format; screen state is authoritative. |
 | D049 | Compact structured VT state with cursor and terminal modes is a D1 requirement. |
@@ -115,8 +115,8 @@ separate gap-aware framing contract with VT state checkpoints.
   reject other UIDs at the OS layer.
 - Cross-UID, stale epoch, malformed frame, oversized input, and idempotency
   tests are required in D3.
-- Pane-level attachment authority is the accepted multi-Pane target. Session
-  Leases remain the fence for Session-wide lifecycle control.
+- Pane-level attachment authority is implemented. Session Leases remain the
+  fence for Session-wide lifecycle control.
 - Channel profiles share the same authoritative Session/Pane/Task state; an
   observer cannot acquire input or control authority.
 
@@ -125,7 +125,7 @@ separate gap-aware framing contract with VT state checkpoints.
 | Failure | Result |
 |---|---|
 | `qwed` SIGKILL | Workers continue; supervisor restart reconciles worker inventory |
-| Worker SIGKILL | The affected Pane worker records `lost`; V0's one-Pane Session becomes lost, while unrelated Panes remain healthy after the multi-Pane migration |
+| Worker SIGKILL | The affected Pane worker records `lost`; unrelated Panes remain healthy |
 | Worker process alive but unresponsive | Health becomes `unreachable` for that Pane; Session/Task are not falsely marked exited |
 | Supervisor unavailable | Clients receive an explicit transport error |
 | OS reboot | Out of V0 scope |
@@ -177,3 +177,9 @@ events.
   first delivery is complete through Stage 9.5. Boundaries and deferred
   follow-ons are tracked in
   [Agent Execution Model](agent-execution-model.md).
+  The Linux Bubblewrap `AGENT_EXEC` and sandboxed-Pane implementation is
+  complete for the current x86_64 product slice under
+  [ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md) and
+  [ADR 0034](adr/0034-sandboxed-pane-and-pty.md); distribution evidence and
+  deferred targets are tracked in
+  [Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md).

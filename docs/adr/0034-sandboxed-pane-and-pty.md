@@ -1,8 +1,7 @@
 # ADR 0034: Sandboxed Pane, Interactive PTY, and Path Trust
 
-Status: Implemented through the sandboxed-Pane P3 slice; remote distribution
-qualification remains
-Date: 2026-11-15
+Status: Accepted; implemented for the current Linux x86_64 product slice
+Date: 2026-11-16
 Extends: [ADR 0032](0032-agent-execution-model.md),
 [ADR 0033](0033-bubblewrap-sandbox-adapter.md)
 
@@ -282,18 +281,17 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 P1-P6 evidence is recorded in
 [Experiment 0051](../experiments/0051-sandbox-pane-poc-gates.md).
 
-## Implementation Order
+## Implementation Status
 
-1. Freeze the adopted decision register and terminal output policy.
-2. P1-P6 are complete; nested refinement, shim behavior, Landlock distribution,
-   and current strict runtime compatibility are fixed.
-3. Landlock is part of the typed profile and effective-level audit.
-4. Sandboxed Pane capability, shim, creation, persistence, lifecycle, nested
-   refinement, and terminal filtering are implemented.
-5. `pane_input`, `pane_resize`, bounded audit, restricted output, and audited
-   interactive Attach input are implemented.
-6. D12 and D25 are resolved. D48 target-distribution scope remains a product
-   input to the public distribution matrix.
+- The decision register, terminal output policy, P1-P6 gates, typed Landlock
+  profile, and nested refinement path are complete.
+- Sandboxed Pane capability, shim, creation, persistence, output filtering,
+  audited input/resize, lifecycle, and pidfd identity are implemented.
+- D12 and D25 are resolved. aarch64 and OEM distribution expansion remain
+  outside the current product slice; D48 target scope remains a product input.
+
+Current distribution results and release scope are maintained only in
+[Experiment 0051](../experiments/0051-sandbox-pane-poc-gates.md).
 
 ## Consequences
 
@@ -313,4 +311,6 @@ P1-P6 evidence is recorded in
 - [ADR 0033](0033-bubblewrap-sandbox-adapter.md)
 - [Terminal Output Policy](../terminal-output-policy.md)
 - [`qwe-sandbox-init` Threat Model](../sandbox-init-threat-model.md)
+- [Experiment 0051](../experiments/0051-sandbox-pane-poc-gates.md)
+- [Test Matrices](../test-matrices.md)
 - [Linux openat2](https://man7.org/linux/man-pages/man2/openat2.2.html)

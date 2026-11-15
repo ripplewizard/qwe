@@ -16,8 +16,8 @@ persistent worker-control model. ADRs
 ## 1. Authority Boundaries
 
 - `qwed` is the sole authority for SQLite Sessions, Tasks, and Leases.
-- `qwed` owns live worker inventory, control channels, and health state. V0
-  inventory is keyed by Session; the accepted multi-Pane target keys by Pane.
+- `qwed` owns live worker inventory, control channels, and health state.
+  Inventory is keyed by Pane.
 - `qwe-worker` processes own PTYs, process groups, VT state, and journals.
 - Clients never connect directly to worker control sockets.
 - Clients connect to qwed's dedicated Attach socket. qwed proxies the channel
@@ -646,8 +646,9 @@ in SQLite. If the worker is confirmed absent, nonterminal commands become
 Capability, revocation, credential/redaction, observer push, PTY output, and
 foreground shell idle are implemented. `shell_exec`, cross-Pane orchestration,
 and environment mutation remain deferred. Sandboxed Pane and interactive Agent
-PTY are accepted for the next milestone by
-[ADR 0034](adr/0034-sandboxed-pane-and-pty.md).
+PTY are implemented for the current Linux x86_64 slice under
+[ADR 0034](adr/0034-sandboxed-pane-and-pty.md); current evidence is in
+[Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md).
 
 ### Channel Profiles
 

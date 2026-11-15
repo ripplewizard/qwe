@@ -4,6 +4,9 @@ Status: Assessment complete for this review round; shared prerequisites
 accepted; remaining policy decisions open
 Date: 2026-11-09
 
+This is a historical assessment snapshot. Current implementation status is
+tracked by ADR 0032, ADR 0033, ADR 0034, and the development roadmap.
+
 This document evaluates the agent-native features proposed for QWE together
 with three human-facing terminal UX features:
 

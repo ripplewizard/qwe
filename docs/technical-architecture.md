@@ -225,7 +225,7 @@ SESSION_CLOSE
 
 It does not replay an unbounded historical PTY stream.
 
-The journal is one bounded buffer per Session worker. Each Attach gets a
+The journal is one bounded buffer per Pane worker. Each Attach gets a
 private 1 MiB output queue; a slow client does not hold the PTY reader or
 another client's writer. The journal tail may begin mid-escape-sequence and is
 therefore diagnostic data, while the VT screen snapshot is authoritative.
@@ -317,7 +317,7 @@ startup; only the matching token can resume the Session during that window.
 | `qwed` SIGKILL | All session workers continue |
 | `qwed` restart | Rediscover workers and reconcile SQLite inventory |
 | Corrupt SQLite | Fail explicitly; do not start with silent data loss |
-| Pane worker SIGKILL | That Pane is lost; V0's one-Pane Session returns `terminal_lost`, while other Panes remain healthy after the multi-Pane migration |
+| Pane worker SIGKILL | That Pane is lost and returns `terminal_lost`; unrelated Panes remain healthy |
 | OS reboot | No V0 recovery |
 
 On restart, qwed scans its runtime directory and reconnects workers after
@@ -388,9 +388,8 @@ The process start token is mandatory. PID alone is never sufficient.
 - Each Pane has a tree-scoped policy for memory high/max/swap,
   processes-plus-threads, CPU bandwidth, and cumulative CPU time.
 - Linux creates one transient systemd user scope per Pane, named from the
-  stable Pane identity. V0 still instantiates one Pane per Session; the scope
-  boundary is already Pane-level. `memory.max`, `memory.swap.max`, `pids.max`,
-  and `cpu.max` are hard limits; cumulative CPU time is monitored.
+  stable Pane identity. `memory.max`, `memory.swap.max`, `pids.max`, and
+  `cpu.max` are hard limits; cumulative CPU time is monitored.
   `memory.oom.group=1` treats the selected ResourceScope as one OOM unit.
 - Inside that scope, the worker uses delegated `control` and `workload`
   children. Resource limits apply to `workload`, which contains the PTY task
@@ -426,9 +425,8 @@ reported only when a reliable platform identifier exists.
 ## 11. Security Baseline
 
 - One local OS user for V0.
-- V0 has one interactive control client per Session. The accepted target has
-  one interactive writer per Pane and a separate Session Lease for lifecycle
-  control.
+- The runtime has one interactive writer per Pane and a separate Session Lease
+  for lifecycle control.
 - No TCP listener.
 - Socket mode `0600`.
 - Peer-UID verification.

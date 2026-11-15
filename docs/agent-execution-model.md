@@ -201,7 +201,7 @@ Landlock-only backend. The handled rights grow with the kernel ABI, including
 `REFER`, `TRUNCATE`, and device `IOCTL` where supported. The capability audit
 records the detected ABI. Profile `landlock` modes are `off`, `best_effort`,
 and `required{min_abi}`; `AGENT_EXEC` defaults to compatibility `best_effort`,
-while the future sandboxed Pane defaults to a required filesystem ABI.
+while a sandboxed Pane defaults to a required filesystem ABI.
 
 For `network:isolated_loopback`, Stage 10 verifies an UP `lo` interface, a real
 `127.0.0.1` listen/connect pair, and no default route across Bubblewrap 0.5,
@@ -296,8 +296,9 @@ clients share one UID. It does not replace OS multi-user isolation:
 same-UID processes can still read the root bootstrap file. Environment mutation,
 `shell_exec`, cross-Pane orchestration, persistent history, and host management
 remain outside this delivery. Session/Pane startup-program sandboxing and
-interactive Agent PTY are accepted by
-[ADR 0034](adr/0034-sandboxed-pane-and-pty.md) as the next milestone.
+interactive Agent PTY are implemented for the current Linux x86_64 slice under
+[ADR 0034](adr/0034-sandboxed-pane-and-pty.md); evidence is in
+[Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md).
 
 `shell_exec`, broader sandbox backends and deployment qualification, cross-Pane
 orchestration, persistent semantic history, host management, and multi-writer

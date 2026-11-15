@@ -307,9 +307,10 @@ Two follow-on routes are deliberately separate:
 
 1. **Sandboxed Pane startup**
 
-   [ADR 0034](0034-sandboxed-pane-and-pty.md) accepts the next milestone:
+   [ADR 0034](0034-sandboxed-pane-and-pty.md) accepts the follow-on slice:
    default unsandboxed Panes plus explicit `sandboxed_pane` capability;
-   `SESSION_CREATE.sandbox_profile` remains invalid. Qualification must cover:
+   `SESSION_CREATE.sandbox_profile` remains invalid. Accepted qualification
+   scope:
 
    - controlling-terminal, resize, SIGINT/SIGTSTP, and job control for a
      long-lived wrapped shell;
@@ -319,9 +320,11 @@ Two follow-on routes are deliberately separate:
      tighten, never broaden, the effective policy; and
    - an explicit capability boundary for the sandboxed Pane operation.
 
-   The implemented `AGENT_EXEC` path currently applies Landlock and immediately
-   execs. ADR 0034 assigns controlling-terminal, signal forwarding, and
-   window-size responsibilities to the future sandboxed-Pane shim.
+   The `AGENT_EXEC` path applies Landlock and immediately execs. The
+   sandboxed-Pane path uses the shim for controlling-terminal ownership,
+   signal forwarding, and lifecycle cleanup. The current Linux x86_64
+   implementation satisfies this scope; see
+   [Experiment 0051](../experiments/0051-sandbox-pane-poc-gates.md).
 
 2. **Backend hardening for `AGENT_EXEC`**
 

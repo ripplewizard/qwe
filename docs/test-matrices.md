@@ -164,14 +164,11 @@ foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown. Rows
 probe, long-lived sandboxed worker, and qwed creation/lifecycle contracts.
 Rows 035-052 are also covered by the current x86_64 distribution matrix; rows
 053-054 are local fuzz-toolchain gates with deterministic workspace-test
-fallbacks. Ubuntu 22.04 and Debian 12 real VMs pass the complete matrix,
-including sandboxed Pane and `pane_exec` filtered output. Default Ubuntu
-24.04 returns `sandbox_backend_unavailable`; with the packaged path-scoped
-AppArmor profile and the global userns restriction still enabled, its complete
-matrix passes.
-Loopback UP/connect and `NoNewPrivs: 1` pass on Bubblewrap 0.5, 0.6.1, 0.8,
-and 0.9.
-Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
+fallbacks. Distribution versions, fail-closed exceptions, and current release
+scope are maintained in
+[Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md).
+Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md)
+for the first `AGENT_EXEC` slice and Experiment 0051 for the sandboxed Pane.
 
 | ID | Case |
 |---|---|

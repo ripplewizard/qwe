@@ -1,7 +1,8 @@
 # Testing Strategy
 
-Status: Active; Stage 7 and Stage 8 gates complete; Agent Execution ADR accepted
-Date: 2026-11-14
+Status: Active; Stage 7 and Stage 8 gates complete; Agent Execution first
+delivery and Linux sandboxed-Pane gates complete
+Date: 2026-11-16
 
 ## Test Layers
 
@@ -305,8 +306,9 @@ denied.
 SELinux to remain `Enforcing`; the externally managed VM target and SSH config
 are supplied with `QWE_SELINUX_SSH_TARGET` and `QWE_SELINUX_SSH_CONFIG`.
 `just sandbox-bubblewrap-oldest-vm-matrix`
-builds the pinned Bubblewrap 0.5.0 source and runs the complete probe on
-Ubuntu 22.04, Ubuntu 24.04 with AppArmor, and Debian 12.
+builds the pinned Bubblewrap 0.5.0 source and runs the applicable probe on
+Ubuntu 22.04, Ubuntu 24.04 with AppArmor, and Debian 12. Sandboxed Pane is
+reported unavailable because Bubblewrap 0.5 has no FD bind.
 `just sandbox-userns-disabled-vm-matrix` temporarily disables userns on Ubuntu
 22.04, Ubuntu 24.04, and Debian 12, requires classified `userns_disabled`,
 restores sysctls afterward, and verifies an ordinary Pane command still

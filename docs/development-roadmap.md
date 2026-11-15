@@ -1,8 +1,8 @@
 # Development Roadmap
 
-Status: Active; Linux-first V0 complete; shared prerequisites accepted; post-V0
-macOS release deferred
-Date: 2026-11-09
+Status: Active; Linux-first V0 complete; Agent Execution and the Linux
+sandboxed-Pane implementation complete; post-V0 macOS release deferred
+Date: 2026-11-16
 
 Detailed sequencing, estimates, staffing sensitivity, and release gates are in
 [Development Plan](development-plan.md).
@@ -161,7 +161,7 @@ mouse routing, and persisted click-to-raise z-order.
 
 Exit: the Stage 8 gates in [Session Layout](stage8-session-layout.md) pass.
 
-## Next Feature Track: Agent Execution Model
+## Feature Track: Agent Execution Model
 
 Status: Accepted first delivery complete through Stage 9.5. The stable name for
 this track is Agent Execution Model; it is not a renumbering of historical
@@ -181,56 +181,19 @@ credentials, redaction, read-only observer/push, merged PTY output, and
 interactive-shell foreground idle.
 See [Agent Execution Model](agent-execution-model.md).
 
-## Next Feature Track: Bubblewrap Sandbox Adapter
+## Feature Track: Bubblewrap Sandbox Adapter
 
-Status: [ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md) accepted; the
-Linux `AGENT_EXEC` pipe-split and PTY slice is implemented and passes
-[Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
+Status: Complete for the current Linux x86_64 product slice.
 
-The first production slice applies workspace/network/home/tmp/PID profiles to
-Linux `AGENT_EXEC`, preserves FD3 credentials and Pane cgroups, and uses
-Bubblewrap `--json-status-fd`, internal `TIOCSTI` seccomp, and
-`--die-with-parent`. Sandboxed restart recovery and Pane-teardown qualification
-pass locally and on Ubuntu 22.04/Debian 12 real VMs. Ubuntu 24.04 currently
-fails closed by default; the packaged path-scoped AppArmor profile passes the
-complete matrix without disabling the global userns restriction.
-[ADR 0034](adr/0034-sandboxed-pane-and-pty.md) accepts sandboxed Pane and
-interactive Agent PTY as the next implementation milestone. Landlock-only
-fallback, additional platform qualification, additional named seccomp profiles,
-and stronger VM/OCI backends remain deferred.
-The next gate is implementation. Revocation and sandboxed-Pane exit semantics
-are resolved; Rocky/openEuler/Kylin scope remains a product input.
-P1-P6 are complete: FD binding, shim stacking, terminal behavior, Landlock ABI
-distribution, and current strict seccomp runtime compatibility are fixed.
+[ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md) covers the
+capability-controlled `AGENT_EXEC` backend. [ADR 0034](adr/0034-sandboxed-pane-and-pty.md)
+covers the long-lived sandboxed Pane, terminal policy, profile refinement,
+orphan lifecycle, and pidfd-backed identity. The current implementation,
+distribution results, and release boundary are recorded in
+[Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md) and
+[Test Matrices](test-matrices.md).
 
-The explicit userns-disabled matrix passes on Ubuntu 22.04, Ubuntu 24.04, and
-Debian 12 and verifies ordinary Panes remain usable. SELinux-enforcing
-Fedora 44 coverage passes with SELinux `Enforcing`. Bubblewrap 0.5.0 passes the
-complete matrix on all three Ubuntu/Debian VMs. Additional SELinux distributions
-remain open.
-
-Escape probes now cover protected-path hardlinks, shared-PID proc roots, and
-abstract Unix socket namespace isolation.
-
-Capability issue now checks the backend's required-option help contract in
-addition to namespace viability. A backend with an insufficient feature set is
-rejected as `bwrap_version_incompatible` before a capability token is issued.
-Credential boundary tests confirm both network exfiltration and writable
-workspace persistence when the profile and command permit them.
-Landlock ABI 1+ adds an optional ABI-aware write-focused layer inside mandatory
-Bubblewrap confinement; it is not a standalone sandbox backend. Capability
-issue fails closed if the required init helper is missing.
-
-Sandboxed Pane creation is now implemented for Linux: `SESSION_CREATE` and
-`PANE_CREATE` consume a Session-scoped `sandboxed_pane` capability, launch a
-long-lived FD-pinned Bubblewrap shell through the PID-1 shim, persist profile
-and audit metadata atomically, and recover that metadata after qwed restart.
-Restricted terminal output, capability-audited input, interactive Attach input,
-standalone resize, and shared process namespace mode with cgroup-authoritative
-descendant teardown are implemented locally. `pane_exec` commands inherit the
-parent sandbox unless an explicit profile is proven not to broaden it.
-Sandboxed Panes without an operation capability or active attachment become
-durable orphans, expire after 15 minutes, and count against a global admission
-limit. Termination-level Principal revocation stops affected Panes.
-Runtime worker and sandbox-shim liveness/signals are pidfd-backed after
-start-token validation.
+Deferred work is unchanged: aarch64 and openEuler/Kylin/Rocky qualification,
+additional named seccomp profiles, Landlock-only fallback, VM/OCI backends,
+`shell_exec`, cross-Pane orchestration, persistent history, environment
+mutation, and host management. D48 target scope remains a product input.

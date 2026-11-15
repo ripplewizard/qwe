@@ -259,9 +259,14 @@ The current profile is a small denylist, so it does not inherit the
 `clone3`/`rseq`/`statx` compatibility risk of a syscall allowlist. Any future
 allowlist or broader named profile still requires its own target-runtime matrix.
 
-## Follow-up
+## Current Boundary
 
-P1-P6 update ADR 0034. Nested Bubblewrap is not the refinement mechanism after
-Landlock; shim stacking is adopted. Socket denial affects new sockets only.
-The next work is code implementation: FD-bind probe, typed profile refinement,
-capability operations, and the sandboxed-Pane shim.
+P1-P6 and the first sandboxed-Pane implementation gates are closed for the
+current Linux x86_64 product slice. The established invariants remain: shim
+stacking is the refinement mechanism after Landlock, and socket denial affects
+new sockets only.
+
+Further distribution and test expansion is deferred until product scope
+selects the target environments. The open candidates are aarch64,
+openEuler/Kylin/Rocky, additional named seccomp profiles, Landlock-only
+fallback, and VM/OCI backends.

@@ -1,8 +1,8 @@
 # Development Readiness
 
-Status: Stages 1-5 complete; Stage 6.5 accepted; Stages 7 and 8 complete;
-Agent Execution ADR accepted
-Date: 2026-11-14
+Status: Stages 1-8 complete; Agent Execution first delivery complete; ADR 0034
+Linux sandboxed-Pane implementation complete; distribution expansion open
+Date: 2026-11-16
 
 ## Decision
 
@@ -11,8 +11,8 @@ POC evidence audit and production Rust independent manual review are signed.
 macOS remains local/experimental until a public Developer ID milestone.
 
 ADRs 0011-0015 are accepted. qwed now directly supervises workers, and the
-pre-cutover Host path has been removed. The V0 runtime has one Pane and one
-TaskInstance per Session, with database uniqueness constraints.
+pre-cutover Host path has been removed. The current runtime uses Pane-keyed
+workers and TaskInstances, and a Session may contain multiple Panes.
 
 ## Confirmed Inputs
 
@@ -217,72 +217,28 @@ credentials, streaming redaction, read-only observer/push, and merged PTY
 output. Interactive-shell foreground idle and explicit terminal/lost recovery
 semantics are implemented.
 
-Bubblewrap is accepted as the first external sandbox backend under
-[ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md). Core Rust probes pass for
-FD3, Pane-cgroup inheritance, structured child identity, PTY
-resize/signal/job-control behavior, and synchronized parent-death cleanup. The
-capability/profile, backend failure, workspace, protected-path, home, tmp,
-network, sandboxed PTY, `TIOCSTI`, FD3, and cleanup checks pass locally in
-[Experiment 0049](experiments/0049-stage10-sandbox-integration.md). Sandboxed
-restart recovery, worker loss, and Pane teardown pass locally. Broader
-deployment-matrix qualification remains open; the container matrix currently
-proves fail-closed behavior on Ubuntu 22.04, Ubuntu 24.04, and Debian 12 rather
-than successful nested sandbox execution. The real-VM matrix passes the full
-Stage 10 probe on Ubuntu 22.04 and Debian 12. Default Ubuntu 24.04 fails closed
-under its system-wide AppArmor/userns policy; the packaged path-scoped profile
-keeps that restriction enabled while passing the complete Stage 10 probe.
-The explicit userns-disabled matrix passes on Ubuntu 22.04, Ubuntu 24.04, and
-Debian 12, with the sandbox issue rejected and an ordinary Pane command still
-completing in each environment.
-Fedora 44 passes the complete Stage 10 probe while SELinux remains
-`Enforcing`. Bubblewrap 0.5.0, built from the pinned source archive, also passes
-the full probe on all three Ubuntu/Debian VMs, including Ubuntu 24.04 under the
-packaged AppArmor profile.
+Bubblewrap is the first external backend under
+[ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md). Linux `AGENT_EXEC` and the
+[ADR 0034](adr/0034-sandboxed-pane-and-pty.md) sandboxed-Pane implementation
+are complete for the current x86_64 matrix. This includes capability-controlled
+profiles, Landlock and seccomp audit, restricted output, audited input,
+isolated/shared process namespaces, `pane_exec` refinement, orphan lifecycle,
+and pidfd-backed identity.
 
-Protected-path hardlink aliases are rejected before capability issue, including
-hardlinks reached through a symlinked protected directory; shared PID namespace
-`/proc/<pid>/root` access stays bounded, and abstract Unix sockets follow the
-selected network namespace.
-Protected paths and workspace cwd now use
-`openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)`. Absolute protected-path
-symlinks fail closed, commands inherit only expected descriptors, and workspace
-FIFO credential transfer is recorded as an explicit trust-transfer channel.
+Detailed results and deferred distribution scope are maintained only in
+[Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md). The current
+release boundary is:
 
-The optional `strict` named seccomp profile passes pipe-split and PTY execution
-and records the SHA-256 of the exact cBPF program in capability audit metadata.
-Unknown named profiles fail closed.
+- Tier 1 x86_64 targets pass the applicable matrix, including an
+  SELinux-enforcing and an AppArmor-restricted success path.
+- Hosts that deny the required namespace setup fail closed while ordinary
+  Panes remain available.
+- The oldest supported Bubblewrap backend keeps `AGENT_EXEC` compatibility but
+  exposes sandboxed-Pane capability as unavailable.
+- aarch64 and OEM distribution expansion remain open. D48 target scope is still
+  a product input.
 
-Capability issue also verifies that `bwrap --help` contains every
-production-required option. A backend that starts simple namespaces but lacks
-the QWE contract fails with `bwrap_version_incompatible` before token issuance.
-The oldest supported Bubblewrap behavior matrix is now covered by the full
-Stage 10 probe.
-
-Credential boundary tests now confirm both declared exfiltration channels:
-inherited networking reaches a host listener, and a writable workspace retains
-the FD3 credential in a host-visible file.
-
-Landlock ABI 1+ is used as write-focused defense in depth inside mandatory
-Bubblewrap confinement. The handled mask follows the detected ABI, including
-`REFER`, `TRUNCATE`, and ABI 5+ device `IOCTL`. The init helper leaves reads,
-execution, and private `/tmp` available, records the ABI in capability audit
-metadata, and has no Landlock-only fallback path. Capability issue requires the
-helper to be present and executable whenever Landlock is available.
-Fedora 44 ABI 7 verification confirms `/dev` ioctls work while a char-device
-node outside allowed write roots is denied.
-
-[ADR 0034](adr/0034-sandboxed-pane-and-pty.md) implementation now covers
-sandboxed Pane creation, restricted output, audited session/interactive input,
-resize, isolated/shared process namespaces with hard cgroup teardown, and
-`pane_exec` parent-profile refinement. Durable orphan TTL and
-termination-level Principal revocation now stop abandoned sandboxed Panes.
-Live worker/shim identity uses pidfd after start-token validation, with a
-documented `/proc` fallback on kernels without pidfd.
-The current x86_64 matrix requalified the complete sandboxed-Pane path on
-Ubuntu 22.04, Debian 12, Ubuntu 24.04 with the packaged AppArmor profile, and
-Fedora 44 with SELinux `Enforcing`. Default Ubuntu 24.04 still fails closed.
-Bubblewrap 0.5.0 also passes the full matrix where supported and reports
-sandboxed-Pane capability unavailable because FD bind is absent. aarch64 and
-the openEuler/Kylin/Rocky expansion remain open. The adopted decision register
-and terminal output policy are frozen. D12 revocation and D25 Pane-exit
-semantics are resolved; D48 target-distribution scope remains a product input.
+The remaining implementation boundaries are deferred in ADR 0034: additional
+named seccomp profiles, Landlock-only fallback, VM/OCI backends, `shell_exec`,
+cross-Pane orchestration, persistent history, environment mutation, and host
+management.

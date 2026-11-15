@@ -64,6 +64,9 @@
 - [ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md): accepted external
   Bubblewrap sandbox adapter, fail-closed capability profiles, and non-PTY and
   PTY Linux command integration.
+- [ADR 0034](adr/0034-sandboxed-pane-and-pty.md): accepted sandboxed Pane,
+  restricted terminal output, profile refinement, and lifecycle decisions;
+  implemented for the current Linux x86_64 product slice.
 
 ## Development
 
@@ -205,8 +208,9 @@ qwed, worker, `qwe-session-exec`, Bubblewrap, and the optional Landlock init.
   computing base, failure invariants, and fuzz plan.
 - [Terminal Output Policy](terminal-output-policy.md): restricted escape
   sequence filtering and output-to-input injection defenses.
-- [Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md): Bubblewrap FD
-  binding result and remaining nested/terminal PoC gates.
+- [Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md): sandboxed
+  Pane PoC gates, current x86_64 distribution evidence, and deferred release
+  scope.
 
 ## Reading Order
 

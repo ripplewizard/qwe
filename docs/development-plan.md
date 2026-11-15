@@ -1,8 +1,8 @@
 # QWE Development Plan
 
-Status: Stage 6.5 accepted; Stages 7 and 8 complete; Agent Execution Model ADR
-accepted
-Updated: 2026-11-14
+Status: Stage 6.5 accepted; Stages 7 and 8 complete; Agent Execution first
+delivery and Linux sandboxed-Pane implementation complete
+Updated: 2026-11-16
 
 ## Planning Assumptions
 
@@ -545,35 +545,22 @@ read-only observer push, merged PTY output, and foreground shell idle.
 The remaining accepted scope is tracked in
 [Agent Execution Model](agent-execution-model.md).
 
-### Next: Bubblewrap Sandbox Adapter
+### Bubblewrap Sandbox Adapter
 
-Status: [ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md) accepted; the
-Linux `AGENT_EXEC` pipe-split and PTY slice is implemented and passes
-[Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
+Status: Complete for the current Linux x86_64 product slice.
 
-The first slice applies capability-authorized workspace/network/home/tmp/PID
-profiles to Linux `AGENT_EXEC`. It preserves FD3 credentials, Pane cgroups,
-fail-closed behavior, PTY terminal semantics, and internal `TIOCSTI` denial.
-Sandboxed restart recovery and Pane-teardown qualification pass locally and on
-Ubuntu 22.04/Debian 12 real VMs. Ubuntu 24.04 fails closed under the tested
-default AppArmor/userns policy; the packaged path-scoped profile passes with the
-global restriction still enabled. The content-hashed `strict` named seccomp
-denylist passes pipe-split and PTY execution, and capability issue rejects
-backends missing a production-required option. Credential boundary tests confirm
-both network exfiltration and writable-workspace persistence. Landlock ABI 1+
-provides optional ABI-aware write confinement inside mandatory Bubblewrap
-confinement, with capability issue rejecting a missing init helper.
-The userns-disabled matrix passes on all three QWE VMs while ordinary Pane
-commands remain available.
-Fedora 44 passes the complete matrix under SELinux `Enforcing`, and Bubblewrap
-0.5.0 passes the complete matrix on all three Ubuntu/Debian VMs.
-Protected-path hardlinks, shared-PID proc roots, and abstract Unix sockets have
-explicit negative coverage. [ADR 0034](adr/0034-sandboxed-pane-and-pty.md)
-accepts sandboxed Pane and interactive Agent PTY as the next milestone.
-Landlock-only fallback, additional named seccomp profiles, additional platform
-qualification, and VM/OCI backends remain later decisions.
-ADR 0034's P1-P6 PoC gates must close before its PoC-marked decisions become
-implementation contracts.
+[ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md) provides the fail-closed
+`AGENT_EXEC` backend. [ADR 0034](adr/0034-sandboxed-pane-and-pty.md) provides
+the sandboxed Pane, restricted terminal policy, capability-audited input,
+profile refinement, lifecycle authority, and pidfd-backed identity.
+
+Current behavior, distribution evidence, and the release boundary have one
+authoritative detail page:
+[Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md). Deferred work
+includes aarch64 and OEM distribution qualification, additional named seccomp
+profiles, Landlock-only fallback, VM/OCI backends, `shell_exec`, cross-Pane
+orchestration, persistent history, environment mutation, and host management.
+D48 target scope remains a product input.
 
 ## Test and Delivery Gates
 
