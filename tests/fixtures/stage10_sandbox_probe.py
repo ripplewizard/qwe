@@ -550,6 +550,52 @@ def run_positive_probe(
             )["screen"],
             "sandboxed Pane input did not execute",
         )
+        sandboxed_pane_resize = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": low_pane_principal,
+                "operation": "pane_resize",
+                "scope": {"kind": "pane", "pane_id": sandboxed_pane_id},
+                "ttl_ms": 60000,
+            },
+            low_pane_management,
+        )
+        assert sandboxed_pane_resize.get("token"), sandboxed_pane_resize
+        missing_resize_capability = request(
+            socket_path,
+            "SESSION_RESIZE",
+            {
+                "session_id": sandboxed_session_id,
+                "pane_id": sandboxed_pane_id,
+                "rows": 40,
+                "columns": 120,
+            },
+        )
+        assert (
+            missing_resize_capability.get("code") == "capability_missing"
+        ), missing_resize_capability
+        resized = request_with_capability(
+            socket_path,
+            "SESSION_RESIZE",
+            {
+                "session_id": sandboxed_session_id,
+                "pane_id": sandboxed_pane_id,
+                "rows": 40,
+                "columns": 120,
+            },
+            sandboxed_pane_resize["token"],
+        )
+        assert (resized["rows"], resized["columns"]) == (40, 120), resized
+        resized_status = request(
+            socket_path,
+            "PANE_ATTACH",
+            {"pane_id": sandboxed_pane_id},
+        )
+        assert (
+            resized_status["terminal"]["rows"],
+            resized_status["terminal"]["columns"],
+        ) == (40, 120), resized_status
 
     landlock_off_profile = profile(workspace, landlock={"mode": "off"})
     landlock_off = issue_capability(
@@ -1689,6 +1735,7 @@ def run_positive_probe(
         ),
         "sandboxed_pane_restricted_output": "pass",
         "sandboxed_pane_input_audit": "pass",
+        "sandboxed_pane_resize": "pass",
         "pane_input_trust_floor": "pass",
         "fd_bind_probe": "pass",
         "strict_seccomp": "pass",

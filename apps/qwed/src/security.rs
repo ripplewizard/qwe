@@ -296,6 +296,21 @@ pub fn require_pane_input(
     )
 }
 
+pub fn require_pane_resize(
+    store: &Store,
+    auth_context: Option<&AuthContext>,
+    pane_id: &PaneId,
+    now_ms: i64,
+) -> Result<SecurityGrant, ProtocolErrorBody> {
+    authorize(
+        store,
+        auth_context,
+        Authorization::PaneResize(pane_id),
+        now_ms,
+        None,
+    )
+}
+
 pub fn require_command_read(
     store: &Store,
     auth_context: Option<&AuthContext>,
@@ -347,6 +362,7 @@ enum Authorization<'a> {
     AgentExec(&'a PaneId),
     SandboxedPane(&'a str),
     PaneInput(&'a PaneId),
+    PaneResize(&'a PaneId),
     CommandRead,
     CommandTerminate,
 }
@@ -429,6 +445,13 @@ fn authorize(
         }
         Authorization::PaneInput(pane_id) => {
             active.operation == CapabilityOperation::PaneInput
+                && active.scope
+                    == (CapabilityScope::Pane {
+                        pane_id: pane_id.clone(),
+                    })
+        }
+        Authorization::PaneResize(pane_id) => {
+            active.operation == CapabilityOperation::PaneResize
                 && active.scope
                     == (CapabilityScope::Pane {
                         pane_id: pane_id.clone(),

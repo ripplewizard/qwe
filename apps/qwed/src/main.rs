@@ -4767,6 +4767,66 @@ fn client_operation(
             }
             Ok(status)
         }
+        "SESSION_RESIZE" => {
+            let session_id = required_string(&request.payload, "session_id")?;
+            let _resize_guard = context
+                .attachment_lock
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let (pane, sandbox) = {
+                let store = context
+                    .store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let pane = match request.payload.get("pane_id").and_then(Value::as_str) {
+                    Some(pane_id) => {
+                        let pane_id = PaneId::from_str(pane_id)
+                            .map_err(|failure| error("invalid_request", failure.to_string()))?;
+                        store
+                            .find_pane(&pane_id)
+                            .map_err(storage_error)?
+                            .filter(|pane| pane.session_id == session_id)
+                            .ok_or_else(|| {
+                                error("not_found", "Pane does not belong to the requested Session")
+                            })?
+                    }
+                    None => store
+                        .find_pane_for_session(session_id)
+                        .map_err(storage_error)?
+                        .ok_or_else(|| error("terminal_lost", "session has no Pane"))?,
+                };
+                let sandbox = store.find_pane_sandbox(&pane.id).map_err(storage_error)?;
+                if sandbox.is_some() {
+                    security::require_pane_resize(
+                        &store,
+                        request.auth_context.as_ref(),
+                        &pane.id,
+                        now_ms(),
+                    )?;
+                }
+                (pane, sandbox)
+            };
+            if sandbox.is_none() {
+                let mut store = context
+                    .store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                authorize_session_control(
+                    &mut store,
+                    session_id,
+                    &request.payload,
+                    AttachmentOperation::InputResize,
+                    now_ms(),
+                )?;
+            }
+            call_pane_worker(
+                context,
+                &pane.id.to_string(),
+                "SESSION_RESIZE",
+                request.payload.clone(),
+                WORKER_REQUEST_TIMEOUT,
+            )
+        }
         "PANE_STATUS" | "PANE_ATTACH" => {
             let pane_id = required_pane_id(&request.payload)?;
             let pane_key = pane_id.to_string();

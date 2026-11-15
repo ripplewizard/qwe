@@ -1110,6 +1110,23 @@ impl WorkerSession {
         Ok(self.status(session_id))
     }
 
+    fn request_resize(&self, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+        let rows = payload
+            .get("rows")
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| error("invalid_request", "rows must be between 1 and 65535"))?;
+        let columns = payload
+            .get("columns")
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| error("invalid_request", "columns must be between 1 and 65535"))?;
+        let resized = self.resize(rows, columns)?;
+        Ok(json!(resized))
+    }
+
     fn update_resources(
         &self,
         session_id: &str,
@@ -1721,6 +1738,7 @@ fn worker_handle(
         "WORKER_HELLO" | "SESSION_STATUS" => Ok(session.status(session_id)),
         "SESSION_ATTACH" => Ok(session.snapshot(session_id)),
         "SESSION_INPUT" => session.input(session_id, payload),
+        "SESSION_RESIZE" => session.request_resize(payload),
         "SESSION_RESOURCE_UPDATE" => session.update_resources(session_id, payload),
         "TASK_STOP" => session.stop_task(session_id),
         "SESSION_CLOSE" => session.close(session_id),
