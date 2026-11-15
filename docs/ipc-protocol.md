@@ -441,6 +441,12 @@ Stable sandbox reason values are `bwrap_missing`,
 surface. Diagnostics are bounded and sanitized, and clients must treat unknown
 reason values as `unknown`.
 
+Capability issue returns `bwrap_version_incompatible` when `bwrap --version`
+fails or when the backend's help output lacks a production-required option.
+Required options include `--json-status-fd`, `--seccomp`, namespace, bind,
+environment, and lifecycle flags. A version string alone is not treated as a
+compatibility guarantee.
+
 High-trust Principals receive the full diagnostics object. Other authenticated
 Principals receive only `environment`, `failed_stage`, and `target`; stderr,
 backend paths/version, probe time, and sysctl snapshots remain restricted.

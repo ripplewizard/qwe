@@ -195,3 +195,7 @@ fails closed under the tested AppArmor/userns policy. Session/Pane
 startup-program sandboxing, Landlock fallback, init shims, additional platform
 qualification, additional named seccomp profiles, and stronger VM/OCI backends
 remain deferred.
+
+Capability issue now checks the backend's required-option help contract in
+addition to namespace viability. A backend with an insufficient feature set is
+rejected as `bwrap_version_incompatible` before a capability token is issued.

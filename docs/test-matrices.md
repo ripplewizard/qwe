@@ -158,7 +158,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 ## Bubblewrap Sandbox
 
-Rows 001-008 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
+Rows 001-009 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown.
 Ubuntu 22.04 and Debian 12 real VMs pass the complete matrix; Ubuntu 24.04
 returns `sandbox_backend_unavailable` under its tested AppArmor/userns policy.
@@ -175,7 +175,8 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-005 | Authorize only capability-declared sandbox profiles and reject unsandboxed downgrade |
 | SANDBOX-006 | Enforce workspace protected paths, hidden home, private tmp, and network policy |
 | SANDBOX-007 | Recover or terminate sandboxed commands across qwed/worker restart and Pane teardown |
-| SANDBOX-008 | Apply the content-hashed `strict` named seccomp denylist with stable errno behavior, reject unknown profile names, and persist the filter hash in capability audit metadata |
+| SANDBOX-008 | Apply the content-hashed `strict` named seccomp denylist and adapter `TIOCSTI` denial in pipe-split and PTY modes, reject unknown profile names, and persist the filter hash in capability audit metadata |
+| SANDBOX-009 | Reject a Bubblewrap backend whose help output lacks a production-required option before issuing a capability token |
 
 ## Core Object Model
 

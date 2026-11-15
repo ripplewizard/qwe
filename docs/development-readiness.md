@@ -233,3 +233,9 @@ tested AppArmor/userns policy.
 The optional `strict` named seccomp profile passes pipe-split and PTY execution
 and records the SHA-256 of the exact cBPF program in capability audit metadata.
 Unknown named profiles fail closed.
+
+Capability issue also verifies that `bwrap --help` contains every
+production-required option. A backend that starts simple namespaces but lacks
+the QWE contract fails with `bwrap_version_incompatible` before token issuance.
+This runtime check does not replace the still-open oldest-version behavior
+matrix.

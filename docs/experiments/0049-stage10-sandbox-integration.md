@@ -31,12 +31,15 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
 - wrapper and structured child PIDs both inherit the Pane workload cgroup;
 - sandboxed PTY commands preserve terminal size, FD3 credentials, redaction,
   foreground idle, termination, and cgroup ownership;
-- a seccomp filter rejects `TIOCSTI` with `EPERM` while preserving normal PTY
-  operation;
+- a seccomp filter rejects `TIOCSTI` with `EPERM` in pipe-split and PTY modes
+  while preserving normal PTY operation;
 - the `strict` named seccomp profile rejects its configured high-risk syscalls
   with stable return codes in pipe-split and PTY commands, and its
   content-addressed filter hash is present in capability audit metadata;
 - an unavailable Bubblewrap executable fails capability issue closed;
+- a backend with an acceptable `--version` but an incomplete production
+  `--help` option set fails capability issue with
+  `bwrap_version_incompatible`;
 - qwed restart reconnects to the same worker, wrapper, child, profile, and
   events;
 - forced Pane teardown removes the worker, wrapper, child, descendants, and
@@ -177,6 +180,14 @@ module. The real matrices now assert:
 - Ubuntu 24.04 AppArmor -> `uid_map_denied`;
 - unknown stderr -> `unknown` while retaining a bounded, sanitized snapshot.
 
+Capability issue separately checks that `bwrap --help` lists every option used
+by the production adapter. This catches backends that can start simple
+namespaces but cannot support `--json-status-fd`, `--seccomp`, the required
+bind policy, environment controls, or lifecycle flags. A missing option is
+classified as `bwrap_version_incompatible` before a capability token is
+returned. This is a runtime contract probe, not a claim that every supported
+release has already passed the complete behavior matrix.
+
 Protocol errors expose stable `details.reason` with diagnostic context.
 Asynchronous `AGENT_EXEC` startup failures expose the same shape through
 `error_details`. A capability can succeed, then lose Bubblewrap before exec;
@@ -216,7 +227,8 @@ that Bubblewrap cannot mount.
 
 ## Verification
 
-- `just stage10-sandbox`: pass, including the named `strict` seccomp profile.
+- `just stage10-sandbox`: pass, including the named `strict` seccomp profile
+  and the incompatible-backend feature probe.
 - `just stage9-agent-exec`: pass, covering the pre-sandbox agent regression.
 - `just bubblewrap-poc`: pass, 5 tests.
 - `just sandbox-container-matrix`: Ubuntu 22.04, Ubuntu 24.04, and Debian 12
@@ -248,6 +260,8 @@ claim that Bubblewrap succeeds inside a restricted container.
 
 - a successful Ubuntu 24.04 configuration with an approved AppArmor/userns
   policy;
-- other distributions and kernels with user namespaces explicitly disabled; and
+- other distributions and kernels with user namespaces explicitly disabled;
+- full behavioral qualification against the oldest supported Bubblewrap
+  version in addition to the runtime required-option check;
 - additional named seccomp profiles, broader runtime compatibility coverage,
   Landlock, and stronger VM/OCI isolation.

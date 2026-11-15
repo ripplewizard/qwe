@@ -270,12 +270,13 @@ ADR 0033 adds `just bubblewrap-poc`, a Linux-only Rust contract test suite. It
 skips when Bubblewrap is unavailable and currently covers SANDBOX-001 through
 SANDBOX-003: FD3/cgroup/structured child PID, PTY resize/signal/job-control
 semantics, and synchronized `--die-with-parent`. `just stage10-sandbox` covers
-SANDBOX-004 through SANDBOX-008 through qwed, worker, and Bubblewrap, including
+SANDBOX-004 through SANDBOX-009 through qwed, worker, and Bubblewrap, including
 capability authorization, backend failure, workspace, protected paths, home,
 tmp, network policy, sandboxed PTY, `TIOCSTI` denial, qwed restart, worker loss,
-Pane teardown, and the content-hashed `strict` named seccomp denylist. It also
-verifies that a backend failure followed by repair is observed by the next
-capability issue without restarting qwed or the worker.
+Pane teardown, the content-hashed `strict` named seccomp denylist, and rejection
+of a backend missing a production-required option. It also verifies that a
+backend failure followed by repair is observed by the next capability issue
+without restarting qwed or the worker.
 `just sandbox-container-matrix` verifies fail-closed behavior on Ubuntu 22.04,
 Ubuntu 24.04, and Debian 12 when Podman disallows Bubblewrap's nested mount/PID
 setup.

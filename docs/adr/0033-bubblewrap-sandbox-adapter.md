@@ -45,6 +45,10 @@ implement mount or namespace setup itself.
 - A requested sandbox never falls back to unsandboxed execution.
 - Bubblewrap absence, incompatible flags, or disabled unprivileged user
   namespaces return `sandbox_backend_unavailable`.
+- Capability issue inspects `bwrap --help` and fails with
+  `bwrap_version_incompatible` before issuing a token if any production option
+  used by the adapter is absent. This checks observable backend features rather
+  than inferring compatibility from a version string alone.
 - Profile fields that cannot be enforced return `sandbox_profile_unsupported`.
 
 Backend failure reasons must use observable failed-stage evidence, not stderr
@@ -297,12 +301,16 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
 - `just stage10-sandbox` verifies the `strict` named seccomp profile in both
   pipe-split and PTY commands, including denial return codes and the distinct
   seccomp content hash in capability audit metadata.
+- The same probe supplies a backend with a valid `--version` but an incomplete
+  `--help` contract and verifies capability issue fails with
+  `bwrap_version_incompatible` before issuing a token.
 
 Remaining qualification before production:
 
 - explicit user-namespace-disabled configurations on additional distributions;
 - a successful Ubuntu 24.04 AppArmor/userns configuration;
-- Bubblewrap minimum-version/feature matrix;
+- real Bubblewrap minimum-version/feature behavior across the supported release
+  matrix, beyond the runtime required-option probe;
 - additional named seccomp profiles and wider runtime compatibility coverage;
 - broader network escape and filesystem escape probes;
 - credential/file-exfiltration cases;
