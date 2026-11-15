@@ -123,11 +123,13 @@ pub fn validate_sandbox_grant(
     };
     if !matches!(
         operation,
-        CapabilityOperation::AgentExec | CapabilityOperation::SandboxedPane
+        CapabilityOperation::AgentExec
+            | CapabilityOperation::SandboxedPane
+            | CapabilityOperation::PaneExec
     ) {
         return Err(error(
             "invalid_request",
-            "sandbox_profile is only valid for agent_exec or sandboxed_pane capabilities",
+            "sandbox_profile is only valid for agent_exec, sandboxed_pane, or pane_exec capabilities",
         ));
     }
     if profile.version != SANDBOX_PROFILE_VERSION {
@@ -250,6 +252,21 @@ pub fn require_agent_exec(
     )
 }
 
+pub fn require_pane_exec(
+    store: &Store,
+    auth_context: Option<&AuthContext>,
+    pane_id: &PaneId,
+    now_ms: i64,
+) -> Result<SecurityGrant, ProtocolErrorBody> {
+    authorize(
+        store,
+        auth_context,
+        Authorization::PaneExec(pane_id),
+        now_ms,
+        None,
+    )
+}
+
 pub fn require_sandboxed_pane(
     store: &Store,
     auth_context: Option<&AuthContext>,
@@ -351,6 +368,7 @@ enum Authorization<'a> {
     Live,
     Management,
     AgentExec(&'a PaneId),
+    PaneExec(&'a PaneId),
     SandboxedPane(&'a str),
     PaneInput(&'a PaneId),
     PaneResize(&'a PaneId),
@@ -427,6 +445,13 @@ fn authorize(
                         pane_id: pane_id.clone(),
                     })
         }
+        Authorization::PaneExec(pane_id) => {
+            active.operation == CapabilityOperation::PaneExec
+                && active.scope
+                    == (CapabilityScope::Pane {
+                        pane_id: pane_id.clone(),
+                    })
+        }
         Authorization::SandboxedPane(session_id) => {
             active.operation == CapabilityOperation::SandboxedPane
                 && active.scope
@@ -473,7 +498,10 @@ fn command_scope_allowed(
     operation: CapabilityOperation,
 ) -> bool {
     if command.creator_capability_id.as_ref() == Some(&capability.id)
-        && capability.operation == CapabilityOperation::AgentExec
+        && matches!(
+            capability.operation,
+            CapabilityOperation::AgentExec | CapabilityOperation::PaneExec
+        )
         && capability.scope
             == (CapabilityScope::Pane {
                 pane_id: command.pane_id.clone(),

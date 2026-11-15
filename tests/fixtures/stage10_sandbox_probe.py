@@ -699,6 +699,124 @@ def run_positive_probe(
             resized_status["terminal"]["columns"],
         ) == (40, 120), resized_status
 
+        agent_exec_bypass = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": principal_id,
+                "operation": "agent_exec",
+                "scope": {"kind": "pane", "pane_id": sandboxed_pane_id},
+                "ttl_ms": 60000,
+            },
+            management,
+        )
+        assert agent_exec_bypass.get("code") == "pane_exec_required", agent_exec_bypass
+        pane_exec = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": principal_id,
+                "operation": "pane_exec",
+                "scope": {"kind": "pane", "pane_id": sandboxed_pane_id},
+                "ttl_ms": 60000,
+            },
+            management,
+        )
+        assert pane_exec.get("token"), pane_exec
+        pane_exec_command = exec_command(
+            socket_path,
+            pane_exec["token"],
+            sandboxed_pane_id,
+            "/bin/sh",
+            "-c",
+            "printf PANE_EXEC_INHERITED",
+        )
+        pane_exec_done = assert_done(
+            socket_path,
+            pane_exec["token"],
+            pane_exec_command,
+        )
+        pane_exec_events = events(
+            socket_path,
+            pane_exec["token"],
+            pane_exec_command["command_id"],
+        )
+        assert decode_stream(pane_exec_events, "stdout") == b"PANE_EXEC_INHERITED"
+        pane_exec_status = started_sandbox(
+            socket_path,
+            pane_exec["token"],
+            pane_exec_command["command_id"],
+        )
+        assert (
+            pane_exec_status["sandbox"]["profile"] == read_only_profile
+        ), pane_exec_status
+        assert pane_exec_done["state"] == "done", pane_exec_done
+        pane_exec_credential = exec_command(
+            socket_path,
+            pane_exec["token"],
+            sandboxed_pane_id,
+            "/bin/sh",
+            "-c",
+            "cat <&3",
+            credential="CMD_KEY",
+        )
+        assert_done(socket_path, pane_exec["token"], pane_exec_credential)
+        pane_credential_events = events(
+            socket_path,
+            pane_exec["token"],
+            pane_exec_credential["command_id"],
+        )
+        assert (
+            decode_stream(pane_credential_events, "stdout") == b"[REDACTED]"
+        ), pane_credential_events
+
+        refined_profile = dict(read_only_profile)
+        refined_profile["seccomp"] = {"mode": "named", "profile": "strict"}
+        refined_pane_exec = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": principal_id,
+                "operation": "pane_exec",
+                "scope": {"kind": "pane", "pane_id": sandboxed_pane_id},
+                "sandbox_profile": refined_profile,
+                "ttl_ms": 60000,
+            },
+            management,
+        )
+        assert refined_pane_exec.get("token"), refined_pane_exec
+        refined_command = exec_command(
+            socket_path,
+            refined_pane_exec["token"],
+            sandboxed_pane_id,
+            "/bin/sh",
+            "-c",
+            "printf PANE_EXEC_REFINED",
+        )
+        assert_done(socket_path, refined_pane_exec["token"], refined_command)
+        refined_events = events(
+            socket_path,
+            refined_pane_exec["token"],
+            refined_command["command_id"],
+        )
+        assert decode_stream(refined_events, "stdout") == b"PANE_EXEC_REFINED"
+
+        broadened_profile = dict(read_only_profile)
+        broadened_profile["workspace_mode"] = "read_write"
+        broadened = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": principal_id,
+                "operation": "pane_exec",
+                "scope": {"kind": "pane", "pane_id": sandboxed_pane_id},
+                "sandbox_profile": broadened_profile,
+                "ttl_ms": 60000,
+            },
+            management,
+        )
+        assert broadened.get("code") == "sandbox_profile_unsupported", broadened
+
         shared_session_id = "stage10-sandboxed-pane-shared"
         shared_profile = profile(workspace)
         shared_profile["workspace_mode"] = "read_write"
@@ -1908,6 +2026,7 @@ def run_positive_probe(
         "sandboxed_pane_input_audit": "pass",
         "sandboxed_pane_attach_input_audit": "pass",
         "sandboxed_pane_resize": "pass",
+        "pane_exec_refinement": "pass",
         "sandboxed_pane_shared_namespace": sandboxed_shared_result,
         "pane_input_trust_floor": "pass",
         "fd_bind_probe": "pass",

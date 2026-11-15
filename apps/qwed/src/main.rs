@@ -717,13 +717,21 @@ fn sandbox_json_for_command(
     let Some(capability) = capability else {
         return Ok(None);
     };
-    let Some(profile) = capability.sandbox_profile else {
-        return Ok(None);
+    let (profile, audit) = if let Some(profile) = capability.sandbox_profile {
+        (profile, capability.sandbox_audit)
+    } else {
+        let Some(parent) = store
+            .find_pane_sandbox(&command.pane_id)
+            .map_err(storage_error)?
+        else {
+            return Ok(None);
+        };
+        (parent.profile, Some(parent.audit))
     };
     Ok(Some(json!({
         "enforced": true,
         "profile": profile,
-        "audit": capability.sandbox_audit,
+        "audit": audit,
         "risk": command.sandbox_risk,
         "wrapper_pid": command.process_identity.as_ref().map(|identity| identity.pid),
         "child_pid": null
@@ -4272,6 +4280,40 @@ fn security_capability_issue(
         .map(serde_json::from_value::<SandboxProfile>)
         .transpose()
         .map_err(|failure| error("invalid_request", failure.to_string()))?;
+    let target_pane_sandbox = match (&operation, &scope) {
+        (
+            CapabilityOperation::AgentExec | CapabilityOperation::PaneExec,
+            CapabilityScope::Pane { pane_id },
+        ) => context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .find_pane_sandbox(pane_id)
+            .map_err(storage_error)?,
+        _ => None,
+    };
+    if operation == CapabilityOperation::AgentExec && target_pane_sandbox.is_some() {
+        return Err(error(
+            "pane_exec_required",
+            "agent_exec on a sandboxed Pane requires a pane_exec capability",
+        ));
+    }
+    if operation == CapabilityOperation::PaneExec {
+        let parent = target_pane_sandbox.as_ref().ok_or_else(|| {
+            error(
+                "invalid_request",
+                "pane_exec requires a sandboxed target Pane",
+            )
+        })?;
+        if let Some(child) = sandbox_profile.as_ref() {
+            qwe_core::RefinedSandboxProfile::new(&parent.profile, child).map_err(|failure| {
+                error(
+                    "sandbox_profile_unsupported",
+                    format!("invalid pane_exec profile refinement: {failure}"),
+                )
+            })?;
+        }
+    }
     security::validate_sandbox_grant(operation, sandbox_profile.as_ref())?;
     if operation == CapabilityOperation::SandboxedPane
         && let Some(profile) = sandbox_profile.as_ref()
@@ -4307,13 +4349,13 @@ fn security_capability_issue(
     }
     let sandbox_grant = if let Some(profile) = &sandbox_profile {
         let audit = match operation {
-            CapabilityOperation::AgentExec => {
+            CapabilityOperation::AgentExec | CapabilityOperation::PaneExec => {
                 let pane_id = match &scope {
                     CapabilityScope::Pane { pane_id } => pane_id,
                     _ => {
                         return Err(error(
                             "invalid_request",
-                            "agent_exec sandbox_profile requires a Pane scope",
+                            "sandbox_profile requires a Pane scope",
                         ));
                     }
                 };
@@ -4609,25 +4651,55 @@ fn client_operation(
                 ));
             }
             let pane_id = required_pane_id(&request.payload)?;
-            let (pane, grant) = {
+            let (pane, sandbox, grant) = {
                 let store = context
                     .store
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let grant = security::require_agent_exec(
-                    &store,
-                    request.auth_context.as_ref(),
-                    &pane_id,
-                    now_ms(),
-                )?;
                 let pane = store
                     .find_pane(&pane_id)
                     .map_err(storage_error)?
                     .ok_or_else(|| error("not_found", "Pane not found"))?;
-                (pane, grant)
+                let sandbox = store.find_pane_sandbox(&pane_id).map_err(storage_error)?;
+                let grant = if sandbox.is_some() {
+                    security::require_pane_exec(
+                        &store,
+                        request.auth_context.as_ref(),
+                        &pane_id,
+                        now_ms(),
+                    )?
+                } else {
+                    security::require_agent_exec(
+                        &store,
+                        request.auth_context.as_ref(),
+                        &pane_id,
+                        now_ms(),
+                    )?
+                };
+                (pane, sandbox, grant)
             };
             let mut payload = request.payload.clone();
-            let sandbox_profile = grant.capability.sandbox_profile.clone();
+            let (sandbox_profile, sandbox_audit) = if let Some(sandbox) = &sandbox {
+                (
+                    Some(
+                        grant
+                            .capability
+                            .sandbox_profile
+                            .clone()
+                            .unwrap_or_else(|| sandbox.profile.clone()),
+                    ),
+                    grant
+                        .capability
+                        .sandbox_audit
+                        .clone()
+                        .or_else(|| Some(sandbox.audit.clone())),
+                )
+            } else {
+                (
+                    grant.capability.sandbox_profile.clone(),
+                    grant.capability.sandbox_audit.clone(),
+                )
+            };
             let credential_name = match request.payload.get("credential") {
                 Some(value) => Some(
                     value
@@ -4661,7 +4733,7 @@ fn client_operation(
                 payload,
                 WORKER_REQUEST_TIMEOUT,
             )?;
-            if let Some(audit) = &grant.capability.sandbox_audit
+            if let Some(audit) = &sandbox_audit
                 && let Some(sandbox) = status.get_mut("sandbox").and_then(Value::as_object_mut)
             {
                 sandbox.insert("audit".into(), json!(audit));
