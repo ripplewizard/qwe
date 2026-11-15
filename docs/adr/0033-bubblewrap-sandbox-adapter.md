@@ -37,6 +37,9 @@ credential exposure, lifecycle, and fail-closed behavior.
 The first sandbox backend is an external `bwrap` executable. QWE does not
 implement mount or namespace setup itself.
 
+- `QWE_BWRAP_PATH` selects an explicit executable; otherwise QWE resolves
+  `bwrap` from the worker PATH. The packaged systemd PATH includes
+  `/opt/local/bin` before distro paths.
 - The backend is Linux-only.
 - macOS reports `unsupported_platform`.
 - A requested sandbox never falls back to unsandboxed execution.

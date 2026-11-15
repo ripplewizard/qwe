@@ -880,6 +880,7 @@ def run_backend_unavailable_probe(qwed, root):
     empty_path.mkdir()
     env = os.environ.copy()
     env["PATH"] = str(empty_path)
+    env.pop("QWE_BWRAP_PATH", None)
     process = start_qwed(qwed, socket_path, log_path, env=env)
     try:
         management = Path(
@@ -976,6 +977,7 @@ def main():
     try:
         qwed_env = os.environ.copy()
         qwed_env["QWE_SANDBOX_HOST_SECRET"] = HOST_ENV_SECRET
+        qwed_env["QWE_BWRAP_PATH"] = shutil.which("bwrap")
         qwed = start_qwed(
             args.qwed,
             args.socket,

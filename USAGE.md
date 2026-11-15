@@ -264,6 +264,10 @@ client-supplied `sandbox_profile`; missing Bubblewrap fails closed. Sandboxed
 PTY commands preserve FD3 credentials and terminal semantics while denying
 `TIOCSTI`.
 
+By default QWE resolves `bwrap` from the qwed service PATH. Set
+`QWE_BWRAP_PATH=/opt/local/bin/bwrap` to pin a compiled installation. The
+packaged systemd unit places `/opt/local/bin` before distro paths.
+
 Revoke a Principal subtree:
 
 ```sh

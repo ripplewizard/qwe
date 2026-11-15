@@ -113,6 +113,7 @@ The same probe was run across available Bubblewrap and distribution versions:
 | Distribution | Bubblewrap | Context | `lo` flags | 127.0.0.1 connect | NoNewPrivs |
 |---|---:|---|---:|---|---|
 | Fedora 35 | 0.5.0 | unprivileged | `0x49` | pass | pass |
+| Fedora 35 | 0.13.1 | compiled install at `/opt/local/bin/bwrap` | `0x49` | pass | pass |
 | Ubuntu 22.04 | 0.6.1 | unprivileged | `0x49` | pass | pass |
 | Debian 12 | 0.8.0 | unprivileged | `0x49` | pass | pass |
 | Ubuntu 24.04 | 0.9.0 | unprivileged, AppArmor restriction temporarily disabled | `0x49` | pass | pass |
@@ -121,6 +122,11 @@ The same probe was run across available Bubblewrap and distribution versions:
 `kernel.apparmor_restrict_unprivileged_userns=1` after the probe.
 These are verified versions, not a guarantee for future Bubblewrap releases;
 the loopback probe must run whenever the backend version changes.
+
+The compiled 0.13.1 installation is selected explicitly through
+`QWE_BWRAP_PATH` in Stage 10. The packaged systemd unit likewise puts
+`/opt/local/bin` before distro paths, avoiding a mismatch between an interactive
+shell and the qwed service.
 
 ### Backend failure classification
 

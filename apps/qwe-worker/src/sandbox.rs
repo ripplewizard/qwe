@@ -15,6 +15,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BubblewrapSupport {
     pub version: String,
+    pub path: PathBuf,
     pub probe_time_ms: i64,
 }
 
@@ -26,7 +27,9 @@ pub struct BubblewrapProbeFailure {
 
 pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
     let mut evidence = ProbeEvidence::collect();
-    let version = Command::new("bwrap")
+    let executable = bubblewrap_executable();
+    evidence.backend_path = executable.display().to_string();
+    let version = Command::new(&executable)
         .arg("--version")
         .output()
         .map_err(|failure| {
@@ -46,7 +49,7 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
         ));
     }
     evidence.backend_version = String::from_utf8_lossy(&version.stdout).trim().to_string();
-    let mut child = Command::new("bwrap")
+    let mut child = Command::new(&executable)
         .args([
             "--ro-bind",
             "/usr",
@@ -89,6 +92,7 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
             Ok(Some(status)) if status.success() => {
                 return Ok(BubblewrapSupport {
                     version: evidence.backend_version,
+                    path: executable,
                     probe_time_ms: evidence.probe_time_ms,
                 });
             }
@@ -130,6 +134,7 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
 
 #[derive(Debug, Clone)]
 struct ProbeEvidence {
+    backend_path: String,
     backend_version: String,
     probe_time_ms: i64,
     stderr: String,
@@ -142,6 +147,7 @@ struct ProbeEvidence {
 impl ProbeEvidence {
     fn collect() -> Self {
         Self {
+            backend_path: bubblewrap_executable().display().to_string(),
             backend_version: "unavailable".into(),
             probe_time_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -178,6 +184,7 @@ fn probe_failure(
             reason: reason.into(),
             diagnostics: json!({
                 "backend_version": evidence.backend_version,
+                "backend_path": evidence.backend_path,
                 "probe_time_ms": evidence.probe_time_ms,
                 "environment": if evidence.container { "container" } else { "host" },
                 "failed_stage": failed_stage,
@@ -217,6 +224,14 @@ fn classify_probe_failure(evidence: &ProbeEvidence) -> &'static str {
         return "userns_create_denied";
     }
     "unknown"
+}
+
+#[must_use]
+pub fn bubblewrap_executable() -> PathBuf {
+    std::env::var_os("QWE_BWRAP_PATH")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("bwrap"))
 }
 
 fn read_sysctl(path: &str) -> Option<String> {
@@ -423,7 +438,7 @@ pub fn bubblewrap_invocation(
     args.extend(arguments.iter().cloned());
 
     Ok(BubblewrapInvocation {
-        executable: PathBuf::from("bwrap"),
+        executable: bubblewrap_executable(),
         arguments: args,
     })
 }
@@ -572,6 +587,7 @@ mod tests {
 
     fn evidence(stderr: &str) -> ProbeEvidence {
         ProbeEvidence {
+            backend_path: "/opt/local/bin/bwrap".into(),
             backend_version: "bubblewrap test".into(),
             probe_time_ms: 1,
             stderr: stderr.into(),

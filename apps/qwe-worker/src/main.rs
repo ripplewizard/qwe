@@ -167,6 +167,7 @@ fn sandbox_probe(payload: &Value) -> Result<Value, ProtocolErrorBody> {
     Ok(json!({
         "available": true,
         "version": support.version,
+        "path": support.path,
         "probe_time_ms": support.probe_time_ms,
         "fresh": true
     }))

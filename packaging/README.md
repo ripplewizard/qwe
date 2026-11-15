@@ -39,6 +39,10 @@ systemctl --user daemon-reload
 systemctl --user enable --now qwe.service
 ```
 
+The installed unit prefers `/opt/local/bin/bwrap` before the distro
+`/usr/bin/bwrap`. Set `QWE_BWRAP_PATH` in the user service environment to pin
+another compiled Bubblewrap executable.
+
 The unit uses the systemd credentials directory when the user adds an
 encrypted credential entry such as:
 
