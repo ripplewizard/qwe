@@ -230,6 +230,9 @@ than successful nested sandbox execution. The real-VM matrix passes the full
 Stage 10 probe on Ubuntu 22.04 and Debian 12. Default Ubuntu 24.04 fails closed
 under its system-wide AppArmor/userns policy; the packaged path-scoped profile
 keeps that restriction enabled while passing the complete Stage 10 probe.
+The explicit userns-disabled matrix passes on Ubuntu 22.04, Ubuntu 24.04, and
+Debian 12, with the sandbox issue rejected and an ordinary Pane command still
+completing in each environment.
 
 The optional `strict` named seccomp profile passes pipe-split and PTY execution
 and records the SHA-256 of the exact cBPF program in capability audit metadata.

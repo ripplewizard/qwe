@@ -295,8 +295,10 @@ the complete Stage 10 probe.
 `just sandbox-landlock-vm ubuntu2404` runs the init directly against Landlock
 ABI 4 and verifies `REFER` rename denial and `TRUNCATE` denial outside allowed
 write roots.
-`just sandbox-userns-disabled-vm` temporarily disables userns on Ubuntu 22.04
-and requires classified `userns_disabled`, restoring sysctls afterward.
+`just sandbox-userns-disabled-vm-matrix` temporarily disables userns on Ubuntu
+22.04, Ubuntu 24.04, and Debian 12, requires classified `userns_disabled`,
+restores sysctls afterward, and verifies an ordinary Pane command still
+completes.
 `just sandbox-systemd-properties` verifies Bubblewrap RW workspace mounts under
 the packaged user-service hardening properties.
 `just sandbox-systemd-service-smoke` exercises the full qwed service lifecycle:

@@ -307,9 +307,10 @@ that Bubblewrap cannot mount.
   Ubuntu 24.04, verifies all three supported Bubblewrap attachment paths load
   while the global restriction remains enabled, and passes the complete Stage
   10 probe.
-- `just sandbox-userns-disabled-vm`: temporarily sets the Ubuntu 22.04
-  namespace sysctls to zero, verifies reason `userns_disabled`, and restores
-  the original sysctl values through a shell trap.
+- `just sandbox-userns-disabled-vm-matrix`: temporarily sets the namespace
+  sysctls to zero on Ubuntu 22.04, Ubuntu 24.04, and Debian 12, verifies reason
+  `userns_disabled`, executes an ordinary Pane command successfully, and
+  restores the original sysctl values through a shell trap.
 - `just sandbox-systemd-properties`: runs Bubblewrap 0.13.1 under the packaged
   `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`, and
   `PrivateTmp` properties. RW workspace writes pass under both `/run/user` and
@@ -325,7 +326,8 @@ claim that Bubblewrap succeeds inside a restricted container.
 
 ## Not Yet Validated
 
-- other distributions and kernels with user namespaces explicitly disabled;
+- SELinux-enforcing distributions and other kernels with user namespaces
+  explicitly disabled;
 - full behavioral qualification against the oldest supported Bubblewrap
   version in addition to the runtime required-option check;
 - additional named seccomp profiles, broader runtime compatibility coverage,

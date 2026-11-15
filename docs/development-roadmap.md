@@ -197,6 +197,10 @@ startup-program sandboxing, Landlock-only fallback, terminal/signal init shim
 responsibilities, additional platform qualification, additional named seccomp
 profiles, and stronger VM/OCI backends remain deferred.
 
+The explicit userns-disabled matrix passes on Ubuntu 22.04, Ubuntu 24.04, and
+Debian 12 and verifies ordinary Panes remain usable. SELinux-enforcing
+distribution coverage remains open.
+
 Capability issue now checks the backend's required-option help contract in
 addition to namespace viability. A backend with an insufficient feature set is
 rejected as `bwrap_version_incompatible` before a capability token is issued.

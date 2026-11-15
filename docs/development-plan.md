@@ -563,6 +563,8 @@ backends missing a production-required option. Credential boundary tests confirm
 both network exfiltration and writable-workspace persistence. Landlock ABI 1+
 provides optional ABI-aware write confinement inside mandatory Bubblewrap
 confinement, with capability issue rejecting a missing init helper.
+The userns-disabled matrix passes on all three QWE VMs while ordinary Pane
+commands remain available.
 Session/Pane startup-program sandboxing, Landlock-only fallback, additional
 named seccomp profiles, additional platform qualification, and VM/OCI backends
 remain later decisions.
@@ -594,7 +596,7 @@ just stage9-check
 just stage10-check
 just sandbox-container-matrix
 just sandbox-vm-matrix
-just sandbox-userns-disabled-vm
+just sandbox-userns-disabled-vm-matrix
 just sandbox-systemd-properties
 just sandbox-systemd-service-smoke
 just stage4-capabilities
