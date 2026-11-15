@@ -30,7 +30,7 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 | D8 | `pane_input` authority | Adopted | Treated as arbitrary code execution in the target Pane |
 | D9 | Target-type grading | Adopted | Sandboxed Pane input is ordinary authority; unsandboxed Pane input is separately high-trust and denied by default |
 | D14 | Nested profile ordering | Adopted | Stackable fields may only tighten; fixed fields must equal the parent |
-| D15 | Nested enforcement mechanism | PoC | Prefer shim-applied Landlock, seccomp, and no-new-privileges; no nested Bubblewrap until tested |
+| D15 | Nested enforcement mechanism | Adopted after P2 | Use shim-stacked Landlock, seccomp, and no-new-privileges; do not use nested Bubblewrap as the refinement mechanism |
 | D32 | Pane credentials | Adopted | Long-lived Pane holds no FD3; credentials remain single-command |
 | D38 | Sandbox-originated path influence | Adopted | Sandbox Agent influence through workspace is in scope even though same-UID host processes are excluded |
 
@@ -88,12 +88,13 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 - **D14 adopted:** stackable fields may only tighten. Fixed fields must equal the
   parent. This is enforced during typed profile construction, not only at
   command dispatch.
-- **D15 PoC:** determine whether nested Bubblewrap is possible under strict
-  seccomp. Preferred implementation is shim-stacked Landlock, seccomp, and
-  `no_new_privs`, which are monotonic at the kernel layer.
-- **D16 PoC:** if nesting closes networking without a new network namespace,
-  only socket creation may be denied. Existing sockets remain usable; this
-  weaker semantic must be visible.
+- **D15 adopted after P2:** strict seccomp alone permits nested Bubblewrap, but
+  once Landlock is applied the inner Bubblewrap cannot initialize its uid map.
+  Refinement therefore uses shim-stacked Landlock, seccomp, and
+  `no_new_privs`, which remain monotonic at the kernel layer.
+- **D16 adopted after P2:** without a new network namespace, refinement can
+  deny new `socket(2)` calls but cannot invalidate inherited socket FDs.
+  Existing sockets remain usable and this weaker semantic is explicit.
 - **D17 adopted:** profiles remain versioned and deny unknown fields. Older
   readers reject unknown enum variants with `sandbox_profile_unsupported`.
 
@@ -101,12 +102,13 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 
 - **D18 adopted:** the shim is responsible for `setsid`, `TIOCSCTTY`, signal
   forwarding, child reaping, and loading stacked Landlock/seccomp policy for a
-  sandboxed Pane. Ordinary `AGENT_EXEC` keeps its current non-terminal path.
-- **D19 PoC:** verify whether resize only needs `TIOCSWINSZ` on the PTY master
-  and kernel-delivered `SIGWINCH` in the PID namespace. Keep winsize handling
-  out of the shim if the experiment proves it unnecessary.
-- **D20 adopted:** when the shim is PID namespace init, it explicitly handles
-  SIGTERM, SIGINT, and SIGCHLD. Default-ignored signals are not acceptable.
+  sandboxed Pane. It does not forward winsize. Ordinary `AGENT_EXEC` keeps its
+  current non-terminal path.
+- **D19 resolved by P3:** `TIOCSWINSZ` on the qwed-owned PTY master delivers
+  SIGWINCH to the foreground process group without shim involvement.
+- **D20 adopted; P4 pass:** when the shim is PID namespace init, it explicitly
+  handles SIGTERM, SIGINT, and SIGCHLD. Default-ignored signals are not
+  acceptable.
 - **D21 adopted:** the shim applies no-new-privileges, dumpability suppression,
   and seccomp denial of ptrace. It never passes its control-channel FD to the
   target shell.
@@ -198,20 +200,20 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 | ID | Question | Decisions |
 |---|---|---|
 | P1 | First Bubblewrap release with FD binding; exact feature probe | D1, D40 |
-| P2 | Nested Bubblewrap feasibility; sufficiency of Landlock/seccomp stacking | D15, D16 |
-| P3 | SIGWINCH delivery and `tcgetpgrp` under PID namespace | D18, D19 |
-| P4 | Shim PID-1 signal and child-reaping behavior | D20 |
+| P2 | Nested Bubblewrap feasibility; sufficiency of Landlock/seccomp stacking | D15/D16 resolved; pass |
+| P3 | SIGWINCH delivery and `tcgetpgrp` under PID namespace | D18, D19; pass |
+| P4 | Shim PID-1 signal and child-reaping behavior | D20; pass |
 | P5 | Target-distribution Landlock ABI distribution | D5, D48 |
 | P6 | Named seccomp runtime compatibility | D44 |
 
-P1 evidence is recorded in
-[Experiment 0051](../experiments/0051-sandbox-pane-poc-gates.md). P2-P4 remain
-pending and their decisions are not implementation contracts yet.
+P1-P4 evidence is recorded in
+[Experiment 0051](../experiments/0051-sandbox-pane-poc-gates.md). P5/P6 remain
+open.
 
 ## Implementation Order
 
 1. Freeze the adopted decision register and terminal output policy.
-2. Run P1, P2, and P3/P4; update only the PoC-marked decisions.
+2. P1-P4 are complete; nested refinement and minimal shim behavior are fixed.
 3. Add `landlock` to the typed profile and enforce effective-level audit.
 4. Implement sandboxed Pane capability, shim, lifecycle, and nested refinement.
 5. Implement `pane_input`, `pane_resize`, bounded audit, and terminal filtering.

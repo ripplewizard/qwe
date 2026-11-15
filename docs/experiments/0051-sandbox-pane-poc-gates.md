@@ -1,7 +1,13 @@
 # Experiment 0051: Sandboxed Pane PoC Gates
 
 Date: 2026-11-15
-Status: P1 pass; P2-P4 pending
+Status: P1-P4 pass; P5-P6 pending
+
+Run P2-P4 contract probes with:
+
+```sh
+just sandbox-pane-poc
+```
 
 ## P1: Bubblewrap FD Binding
 
@@ -52,7 +58,7 @@ Bubblewrap check and must not replace it with path-only assumptions.
 
 ## P2: Nested Sandbox
 
-Status: pending.
+Status: pass.
 
 Questions:
 
@@ -62,9 +68,30 @@ Questions:
   `no_new_privs` sufficient for only-tighten behavior?
 - Can network socket creation be denied without changing existing sockets?
 
+### Result
+
+- strict seccomp alone does **not** prevent nested Bubblewrap;
+- a nested Bubblewrap succeeds when the outer QWE profile uses
+  `landlock:off` and the strict syscall denylist;
+- with QWE's normal Landlock write rules, nested Bubblewrap fails while writing
+  `/proc/self/uid_map`; the inner setup cannot preserve the outer policy;
+- therefore nested Bubblewrap is not a reliable monotonic mechanism after
+  Landlock is applied.
+
+The supported design direction is shim-stacked Landlock, seccomp, and
+no-new-privileges. D15 is resolved.
+
+A dedicated seccomp filter denied `socket(2)` with `EPERM` while an inherited
+Unix stream socket continued to send data. D16 is therefore explicit: socket
+creation can be denied monotonically, but existing FDs remain usable.
+
+The same nested-success/Landlock-denial pair also passes Stage 10 with the
+Bubblewrap 0.5.0 matrix on Ubuntu 22.04, Ubuntu 24.04 with AppArmor, and Debian
+12.
+
 ## P3: SIGWINCH and Foreground Process Group
 
-Status: pending.
+Status: pass.
 
 Questions:
 
@@ -73,9 +100,16 @@ Questions:
 - Does `tcgetpgrp` report the expected process group from the shim?
 - Can winsize synchronization remain outside the shim?
 
+### Result
+
+The Bubblewrap contract test traps SIGWINCH inside an interactive shell after
+`TIOCSWINSZ` on the host-owned PTY master. The shell receives `WINCH_SEEN`, and
+`tcgetpgrp(master)` remains stable across resize. Kernel terminal handling is
+sufficient; the shim does not need to forward window size.
+
 ## P4: Shim PID-1 Behavior
 
-Status: pending.
+Status: pass.
 
 Questions:
 
@@ -83,7 +117,20 @@ Questions:
 - Does SIGCHLD handling reap all descendants without creating zombies?
 - What happens when foreground process and shell both exit?
 
+### Result
+
+- a PID-1 process with no SIGTERM handler ignores SIGTERM;
+- explicit SIGTERM and SIGINT handlers receive both signals;
+- an explicit SIGCHLD handler reaps the child without leaving a zombie;
+- SIGINT observation may terminate the outer wrapper by SIGINT even after the
+  target's handler runs, so shutdown status must not be inferred from wrapper
+  exit alone.
+
+The first sandboxed-Pane shim must explicitly install SIGTERM, SIGINT, and
+SIGCHLD handling.
+
 ## Follow-up
 
-P1 result updates ADR 0034 D1. P2-P4 remain implementation gates for sandboxed
-Pane; no Pane sandbox code should assume their outcomes.
+P1-P4 update ADR 0034. Nested Bubblewrap is not the refinement mechanism after
+Landlock; shim stacking is adopted. Socket denial affects new sockets only.
+P5/P6 remain pending.
