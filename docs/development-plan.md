@@ -587,6 +587,7 @@ just stage9-check
 just stage10-check
 just sandbox-container-matrix
 just sandbox-vm-matrix
+just sandbox-userns-disabled-vm
 just stage4-capabilities
 just stage4-check
 just credential-smoke

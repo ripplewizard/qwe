@@ -479,6 +479,30 @@ pub struct ResponseEnvelope {
 pub struct ProtocolErrorBody {
     pub code: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<ProtocolErrorDetails>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProtocolErrorDetails {
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub diagnostics: serde_json::Value,
+}
+
+impl ProtocolErrorBody {
+    #[must_use]
+    pub fn with_details(
+        mut self,
+        reason: impl Into<String>,
+        diagnostics: serde_json::Value,
+    ) -> Self {
+        self.details = Some(ProtocolErrorDetails {
+            reason: reason.into(),
+            diagnostics,
+        });
+        self
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -665,6 +689,24 @@ mod tests {
         let debug = format!("{context:?}");
         assert!(debug.contains("<redacted>"));
         assert!(!debug.contains("secret-capability"));
+    }
+
+    #[test]
+    fn protocol_error_details_are_optional_and_backward_compatible() {
+        let legacy: ProtocolErrorBody = serde_json::from_value(serde_json::json!({
+            "code": "invalid_request",
+            "message": "missing field"
+        }))
+        .unwrap();
+        assert!(legacy.details.is_none());
+
+        let detailed = legacy.with_details(
+            "mount_denied",
+            serde_json::json!({"failed_stage": "mount", "target": "/proc"}),
+        );
+        let encoded = serde_json::to_value(&detailed).unwrap();
+        assert_eq!(encoded["details"]["reason"], "mount_denied");
+        assert_eq!(encoded["details"]["diagnostics"]["target"], "/proc");
     }
 
     #[test]

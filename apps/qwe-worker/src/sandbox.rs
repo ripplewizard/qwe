@@ -1,27 +1,51 @@
 use qwe_core::{
     SandboxHomeMode, SandboxNetworkMode, SandboxProcessMode, SandboxProfile, SandboxWorkspaceMode,
 };
+use qwe_protocol::ProtocolErrorDetails;
+use serde_json::json;
+use std::fs;
 use std::io;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BubblewrapSupport {
     pub version: String,
+    pub probe_time_ms: i64,
 }
 
-pub fn probe_bubblewrap() -> Result<BubblewrapSupport, String> {
+#[derive(Debug, Clone)]
+pub struct BubblewrapProbeFailure {
+    pub message: String,
+    pub details: ProtocolErrorDetails,
+}
+
+pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
+    let mut evidence = ProbeEvidence::collect();
     let version = Command::new("bwrap")
         .arg("--version")
         .output()
-        .map_err(|failure| format!("bubblewrap is unavailable: {failure}"))?;
+        .map_err(|failure| {
+            evidence.stderr = sanitize_stderr(failure.to_string().as_bytes());
+            probe_failure(
+                "bwrap_missing",
+                format!("bubblewrap is unavailable: {failure}"),
+                &evidence,
+            )
+        })?;
     if !version.status.success() {
-        return Err("bubblewrap --version failed".into());
+        evidence.stderr = sanitize_stderr(&version.stderr);
+        return Err(probe_failure(
+            "bwrap_version_incompatible",
+            "bubblewrap --version failed",
+            &evidence,
+        ));
     }
+    evidence.backend_version = String::from_utf8_lossy(&version.stdout).trim().to_string();
     let mut child = Command::new("bwrap")
         .args([
             "--ro-bind",
@@ -49,20 +73,32 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, String> {
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
-        .map_err(|failure| format!("failed to start bubblewrap probe: {failure}"))?;
+        .map_err(|failure| {
+            evidence.stderr = sanitize_stderr(failure.to_string().as_bytes());
+            probe_failure(
+                "bwrap_missing",
+                format!("failed to start bubblewrap probe: {failure}"),
+                &evidence,
+            )
+        })?;
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => {
                 return Ok(BubblewrapSupport {
-                    version: String::from_utf8_lossy(&version.stdout).trim().to_string(),
+                    version: evidence.backend_version,
+                    probe_time_ms: evidence.probe_time_ms,
                 });
             }
             Ok(Some(status)) => {
-                return Err(format!(
-                    "bubblewrap user/PID namespace probe exited with {status}"
+                evidence.stderr = read_stderr(&mut child);
+                let reason = classify_probe_failure(&evidence);
+                return Err(probe_failure(
+                    reason,
+                    format!("bubblewrap user/PID namespace probe exited with {status}"),
+                    &evidence,
                 ));
             }
             Ok(None) if Instant::now() < deadline => {
@@ -71,15 +107,148 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, String> {
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("bubblewrap namespace probe timed out".into());
+                evidence.stderr = read_stderr(&mut child);
+                return Err(probe_failure(
+                    "probe_timeout",
+                    "bubblewrap namespace probe timed out",
+                    &evidence,
+                ));
             }
             Err(failure) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("bubblewrap namespace probe failed: {failure}"));
+                evidence.stderr = read_stderr(&mut child);
+                return Err(probe_failure(
+                    "unknown",
+                    format!("bubblewrap namespace probe failed: {failure}"),
+                    &evidence,
+                ));
             }
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct ProbeEvidence {
+    backend_version: String,
+    probe_time_ms: i64,
+    stderr: String,
+    max_user_namespaces: Option<String>,
+    unprivileged_userns_clone: Option<String>,
+    apparmor_restrict_unprivileged_userns: Option<String>,
+    container: bool,
+}
+
+impl ProbeEvidence {
+    fn collect() -> Self {
+        Self {
+            backend_version: "unavailable".into(),
+            probe_time_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_millis() as i64),
+            stderr: String::new(),
+            max_user_namespaces: read_sysctl("/proc/sys/user/max_user_namespaces"),
+            unprivileged_userns_clone: read_sysctl("/proc/sys/kernel/unprivileged_userns_clone"),
+            apparmor_restrict_unprivileged_userns: read_sysctl(
+                "/proc/sys/kernel/apparmor_restrict_unprivileged_userns",
+            ),
+            container: Path::new("/.dockerenv").exists()
+                || Path::new("/run/.containerenv").exists(),
+        }
+    }
+}
+
+fn probe_failure(
+    reason: &str,
+    message: impl Into<String>,
+    evidence: &ProbeEvidence,
+) -> BubblewrapProbeFailure {
+    let failed_stage = match reason {
+        "bwrap_missing" => "resolve",
+        "bwrap_version_incompatible" => "version",
+        "uid_map_denied" => "uid_map",
+        "mount_denied" => "mount",
+        "userns_disabled" | "userns_create_denied" => "userns",
+        "probe_timeout" => "probe_timeout",
+        _ => "probe",
+    };
+    BubblewrapProbeFailure {
+        message: message.into(),
+        details: ProtocolErrorDetails {
+            reason: reason.into(),
+            diagnostics: json!({
+                "backend_version": evidence.backend_version,
+                "probe_time_ms": evidence.probe_time_ms,
+                "environment": if evidence.container { "container" } else { "host" },
+                "failed_stage": failed_stage,
+                "target": mount_target(&evidence.stderr),
+                "sysctls": {
+                    "max_user_namespaces": evidence.max_user_namespaces,
+                    "unprivileged_userns_clone": evidence.unprivileged_userns_clone,
+                    "apparmor_restrict_unprivileged_userns": evidence.apparmor_restrict_unprivileged_userns
+                },
+                "stderr": evidence.stderr
+            }),
+        },
+    }
+}
+
+fn mount_target(stderr: &str) -> Option<String> {
+    let (_, remainder) = stderr.split_once(" on ")?;
+    let target = remainder.split(':').next()?.trim();
+    let target = target.strip_prefix("/newroot").unwrap_or(target);
+    target.starts_with('/').then(|| target.to_string())
+}
+
+fn classify_probe_failure(evidence: &ProbeEvidence) -> &'static str {
+    if evidence.max_user_namespaces.as_deref() == Some("0")
+        || evidence.unprivileged_userns_clone.as_deref() == Some("0")
+    {
+        return "userns_disabled";
+    }
+    let stderr = evidence.stderr.to_ascii_lowercase();
+    if stderr.contains("uid map") {
+        return "uid_map_denied";
+    }
+    if stderr.contains("mount") && stderr.contains("operation not permitted") {
+        return "mount_denied";
+    }
+    if stderr.contains("create new namespace") || stderr.contains("user namespaces") {
+        return "userns_create_denied";
+    }
+    "unknown"
+}
+
+fn read_sysctl(path: &str) -> Option<String> {
+    fs::read_to_string(path)
+        .ok()
+        .map(|value| value.trim().to_string())
+}
+
+fn read_stderr(child: &mut std::process::Child) -> String {
+    let mut bytes = Vec::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = stderr.read_to_end(&mut bytes);
+    }
+    sanitize_stderr(&bytes)
+}
+
+fn sanitize_stderr(bytes: &[u8]) -> String {
+    let mut value = String::from_utf8_lossy(bytes).replace('\0', "");
+    if let Some(home) = std::env::var_os("HOME").and_then(|value| value.into_string().ok())
+        && !home.is_empty()
+    {
+        value = value.replace(&home, "$HOME");
+    }
+    const MAX_STDERR_BYTES: usize = 4096;
+    if value.len() > MAX_STDERR_BYTES {
+        let mut end = MAX_STDERR_BYTES;
+        while !value.is_char_boundary(end) {
+            end -= 1;
+        }
+        value.truncate(end);
+    }
+    value
 }
 
 pub struct BubblewrapInvocation {
@@ -395,4 +564,66 @@ fn path_string(path: &Path) -> io::Result<String> {
 
 fn invalid_input(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn evidence(stderr: &str) -> ProbeEvidence {
+        ProbeEvidence {
+            backend_version: "bubblewrap test".into(),
+            probe_time_ms: 1,
+            stderr: stderr.into(),
+            max_user_namespaces: Some("1000".into()),
+            unprivileged_userns_clone: Some("1".into()),
+            apparmor_restrict_unprivileged_userns: Some("0".into()),
+            container: false,
+        }
+    }
+
+    #[test]
+    fn classifies_userns_disabled_from_sysctl_evidence() {
+        let mut evidence = evidence("No permissions to create new namespace");
+        evidence.max_user_namespaces = Some("0".into());
+        assert_eq!(classify_probe_failure(&evidence), "userns_disabled");
+
+        evidence.max_user_namespaces = Some("1000".into());
+        evidence.unprivileged_userns_clone = Some("0".into());
+        assert_eq!(classify_probe_failure(&evidence), "userns_disabled");
+    }
+
+    #[test]
+    fn classifies_uid_map_denial_without_guessing_apparmor() {
+        let mut evidence = evidence("bwrap: setting up uid map: Permission denied");
+        evidence.apparmor_restrict_unprivileged_userns = Some("1".into());
+        assert_eq!(classify_probe_failure(&evidence), "uid_map_denied");
+    }
+
+    #[test]
+    fn classifies_mount_denial_with_container_as_context_only() {
+        let mut evidence =
+            evidence("bwrap: Can't mount proc on /newroot/proc: Operation not permitted");
+        evidence.container = true;
+        assert_eq!(classify_probe_failure(&evidence), "mount_denied");
+        let failure = probe_failure("mount_denied", "mount failed", &evidence);
+        assert_eq!(failure.details.diagnostics["target"], "/proc");
+    }
+
+    #[test]
+    fn classifies_namespace_creation_denial() {
+        let evidence = evidence("bwrap: No permissions to create new namespace");
+        assert_eq!(classify_probe_failure(&evidence), "userns_create_denied");
+    }
+
+    #[test]
+    fn unknown_failure_keeps_stderr_for_diagnostics() {
+        let evidence = evidence("unrecognized bubblewrap failure");
+        let failure = probe_failure("unknown", "probe failed", &evidence);
+        assert_eq!(failure.details.reason, "unknown");
+        assert_eq!(
+            failure.details.diagnostics["stderr"],
+            "unrecognized bubblewrap failure"
+        );
+    }
 }

@@ -403,10 +403,12 @@ fn call_with_auth(
     let mut stream = UnixStream::connect(socket).map_err(|error| ProtocolErrorBody {
         code: "transport".into(),
         message: error.to_string(),
+        details: None,
     })?;
     verify_same_uid(&stream).map_err(|error| ProtocolErrorBody {
         code: "unauthorized_peer".into(),
         message: error.to_string(),
+        details: None,
     })?;
     let id = request_id();
     let mutating = matches!(
@@ -447,11 +449,13 @@ fn call_with_auth(
     write_frame(&mut stream, &request).map_err(|error| ProtocolErrorBody {
         code: "transport".into(),
         message: error.to_string(),
+        details: None,
     })?;
     let response: ResponseEnvelope =
         read_frame(&mut stream).map_err(|error| ProtocolErrorBody {
             code: "transport".into(),
             message: error.to_string(),
+            details: None,
         })?;
     response.result
 }
@@ -460,22 +464,26 @@ fn read_capability_file(path: &Path) -> Result<AuthContext, ProtocolErrorBody> {
     let metadata = std::fs::metadata(path).map_err(|failure| ProtocolErrorBody {
         code: "capability_file_unavailable".into(),
         message: format!("failed to inspect {}: {failure}", path.display()),
+        details: None,
     })?;
     if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
         return Err(ProtocolErrorBody {
             code: "capability_file_insecure".into(),
             message: format!("{} must be a private regular file", path.display()),
+            details: None,
         });
     }
     let capability = std::fs::read_to_string(path).map_err(|failure| ProtocolErrorBody {
         code: "capability_file_unavailable".into(),
         message: format!("failed to read {}: {failure}", path.display()),
+        details: None,
     })?;
     let capability = capability.trim();
     if capability.is_empty() {
         return Err(ProtocolErrorBody {
             code: "capability_file_unavailable".into(),
             message: format!("{} is empty", path.display()),
+            details: None,
         });
     }
     Ok(AuthContext {
@@ -504,6 +512,7 @@ fn capability_scope_json(
             return Err(ProtocolErrorBody {
                 code: "invalid_request".into(),
                 message: "management capabilities use global scope".into(),
+                details: None,
             });
         }
         return Ok(json!({"kind": "global"}));
@@ -512,11 +521,13 @@ fn capability_scope_json(
         let pane_id = pane_id.ok_or_else(|| ProtocolErrorBody {
             code: "invalid_request".into(),
             message: "--pane-id is required with --command-id".into(),
+            details: None,
         })?;
         if session_id.is_some() {
             return Err(ProtocolErrorBody {
                 code: "invalid_request".into(),
                 message: "command scope cannot include --session-id".into(),
+                details: None,
             });
         }
         return Ok(json!({
@@ -530,6 +541,7 @@ fn capability_scope_json(
             return Err(ProtocolErrorBody {
                 code: "invalid_request".into(),
                 message: "pane scope cannot include --session-id".into(),
+                details: None,
             });
         }
         return Ok(json!({"kind": "pane", "pane_id": pane_id}));
@@ -540,6 +552,7 @@ fn capability_scope_json(
     Err(ProtocolErrorBody {
         code: "invalid_request".into(),
         message: "a capability scope is required".into(),
+        details: None,
     })
 }
 
@@ -550,6 +563,7 @@ fn write_capability_output(path: &Path, result: &mut Value) -> Result<(), Protoc
         .ok_or_else(|| ProtocolErrorBody {
             code: "protocol_error".into(),
             message: "capability response has no token".into(),
+            details: None,
         })?
         .to_string();
     let mut file = OpenOptions::new()
@@ -561,11 +575,13 @@ fn write_capability_output(path: &Path, result: &mut Value) -> Result<(), Protoc
         .map_err(|failure| ProtocolErrorBody {
             code: "capability_output_failed".into(),
             message: format!("failed to create {}: {failure}", path.display()),
+            details: None,
         })?;
     file.set_permissions(std::fs::Permissions::from_mode(0o600))
         .map_err(|failure| ProtocolErrorBody {
             code: "capability_output_failed".into(),
             message: format!("failed to secure {}: {failure}", path.display()),
+            details: None,
         })?;
     file.write_all(token.as_bytes())
         .and_then(|()| file.write_all(b"\n"))
@@ -573,6 +589,7 @@ fn write_capability_output(path: &Path, result: &mut Value) -> Result<(), Protoc
         .map_err(|failure| ProtocolErrorBody {
             code: "capability_output_failed".into(),
             message: format!("failed to write {}: {failure}", path.display()),
+            details: None,
         })?;
     if let Some(object) = result.as_object_mut() {
         object.remove("token");
@@ -588,10 +605,12 @@ fn run_agent_observe(
     let mut stream = UnixStream::connect(socket).map_err(|failure| ProtocolErrorBody {
         code: "transport".into(),
         message: failure.to_string(),
+        details: None,
     })?;
     verify_same_uid(&stream).map_err(|failure| ProtocolErrorBody {
         code: "unauthorized_peer".into(),
         message: failure.to_string(),
+        details: None,
     })?;
     let request_id = request_id();
     let request = RequestEnvelope {
@@ -605,17 +624,20 @@ fn run_agent_observe(
     write_frame(&mut stream, &request).map_err(|failure| ProtocolErrorBody {
         code: "transport".into(),
         message: failure.to_string(),
+        details: None,
     })?;
     loop {
         let response: ResponseEnvelope =
             read_frame(&mut stream).map_err(|failure| ProtocolErrorBody {
                 code: "transport".into(),
                 message: failure.to_string(),
+                details: None,
             })?;
         if response.request_id != request_id {
             return Err(ProtocolErrorBody {
                 code: "protocol_error".into(),
                 message: "observer response request_id mismatch".into(),
+                details: None,
             });
         }
         let value = response.result?;
@@ -633,6 +655,7 @@ fn run_agent_observe(
                         .and_then(Value::as_str)
                         .unwrap_or("observer failed")
                         .into(),
+                    details: None,
                 });
             }
             _ => println!("{value}"),
@@ -644,6 +667,7 @@ fn attach_error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
     ProtocolErrorBody {
         code: code.into(),
         message: message.into(),
+        details: None,
     }
 }
 

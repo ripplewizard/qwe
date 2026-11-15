@@ -20,6 +20,8 @@ def main():
     parser.add_argument("--qwed", required=True)
     parser.add_argument("--image", required=True)
     parser.add_argument("--matrix", default="container")
+    parser.add_argument("--expected-reason", default="mount_denied")
+    parser.add_argument("--expected-target")
     args = parser.parse_args()
 
     bwrap = shutil.which("bwrap")
@@ -76,6 +78,12 @@ def main():
             management,
         )
         assert result.get("code") == "sandbox_backend_unavailable", result
+        assert result["details"]["reason"] == args.expected_reason, result
+        if args.expected_target is not None:
+            assert (
+                result["details"]["diagnostics"]["target"]
+                == args.expected_target
+            ), result
     finally:
         stop_qwed(qwed, socket_path)
 

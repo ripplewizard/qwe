@@ -396,9 +396,39 @@ Authorization failures use:
 
 Sandbox failures use `sandbox_backend_unavailable`,
 `sandbox_profile_unsupported`, and `unsupported_platform`. `AGENT_EXEC` rejects
-a client-supplied
-`sandbox_profile` with `sandbox_profile_not_client_selectable`; a request
-cannot enable, replace, or remove the capability's enforced profile.
+a client-supplied `sandbox_profile` with
+`sandbox_profile_not_client_selectable`; a request cannot enable, replace, or
+remove the capability's enforced profile.
+
+Error bodies may include an optional backward-compatible `details` object:
+
+```json
+{
+  "code": "sandbox_backend_unavailable",
+  "message": "refusing sandboxed agent_exec capability: ...",
+  "details": {
+    "reason": "mount_denied",
+    "diagnostics": {
+      "environment": "container",
+      "failed_stage": "mount",
+      "target": "/proc",
+      "backend_version": "bubblewrap 0.9.0",
+      "probe_time_ms": 1794700000000,
+      "stderr": "bwrap: Can't mount proc on /newroot/proc: Operation not permitted"
+    }
+  }
+}
+```
+
+Stable sandbox reason values are `bwrap_missing`,
+`bwrap_version_incompatible`, `userns_disabled`, `userns_create_denied`,
+`uid_map_denied`, `mount_denied`, `probe_timeout`, `unsupported_platform`, and
+`unknown`. `details.diagnostics` is diagnostic context, not a stable protocol
+surface. Diagnostics are bounded and sanitized, and clients must treat unknown
+reason values as `unknown`.
+
+`AGENT_EXEC` startup failures expose the same `{reason, diagnostics}` shape as
+`error_details` in command status/wait responses.
 
 ### Agent Command Control
 

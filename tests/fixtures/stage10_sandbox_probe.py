@@ -910,6 +910,8 @@ def run_backend_unavailable_probe(qwed, root):
             profile(root),
         )
         assert result.get("code") == "sandbox_backend_unavailable", result
+        assert result["details"]["reason"] == "bwrap_missing", result
+        assert result["details"]["diagnostics"]["environment"] in ("host", "container")
         (empty_path / "bwrap").symlink_to(shutil.which("bwrap"))
         recovered = issue_capability(
             socket_path,
@@ -922,6 +924,24 @@ def run_backend_unavailable_probe(qwed, root):
             "message": "fresh capability probe did not observe the repaired backend",
             "result": recovered,
         }
+        (empty_path / "bwrap").unlink()
+        failed_exec = exec_command(
+            socket_path,
+            recovered["token"],
+            created["pane_id"],
+            "/bin/true",
+        )
+        failed_terminal = wait_terminal(
+            socket_path,
+            recovered["token"],
+            failed_exec["command_id"],
+            3000,
+        )
+        assert failed_terminal["wait_state"] == "failed", failed_terminal
+        assert (
+            failed_terminal.get("error_details", {}).get("reason")
+            == "bwrap_missing"
+        ), failed_terminal
     finally:
         stop_qwed(process, socket_path)
 
@@ -983,6 +1003,7 @@ def main():
         run_backend_unavailable_probe(args.qwed, root)
         results["backend_unavailable"] = "pass"
         results["backend_probe_refresh"] = "pass"
+        results["runtime_start_failure_details"] = "pass"
         print(
             json.dumps(
                 {

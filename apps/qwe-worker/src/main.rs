@@ -146,6 +146,7 @@ fn error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
     ProtocolErrorBody {
         code: code.into(),
         message: message.into(),
+        details: None,
     }
 }
 
@@ -159,11 +160,14 @@ fn sandbox_probe(payload: &Value) -> Result<Value, ProtocolErrorBody> {
     )
     .map_err(|failure| error("invalid_request", failure.to_string()))?;
     agent::validate_sandbox_profile(&profile)?;
-    let support = crate::sandbox::probe_bubblewrap()
-        .map_err(|failure| error("sandbox_backend_unavailable", failure))?;
+    let support = crate::sandbox::probe_bubblewrap().map_err(|failure| {
+        error("sandbox_backend_unavailable", failure.message)
+            .with_details(failure.details.reason, failure.details.diagnostics)
+    })?;
     Ok(json!({
         "available": true,
         "version": support.version,
+        "probe_time_ms": support.probe_time_ms,
         "fresh": true
     }))
 }
@@ -173,6 +177,10 @@ fn sandbox_probe(_payload: &Value) -> Result<Value, ProtocolErrorBody> {
     Err(error(
         "unsupported_platform",
         "Bubblewrap sandboxing is supported only on Linux",
+    )
+    .with_details(
+        "unsupported_platform",
+        json!({"platform": std::env::consts::OS}),
     ))
 }
 

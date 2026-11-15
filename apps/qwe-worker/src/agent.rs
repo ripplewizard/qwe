@@ -32,6 +32,7 @@ fn error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
     ProtocolErrorBody {
         code: code.into(),
         message: message.into(),
+        details: None,
     }
 }
 
@@ -69,6 +70,7 @@ struct AgentCommandInner {
     exit_code: Option<i32>,
     exit_signal: Option<String>,
     last_error: Option<String>,
+    last_error_details: Option<Value>,
     terminate_requested: bool,
     termination_signal: Option<libc::c_int>,
     freeze_requested: bool,
@@ -200,6 +202,7 @@ impl AgentCommand {
                 exit_code: None,
                 exit_signal: None,
                 last_error: None,
+                last_error_details: None,
                 terminate_requested: false,
                 termination_signal: None,
                 freeze_requested: false,
@@ -346,6 +349,10 @@ impl AgentCommand {
     }
 
     fn fail(&self, reason: String) {
+        self.fail_with_details(reason, None);
+    }
+
+    fn fail_with_details(&self, reason: String, details: Option<Value>) {
         self.with_inner(|inner| {
             if inner.state.is_terminal() {
                 return;
@@ -353,6 +360,7 @@ impl AgentCommand {
             let previous = inner.state;
             inner.state = AgentCommandState::Failed;
             inner.last_error = Some(reason.clone());
+            inner.last_error_details = details.clone();
             inner.events.append(
                 self.id.clone(),
                 AgentEventKind::StateChanged {
@@ -370,6 +378,26 @@ impl AgentCommand {
             );
         });
         self.changed.notify_all();
+    }
+
+    fn fail_sandbox_start(&self, reason: String) {
+        #[cfg(target_os = "linux")]
+        let details = self.sandbox_profile.as_ref().and_then(|_| {
+            crate::sandbox::probe_bubblewrap().err().map(|failure| {
+                json!({
+                    "reason": failure.details.reason,
+                    "diagnostics": failure.details.diagnostics
+                })
+            })
+        });
+        #[cfg(not(target_os = "linux"))]
+        let details = self.sandbox_profile.as_ref().map(|_| {
+            json!({
+                "reason": "unsupported_platform",
+                "diagnostics": {"platform": std::env::consts::OS}
+            })
+        });
+        self.fail_with_details(reason, details);
     }
 
     fn signal(&self, signal: libc::c_int) -> bool {
@@ -475,6 +503,7 @@ impl AgentCommand {
             "exit_code": inner.exit_code,
             "exit_signal": inner.exit_signal,
             "error": inner.last_error,
+            "error_details": inner.last_error_details,
             "revocation": inner.revocation_severity.as_ref().map(|severity| json!({
                 "severity": severity,
                 "deadline_ms": inner.revocation_deadline_ms,
@@ -533,6 +562,7 @@ impl AgentCommand {
                     "exit_code": inner.exit_code,
                     "exit_signal": inner.exit_signal,
                     "error": inner.last_error.clone(),
+                    "error_details": inner.last_error_details.clone(),
                     "timed_out": false
                 });
             }
@@ -544,6 +574,7 @@ impl AgentCommand {
                     "exit_code": Option::<i32>::None,
                     "exit_signal": Option::<String>::None,
                     "error": Option::<String>::None,
+                    "error_details": Option::<Value>::None,
                     "timed_out": false
                 });
             }
@@ -556,6 +587,7 @@ impl AgentCommand {
                     "exit_code": inner.exit_code,
                     "exit_signal": inner.exit_signal,
                     "error": inner.last_error.clone(),
+                    "error_details": inner.last_error_details.clone(),
                     "timed_out": true
                 });
             }
@@ -575,6 +607,7 @@ impl AgentCommand {
                     "exit_code": inner.exit_code,
                     "exit_signal": inner.exit_signal,
                     "error": inner.last_error.clone(),
+                    "error_details": inner.last_error_details.clone(),
                     "timed_out": false
                 });
             }
@@ -1096,7 +1129,7 @@ fn run_command(launch: CommandLaunch) {
     } = match spawn_result {
         Ok(spawned) => spawned,
         Err(failure) => {
-            command.fail(format!("failed to start command: {failure}"));
+            command.fail_sandbox_start(format!("failed to start command: {failure}"));
             return;
         }
     };
@@ -1265,7 +1298,7 @@ fn run_pty_command(launch: CommandLaunch, rows: u16, columns: u16) {
             if let Some(path) = &seccomp_path {
                 let _ = std::fs::remove_file(path);
             }
-            command.fail(format!("failed to start PTY command: {failure}"));
+            command.fail_sandbox_start(format!("failed to start PTY command: {failure}"));
             return;
         }
     };
@@ -1278,7 +1311,7 @@ fn run_pty_command(launch: CommandLaunch, rows: u16, columns: u16) {
             if let Some(path) = &seccomp_path {
                 let _ = std::fs::remove_file(path);
             }
-            command.fail("PTY topology handshake failed".into());
+            command.fail_sandbox_start("PTY topology handshake failed".into());
             return;
         }
         Err(_) => {
@@ -1287,7 +1320,7 @@ fn run_pty_command(launch: CommandLaunch, rows: u16, columns: u16) {
             if let Some(path) = &seccomp_path {
                 let _ = std::fs::remove_file(path);
             }
-            command.fail("PTY topology handshake timed out".into());
+            command.fail_sandbox_start("PTY topology handshake timed out".into());
             return;
         }
     };
@@ -1348,7 +1381,7 @@ fn run_pty_command(launch: CommandLaunch, rows: u16, columns: u16) {
             Err(failure) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                command.fail(format!("Bubblewrap PTY startup failed: {failure}"));
+                command.fail_sandbox_start(format!("Bubblewrap PTY startup failed: {failure}"));
                 return;
             }
         };

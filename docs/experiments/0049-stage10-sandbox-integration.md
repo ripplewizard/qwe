@@ -148,6 +148,19 @@ Container markers are context, not proof of the failing mechanism. An
 unclassified result must retain stderr plus a sysctl/environment snapshot.
 The Ubuntu 22.04 sysctl values were restored after the disabled-userns probe.
 
+The classifier and offline fixtures are implemented in the worker sandbox
+module. The real matrices now assert:
+
+- missing `bwrap` -> `bwrap_missing`;
+- Podman -> `mount_denied` with target `/proc`;
+- Ubuntu 24.04 AppArmor -> `uid_map_denied`;
+- unknown stderr -> `unknown` while retaining a bounded, sanitized snapshot.
+
+Protocol errors expose stable `details.reason` with diagnostic context.
+Asynchronous `AGENT_EXEC` startup failures expose the same shape through
+`error_details`. A capability can succeed, then lose Bubblewrap before exec;
+the command must still fail with `bwrap_missing`.
+
 ### Mount layout
 
 The adapter mounts existing common system roots read-only, provides private
@@ -170,6 +183,9 @@ that Bubblewrap cannot mount.
     tested AppArmor/userns policy;
   - qwed returns `sandbox_backend_unavailable` on Ubuntu 24.04 and does not
     execute the command.
+- `just sandbox-userns-disabled-vm`: temporarily sets the Ubuntu 22.04
+  namespace sysctls to zero, verifies reason `userns_disabled`, and restores
+  the original sysctl values through a shell trap.
 
 The container matrix verifies fail-closed deployment behavior only. It does not
 claim that Bubblewrap succeeds inside a restricted container.

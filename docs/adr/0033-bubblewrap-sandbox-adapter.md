@@ -48,6 +48,10 @@ Backend failure reasons must use observable failed-stage evidence, not stderr
 guessing; container context does not by itself prove seccomp blocked namespace
 creation. See Experiment 0049.
 
+Sandbox error bodies expose a stable `details.reason` and unstable bounded
+`details.diagnostics`; `AGENT_EXEC` startup failures use the same shape in
+`error_details`.
+
 ### 2. Existing execution topology remains authoritative
 
 The Pane worker remains the command owner and direct Bubblewrap parent:

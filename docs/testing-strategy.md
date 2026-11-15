@@ -282,6 +282,8 @@ setup.
 `just sandbox-vm-matrix` uses the existing rootless QEMU lab. Ubuntu 22.04 and
 Debian 12 pass the complete Stage 10 probe. Ubuntu 24.04 currently rejects user
 ID mapping under the tested AppArmor/userns policy, and qwed must fail closed.
+`just sandbox-userns-disabled-vm` temporarily disables userns on Ubuntu 22.04
+and requires classified `userns_disabled`, restoring sysctls afterward.
 
 ## ADR 0012-0015 Contract Matrices
 

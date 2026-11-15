@@ -160,6 +160,7 @@ impl WorkerClient {
         ProtocolErrorBody {
             code: "worker_unreachable".into(),
             message: message.into(),
+            details: None,
         }
     }
 }

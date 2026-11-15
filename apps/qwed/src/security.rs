@@ -411,6 +411,7 @@ fn error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
     ProtocolErrorBody {
         code: code.into(),
         message: message.into(),
+        details: None,
     }
 }
 

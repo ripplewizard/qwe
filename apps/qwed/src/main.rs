@@ -179,6 +179,7 @@ fn error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
     ProtocolErrorBody {
         code: code.into(),
         message: message.into(),
+        details: None,
     }
 }
 
@@ -3772,13 +3773,14 @@ fn map_sandbox_probe_failure(failure: ProtocolErrorBody) -> ProtocolErrorBody {
     ) {
         failure
     } else {
-        error(
-            "sandbox_backend_unavailable",
-            format!(
+        ProtocolErrorBody {
+            code: "sandbox_backend_unavailable".into(),
+            message: format!(
                 "refusing sandboxed agent_exec capability: {}",
                 failure.message
             ),
-        )
+            details: failure.details,
+        }
     }
 }
 
@@ -5933,10 +5935,11 @@ mod startup_tests {
         ));
         assert_eq!(unsupported.code, "unsupported_platform");
 
-        let temporary = map_sandbox_probe_failure(error(
-            "sandbox_backend_unavailable",
-            "bubblewrap is unavailable",
-        ));
+        let temporary = map_sandbox_probe_failure(
+            error("sandbox_backend_unavailable", "bubblewrap is unavailable")
+                .with_details("mount_denied", json!({"target": "/proc"})),
+        );
         assert_eq!(temporary.code, "sandbox_backend_unavailable");
+        assert_eq!(temporary.details.unwrap().reason, "mount_denied");
     }
 }
