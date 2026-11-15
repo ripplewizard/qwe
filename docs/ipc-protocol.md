@@ -348,6 +348,16 @@ Capability operations and scopes:
 | `agent_exec` | `{"kind":"pane","pane_id":"..."}` |
 | `agent_command_read` | `{"kind":"command","pane_id":"...","command_id":"..."}` |
 | `agent_command_terminate` | `{"kind":"command","pane_id":"...","command_id":"..."}` |
+| `sandboxed_pane` | `{"kind":"session","session_id":"..."}` |
+| `pane_exec` | `{"kind":"pane","pane_id":"..."}` |
+| `pane_input` | `{"kind":"pane","pane_id":"..."}` |
+| `pane_resize` | `{"kind":"pane","pane_id":"..."}` |
+
+`pane_input` is code-execution authority for the target Pane, not an
+observation permission. Until Pane sandbox metadata exists, capability issue
+requires a high-trust issuer for this operation. `pane_exec` and `pane_resize`
+remain distinct. Capability delegation cannot broaden the active operation or
+target scope.
 
 Capability issue is non-idempotent so the raw token is never copied into the
 durable idempotency response table. Tokens default to 24 hours and are capped at

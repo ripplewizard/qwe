@@ -158,7 +158,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 ## Bubblewrap Sandbox
 
-Rows 001-033 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
+Rows 001-034 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown.
 Ubuntu 22.04 and Debian 12 real VMs pass the complete matrix. Default Ubuntu
 24.04 returns `sandbox_backend_unavailable`; with the packaged path-scoped
@@ -203,6 +203,7 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-031 | Verify the strict seccomp denylist under Python, shell, Rust, threads, subprocess, SSL, and nested Bubblewrap runtimes |
 | SANDBOX-032 | Detect `--bind-fd`/`--ro-bind-fd` with help plus a harmless FD mount, report the backend feature, and persist it in sandbox audit metadata |
 | SANDBOX-033 | Construct refined profiles only when fixed fields are equal and workspace/network/seccomp/Landlock fields do not broaden |
+| SANDBOX-034 | Accept the `sandboxed_pane`, `pane_exec`, `pane_input`, and `pane_resize` capability operations only with their intended scopes; require a high-trust issuer for `pane_input` |
 
 ## Core Object Model
 

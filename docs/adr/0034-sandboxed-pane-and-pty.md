@@ -23,7 +23,7 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 | ID | Decision | Status | Summary |
 |---|---|---|---|
 | D1 | Sandboxed Pane Bubblewrap capability | Adopted; P1 pass | `AGENT_EXEC` keeps 0.5 compatibility; sandboxed Pane requires FD-binding features detected at runtime; first observed upstream support is 0.10.0 |
-| D2 | Capability split | Adopted | Separate `sandboxed_pane`, `pane_exec`, `pane_input`, and `pane_resize`, with target-type grading |
+| D2 | Capability split | Adopted; scaffold implemented | Separate `sandboxed_pane`, `pane_exec`, `pane_input`, and `pane_resize`; target-type enforcement activates with Pane sandbox metadata |
 | D3 | Terminal sequence policy | Adopted | Restricted output uses a display-only whitelist; host-sensitive control and query sequences are dropped |
 | D4 | Input audit | Adopted | Metadata only by default; no content hashes; no content when PTY ECHO is off |
 | D5 | Landlock | Adopted | Profile field `off | best_effort | required{min_abi}`; sandboxed Pane defaults to required |
@@ -62,17 +62,21 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 
 ### B. Capability model
 
-- **D6 adopted:** `sandboxed_pane` authorizes only creation of a sandboxed
+- **D6 adopted; operation/scope scaffold implemented:** `sandboxed_pane`
+  authorizes only creation of a sandboxed
   Pane. It grants no operation on an existing Pane.
-- **D7 adopted:** `pane_exec` authorizes injecting an `AGENT_EXEC` request into
+- **D7 adopted; operation/scope scaffold implemented:** `pane_exec` authorizes
+  injecting an `AGENT_EXEC` request into
   an existing Pane and is constrained by D14 refinement.
-- **D8 adopted:** `pane_input` is equivalent to arbitrary code execution in the
+- **D8 adopted; high-trust issuer floor implemented:** `pane_input` is
+  equivalent to arbitrary code execution in the
   target Pane. Authorization and UI text must state this explicitly.
 - **D9 adopted:** input to a sandboxed Pane is ordinary delegated authority.
   Input to an unsandboxed Pane is a separate high-trust capability and is not
-  issued by default.
-- **D10 adopted:** `pane_resize` is separate from `pane_input`; it still carries
-  terminal-control authority.
+  issued by default. Until Pane sandbox metadata exists, all `pane_input`
+  issuance requires a high-trust management Principal.
+- **D10 adopted; operation/scope scaffold implemented:** `pane_resize` is
+  separate from `pane_input`; it still carries terminal-control authority.
 - **D11 adopted:** capability delegation is monotonic. A holder cannot issue a
   broader capability than its own authority.
 - **D12 adopted:** capability expiry and ordinary revocation do not terminate an
