@@ -1305,45 +1305,55 @@ sandbox-landlock-vm host="ubuntu2404":
       "python3 $remote_dir/landlock_abi_probe.py --init $remote_dir/qwe-sandbox-init"
 
 sandbox-userns-disabled-vm host="ubuntu2204":
+    just --justfile "{{ justfile() }}" sandbox-userns-disabled-vm-matrix "{{ host }}"
+
+sandbox-userns-disabled-vm-matrix hosts="ubuntu2204 ubuntu2404 debian12":
     #!/usr/bin/env bash
     set -euo pipefail
     root="{{ justfile_directory() }}"
     lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
     ssh_config="$lab/ssh_config"
-    target="qwe-{{ host }}"
-    remote_dir="/home/qwe/bianca/qwe-sandbox-userns-disabled"
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
     cd "$root"
     cargo build --release -p qwe-worker -p qwed
-    ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
-    scp -q -F "$ssh_config" \
-      target/release/qwed \
-      target/release/qwe-worker \
-      target/release/qwe-session-exec \
-      target/release/qwe-sandbox-init \
-      tests/fixtures/stage7_resource_probe.py \
-      tests/fixtures/sandbox_container_fail_closed.py \
-      "$target:$remote_dir/"
-    ssh -F "$ssh_config" "$target" "
-      set -e
-      orig_max=\$(cat /proc/sys/user/max_user_namespaces)
-      orig_clone=\$(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || echo absent)
-      cleanup() {
-        sudo sysctl -w user.max_user_namespaces=\"\$orig_max\" >/dev/null
+    for host in {{ hosts }}; do
+      printf '==> %s\n' "$host"
+      target="qwe-$host"
+      remote_dir="/home/qwe/bianca/qwe-sandbox-userns-disabled"
+      ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+      scp -q -F "$ssh_config" \
+        target/release/qwed \
+        target/release/qwe-worker \
+        target/release/qwe-session-exec \
+        target/release/qwe-sandbox-init \
+        tests/fixtures/stage7_resource_probe.py \
+        tests/fixtures/sandbox_container_fail_closed.py \
+        "$target:$remote_dir/"
+      ssh -F "$ssh_config" "$target" "
+        set -e
+        orig_max=\$(cat /proc/sys/user/max_user_namespaces)
+        orig_clone=\$(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || echo absent)
+        cleanup() {
+          sudo sysctl -w user.max_user_namespaces=\"\$orig_max\" >/dev/null
+          if [ \"\$orig_clone\" != absent ]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=\"\$orig_clone\" >/dev/null
+          fi
+        }
+        trap cleanup EXIT
+        sudo sysctl -w user.max_user_namespaces=0 >/dev/null
         if [ \"\$orig_clone\" != absent ]; then
-          sudo sysctl -w kernel.unprivileged_userns_clone=\"\$orig_clone\" >/dev/null
+          sudo sysctl -w kernel.unprivileged_userns_clone=0 >/dev/null
         fi
-      }
-      trap cleanup EXIT
-      sudo sysctl -w user.max_user_namespaces=0 >/dev/null
-      if [ \"\$orig_clone\" != absent ]; then
-        sudo sysctl -w kernel.unprivileged_userns_clone=0 >/dev/null
-      fi
-      PYTHONPATH=$remote_dir python3 $remote_dir/sandbox_container_fail_closed.py \
-        --qwed $remote_dir/qwed \
-        --image '{{ host }}-userns-disabled' \
-        --matrix vm \
-        --expected-reason userns_disabled
-    "
+        PYTHONPATH=$remote_dir python3 $remote_dir/sandbox_container_fail_closed.py \
+          --qwed $remote_dir/qwed \
+          --image '$host-userns-disabled' \
+          --matrix vm \
+          --expected-reason userns_disabled
+      "
+    done
 
 sandbox-systemd-properties:
     #!/usr/bin/env bash

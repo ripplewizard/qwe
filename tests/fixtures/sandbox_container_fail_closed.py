@@ -84,18 +84,61 @@ def main():
                 result["details"]["diagnostics"]["target"]
                 == args.expected_target
             ), result
+        unsandboxed = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": principal_id,
+                "operation": "agent_exec",
+                "scope": {"kind": "pane", "pane_id": created["pane_id"]},
+                "ttl_ms": 60000,
+            },
+            management,
+        )
+        started = request_with_capability(
+            socket_path,
+            "AGENT_EXEC",
+            {
+                "pane_id": created["pane_id"],
+                "program": "/bin/sh",
+                "args": ["-c", "printf NORMAL_PANE_OK"],
+                "owner": "sandbox-matrix",
+            },
+            unsandboxed["token"],
+        )
+        terminal = request_with_capability(
+            socket_path,
+            "AGENT_COMMAND_WAIT_IDLE",
+            {"command_id": started["command_id"], "timeout_ms": 5000},
+            unsandboxed["token"],
+        )
+        assert terminal["wait_state"] == "done", terminal
+        assert terminal["exit_code"] == 0, terminal
+        command_events = request_with_capability(
+            socket_path,
+            "AGENT_COMMAND_EVENTS",
+            {"command_id": started["command_id"], "cursor": 0, "limit": 512},
+            unsandboxed["token"],
+        )["events"]
+        output = b"".join(
+            bytes.fromhex(event["data_hex"])
+            for event in command_events
+            if event["type"] == "output" and event["stream"] == "stdout"
+        )
+        assert output == b"NORMAL_PANE_OK", command_events
     finally:
         stop_qwed(qwed, socket_path)
 
     print(
         json.dumps(
             {
-                "case": "SANDBOX-004",
+                "case": "SANDBOX-004/SANDBOX-015",
                 "matrix": args.matrix,
                 "image": args.image,
                 "bwrap": bwrap,
                 "status": "pass",
                 "behavior": "sandbox_backend_unavailable",
+                "ordinary_pane": "pass",
             }
         )
     )
