@@ -516,6 +516,10 @@ Sandboxed commands additionally expose `sandbox.risk` flags for
 `network_inherit`, `writable_workspace`, and `credential_exposed`, plus derived
 `credential_network_exfiltration` and `credential_workspace_persistence`.
 The base risk flags and capability audit metadata are durable in SQLite.
+The derived flags are capability-risk declarations, not guarantees that
+exfiltration or persistence succeeds in every runtime. Stage 10 confirms both
+channels with direct FD3 credential tests when the corresponding profile
+permits them.
 
 `AGENT_COMMAND_WAIT_IDLE` returns `idle`, `done`, `failed`, `lost`, or `unknown`.
 Timeout returns `unknown`, never `idle`. A terminal state takes precedence over a

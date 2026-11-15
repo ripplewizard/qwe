@@ -239,3 +239,7 @@ production-required option. A backend that starts simple namespaces but lacks
 the QWE contract fails with `bwrap_version_incompatible` before token issuance.
 This runtime check does not replace the still-open oldest-version behavior
 matrix.
+
+Credential boundary tests now confirm both declared exfiltration channels:
+inherited networking reaches a host listener, and a writable workspace retains
+the FD3 credential in a host-visible file.

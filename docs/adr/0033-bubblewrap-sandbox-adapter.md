@@ -191,6 +191,12 @@ Profiles carrying credentials must declare this limitation. Stronger credential
 guarantees require `network:isolated_loopback`, an ephemeral workspace, or a
 future broker design.
 
+Stage 10 confirms both channels with direct FD3 tests: a host loopback listener
+receives the credential under `network:inherit`, and a host-visible workspace
+file retains it after command exit under `workspace:read_write`. The derived
+risk flags are therefore auditable claims about capability composition, not
+guarantees that every attempted transfer succeeds.
+
 ### 7. Lifecycle synchronization
 
 `--die-with-parent` depends on the thread that creates Bubblewrap remaining

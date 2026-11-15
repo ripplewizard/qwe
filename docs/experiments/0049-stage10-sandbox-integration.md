@@ -18,6 +18,8 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
   `/proc`;
 - `network:inherit` shares the host network namespace and can send an inherited
   FD3 credential to a host loopback listener;
+- `workspace:read_write` can persist an inherited FD3 credential in a
+  host-visible workspace file after the command exits;
 - an existing protected path inside a writable workspace remains read-only;
 - protected-path symlinks resolve inside the canonical workspace and remain
   read-only;
@@ -47,12 +49,12 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
 - worker loss marks commands `lost`, preserves the enforced profile, and
   removes the sandbox process tree.
 
-The confirmed `network:inherit + FD3 credential` transfer is a known-risk
-capability, not a redaction bug. Command status exposes structured
-`sandbox.risk` flags and events include `sandbox_risk_observed`. These identify
-network exfiltration and workspace persistence channels. Current risk events
-and the base risk flags are persisted in SQLite, so they survive worker loss
-and qwed restart. Event replay itself remains worker-memory bounded.
+The confirmed `network:inherit + FD3 credential` transfer and
+`workspace:read_write + FD3 credential` persistence are known-risk capability
+boundaries, not redaction bugs. Command status exposes structured `sandbox.risk`
+flags and events include `sandbox_risk_observed`. Current risk events and the
+base risk flags are persisted in SQLite, so they survive worker loss and qwed
+restart. Event replay itself remains worker-memory bounded.
 
 The probe is `tests/fixtures/stage10_sandbox_probe.py` and runs with:
 

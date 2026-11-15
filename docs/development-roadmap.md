@@ -199,3 +199,5 @@ remain deferred.
 Capability issue now checks the backend's required-option help contract in
 addition to namespace viability. A backend with an insufficient feature set is
 rejected as `bwrap_version_incompatible` before a capability token is issued.
+Credential boundary tests confirm both network exfiltration and writable
+workspace persistence when the profile and command permit them.

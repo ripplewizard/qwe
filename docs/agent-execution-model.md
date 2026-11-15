@@ -189,6 +189,10 @@ Sandbox status also reports `risk.network_inherit`,
 identify possible network exfiltration or workspace persistence. A
 `sandbox_risk_observed` event is committed when the command is accepted.
 Risk flags are persisted in SQLite and survive worker replacement.
+Stage 10 confirms both boundaries: an inherited network can send the FD3
+credential to a host listener, and a writable workspace can retain the
+credential in a host-visible file after the command exits. These are declared
+capability risks, not redaction failures.
 
 Sandboxed PTY commands keep the portable-pty controlling terminal and do not use
 `--new-session`. A minimal internal seccomp filter rejects `TIOCSTI`; FD3
