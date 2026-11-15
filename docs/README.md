@@ -196,6 +196,9 @@
 - [Experiment 0049](experiments/0049-stage10-sandbox-integration.md): first
   capability-controlled Linux pipe-split and PTY sandbox execution through
   qwed, worker, `qwe-session-exec`, and Bubblewrap.
+- [Experiment 0050](experiments/0050-agent-command-signal.md): AGENT-013
+  whitelisted signal delivery to non-PTY, sandboxed, and PTY foreground process
+  groups.
 
 ## Reading Order
 

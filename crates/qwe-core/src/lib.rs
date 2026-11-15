@@ -12,7 +12,7 @@ mod security;
 pub use agent::{
     AGENT_MAX_WAIT_MS, AGENT_OUTPUT_CHUNK_BYTES, AGENT_REPLAY_LIMIT_BYTES, AgentCommandId,
     AgentCommandRecord, AgentCommandState, AgentEvent, AgentEventKind, AgentOutputMode,
-    AgentOutputStream, AgentWaitState,
+    AgentOutputStream, AgentSignal, AgentWaitState,
 };
 pub use authority::{
     AttachmentAuthority, AttachmentOperation, AuthorityCredentials, AuthorityError,

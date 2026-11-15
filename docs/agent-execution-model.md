@@ -73,6 +73,7 @@ All requests and responses use the existing versioned control envelope.
 | `AGENT_COMMAND_EVENTS` | No | Agent command |
 | `AGENT_COMMAND_WAIT_IDLE` | No | Agent command |
 | `AGENT_COMMAND_TERMINATE` | Yes | Agent command |
+| `AGENT_COMMAND_SIGNAL` | Yes | Agent command |
 | `AGENT_COMMAND_OBSERVE` | No | Agent command, read-only push |
 | `SECURITY_BOOTSTRAP` | No | Local root management capability |
 | `SECURITY_PRINCIPAL_CREATE` | Yes | Principal |
@@ -99,8 +100,9 @@ Capability operations are:
 - `agent_command_terminate` with command scope.
 
 An `agent_exec` capability can read, wait for, observe events from, and
-terminate only the commands it created. Separate command-scoped read or
-terminate capabilities can be issued to other principals.
+signal or terminate only the commands it created. Separate command-scoped read
+or terminate capabilities can be issued to other principals; terminate
+capabilities may also deliver whitelisted signals.
 
 An `agent_exec` capability may carry one optional `SandboxProfile`. Presence
 means every command is executed through the Linux Bubblewrap adapter; absence
@@ -210,6 +212,10 @@ The observer receives committed metadata and redacted output only. It has no
 input, resize, signal, lifecycle, or command-mutation operation. `AGENT_EXEC`
 and termination with only a read capability fail with
 `capability_scope_denied`.
+
+`AGENT_COMMAND_SIGNAL` accepts `SIGINT`, `SIGTERM`, `SIGHUP`, and `SIGQUIT`.
+PTY signals target the current foreground process group; non-PTY signals target
+the command process group. Each delivery appends a `signal_delivered` event.
 
 `AGENT_EXEC` with `pty:true` uses a fresh PTY and one merged `pty` event stream.
 The terminal control bytes are retained, CR/LF translation follows normal PTY

@@ -378,6 +378,65 @@ def main():
         assert signaled_result["wait_state"] == "failed", signaled_result
         assert signaled_result["exit_signal"] == "SIGTERM", signaled_result
 
+        remote_signal = exec_command(
+            args.socket,
+            exec_capability,
+            pane_id,
+            "/bin/sleep",
+            "30",
+        )
+        wait_for(
+            lambda: started_agent_status(
+                args.socket,
+                remote_signal["command_id"],
+                exec_capability,
+            ),
+            "signal target did not start",
+        )
+        signal_response = request_with_capability(
+            args.socket,
+            "AGENT_COMMAND_SIGNAL",
+            {
+                "command_id": remote_signal["command_id"],
+                "signal": "SIGTERM",
+            },
+            exec_capability,
+        )
+        assert signal_response["command_id"] == remote_signal["command_id"]
+        remote_signal_result = wait_result(
+            args.socket,
+            remote_signal["command_id"],
+            exec_capability,
+            3000,
+        )
+        assert remote_signal_result["wait_state"] == "failed", (
+            remote_signal_result
+        )
+        assert remote_signal_result["exit_signal"] == "SIGTERM", (
+            remote_signal_result
+        )
+        remote_signal_events = output_events(
+            args.socket,
+            remote_signal["command_id"],
+            exec_capability,
+        )
+        assert any(
+            event["type"] == "signal_delivered"
+            and event["signal"] == "SIGTERM"
+            for event in remote_signal_events
+        ), remote_signal_events
+
+        forbidden_signal = request_with_capability(
+            args.socket,
+            "AGENT_COMMAND_SIGNAL",
+            {
+                "command_id": remote_signal["command_id"],
+                "signal": "SIGKILL",
+            },
+            exec_capability,
+        )
+        assert forbidden_signal["code"] == "invalid_request", forbidden_signal
+
         missing = exec_command(
             args.socket,
             exec_capability,
@@ -659,6 +718,18 @@ def main():
             observer_capability,
         )
         assert observer_denied["code"] == "capability_scope_denied", observer_denied
+        observer_signal_denied = request_with_capability(
+            args.socket,
+            "AGENT_COMMAND_SIGNAL",
+            {
+                "command_id": observed_command["command_id"],
+                "signal": "SIGINT",
+            },
+            observer_capability,
+        )
+        assert (
+            observer_signal_denied["code"] == "capability_scope_denied"
+        ), observer_signal_denied
         observer_capability_path = Path(args.socket).parent / "observer.capability"
         observer_capability_path.write_text(observer_capability + "\n")
         observer_capability_path.chmod(0o600)
@@ -1098,11 +1169,13 @@ def main():
                         "AGENT-004/AGENT-005/AGENT-006/"
                         "AGENT-007/AGENT-008/AGENT-009/"
                         "AGENT-010/AGENT-011/AGENT-012"
+                        "/AGENT-013"
                     ),
                     "exec": "pass",
                     "split_streams": "pass",
                     "wait_timeout": "pass",
                     "signal": "pass",
+                    "command_signal_api": "pass",
                     "deadline": "pass",
                     "bounded_replay": "pass",
                     "pane_resource_scope": scope_check,

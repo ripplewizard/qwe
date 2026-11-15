@@ -258,6 +258,37 @@ def run_positive_probe(
     )
     assert terminated["wait_state"] == "failed", terminated
 
+    sandbox_signal = exec_command(
+        socket_path,
+        read_only_capability,
+        pane_id,
+        "/bin/sleep",
+        "30",
+    )
+    started_sandbox(
+        socket_path,
+        read_only_capability,
+        sandbox_signal["command_id"],
+    )
+    request_with_capability(
+        socket_path,
+        "AGENT_COMMAND_SIGNAL",
+        {"command_id": sandbox_signal["command_id"], "signal": "SIGTERM"},
+        read_only_capability,
+    )
+    sandbox_signal_terminal = wait_terminal(
+        socket_path,
+        read_only_capability,
+        sandbox_signal["command_id"],
+        3000,
+    )
+    assert sandbox_signal_terminal["wait_state"] == "failed", (
+        sandbox_signal_terminal
+    )
+    assert (
+        sandbox_signal_terminal["exit_signal"] == "SIGTERM"
+    ), sandbox_signal_terminal
+
     ro_target = workspace / "read-only-write.txt"
     ro_attempt = exec_command(
         socket_path,
@@ -618,6 +649,30 @@ def run_positive_probe(
     )
     idle_wrapper = idle_status["sandbox"]["wrapper_pid"]
     idle_child = idle_status["sandbox"]["child_pid"]
+    interrupted = request_with_capability(
+        socket_path,
+        "AGENT_COMMAND_SIGNAL",
+        {"command_id": pty_idle["command_id"], "signal": "SIGINT"},
+        read_only_capability,
+    )
+    assert interrupted["state"] in ("idle", "running"), interrupted
+    time.sleep(0.1)
+    interrupted_status = request_with_capability(
+        socket_path,
+        "AGENT_COMMAND_STATUS",
+        {"command_id": pty_idle["command_id"]},
+        read_only_capability,
+    )
+    assert interrupted_status["state"] in ("idle", "running"), interrupted_status
+    interrupted_events = events(
+        socket_path,
+        read_only_capability,
+        pty_idle["command_id"],
+    )
+    assert any(
+        event["type"] == "signal_delivered" and event["signal"] == "SIGINT"
+        for event in interrupted_events
+    ), interrupted_events
     request_with_capability(
         socket_path,
         "AGENT_COMMAND_TERMINATE",
@@ -682,6 +737,8 @@ def run_positive_probe(
         "fd3_and_redaction": "pass",
         "cgroup": "pass",
         "pty_sandbox": "pass",
+        "pty_sigint": "pass",
+        "sandbox_signal": "pass",
     }, pane_id, read_only_capability
 
 

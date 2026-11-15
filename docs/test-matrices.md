@@ -154,6 +154,7 @@ The accepted Agent Execution first delivery covers all rows below.
 | AGENT-010 | Verify a read-only observer receives committed events but cannot input, resize, signal, or mutate |
 | AGENT-011 | Run a PTY command and verify one merged stream preserves terminal control semantics |
 | AGENT-012 | Verify foreground `idle` is distinct from task exit and that `done` takes precedence |
+| AGENT-013 | Deliver whitelisted signals to PTY foreground/non-PTY process groups, record delivery, and reject SIGKILL and arbitrary signal numbers |
 
 ## Bubblewrap Sandbox
 

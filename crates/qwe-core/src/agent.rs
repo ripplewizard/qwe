@@ -9,6 +9,48 @@ pub const AGENT_OUTPUT_CHUNK_BYTES: usize = 64 * 1024;
 pub const AGENT_REPLAY_LIMIT_BYTES: usize = 1024 * 1024;
 pub const AGENT_MAX_WAIT_MS: u64 = 30_000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentSignal {
+    Sigint,
+    Sigterm,
+    Sighup,
+    Sigquit,
+}
+
+impl AgentSignal {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sigint => "SIGINT",
+            Self::Sigterm => "SIGTERM",
+            Self::Sighup => "SIGHUP",
+            Self::Sigquit => "SIGQUIT",
+        }
+    }
+}
+
+impl fmt::Display for AgentSignal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for AgentSignal {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "SIGINT" => Ok(Self::Sigint),
+            "SIGTERM" => Ok(Self::Sigterm),
+            "SIGHUP" => Ok(Self::Sighup),
+            "SIGQUIT" => Ok(Self::Sigquit),
+            _ => Err(format!(
+                "signal '{value}' is not allowed; use SIGINT, SIGTERM, SIGHUP, or SIGQUIT"
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AgentCommandId(Uuid);
 
@@ -225,6 +267,9 @@ pub enum AgentEventKind {
         deadline_ms: Option<i64>,
         reason: String,
     },
+    SignalDelivered {
+        signal: String,
+    },
     RetentionGap {
         from_sequence: u64,
         to_sequence: u64,
@@ -265,5 +310,15 @@ mod tests {
     fn command_id_round_trips_as_text() {
         let id = AgentCommandId::new();
         assert_eq!(id.to_string().parse::<AgentCommandId>(), Ok(id));
+    }
+
+    #[test]
+    fn agent_signal_whitelist_is_strict() {
+        assert_eq!("SIGINT".parse::<AgentSignal>(), Ok(AgentSignal::Sigint));
+        assert_eq!("SIGTERM".parse::<AgentSignal>(), Ok(AgentSignal::Sigterm));
+        assert_eq!("SIGHUP".parse::<AgentSignal>(), Ok(AgentSignal::Sighup));
+        assert_eq!("SIGQUIT".parse::<AgentSignal>(), Ok(AgentSignal::Sigquit));
+        assert!("SIGKILL".parse::<AgentSignal>().is_err());
+        assert!("9".parse::<AgentSignal>().is_err());
     }
 }

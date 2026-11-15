@@ -443,14 +443,22 @@ owning worker survives.
 | `AGENT_COMMAND_EVENTS` | `command_id`; optional `cursor`, `limit` |
 | `AGENT_COMMAND_WAIT_IDLE` | `command_id`; optional `timeout_ms`, maximum 30000 |
 | `AGENT_COMMAND_TERMINATE` | `command_id` |
+| `AGENT_COMMAND_SIGNAL` | `command_id`, `signal` |
 | `AGENT_COMMAND_OBSERVE` | `command_id`; optional `cursor`, `timeout_ms`, maximum 30000 |
 
-`AGENT_EXEC` and `AGENT_COMMAND_TERMINATE` are mutating operations and require an
-idempotency key. `program` is one executable name or path; QWE does not interpret
-`args` as shell syntax. `cwd` must name an existing directory for spawn to
-succeed. The caller must start a shell explicitly when shell syntax is wanted.
+`AGENT_EXEC`, `AGENT_COMMAND_TERMINATE`, and `AGENT_COMMAND_SIGNAL` are mutating
+operations and require an idempotency key. `program` is one executable name or
+path; QWE does not interpret `args` as shell syntax. `cwd` must name an existing
+directory for spawn to succeed. The caller must start a shell explicitly when
+shell syntax is wanted.
 `sandbox_profile` is not an accepted `AGENT_EXEC` request field; qwed injects
 the internal profile from the capability only after authorization.
+
+`AGENT_COMMAND_SIGNAL.signal` accepts only `SIGINT`, `SIGTERM`, `SIGHUP`, and
+`SIGQUIT`. The signal targets the current PTY foreground process group when
+available, otherwise the command process group. `SIGKILL` and arbitrary signal
+numbers are rejected; forced termination remains exclusively
+`AGENT_COMMAND_TERMINATE` plus Pane cgroup teardown.
 
 `AGENT_EXEC` requires an `agent_exec` capability for the exact Pane. The returned
 command records the creating capability and Principal. That same `agent_exec`

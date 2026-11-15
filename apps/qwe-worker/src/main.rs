@@ -1467,6 +1467,16 @@ fn worker_handle(
                 .agents
                 .terminate_with_context(&command_id, severity, deadline_ms, reason)
         }
+        "AGENT_COMMAND_SIGNAL" => {
+            let command_id = required_agent_command_id(payload)?;
+            let signal = payload
+                .get("signal")
+                .and_then(Value::as_str)
+                .ok_or_else(|| error("invalid_request", "missing signal"))?
+                .parse::<qwe_core::AgentSignal>()
+                .map_err(|failure| error("invalid_request", failure))?;
+            session.agents.signal(&command_id, signal)
+        }
         "AGENT_COMMAND_FREEZE" => {
             let command_id = required_agent_command_id(payload)?;
             let reason = payload

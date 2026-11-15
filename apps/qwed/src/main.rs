@@ -8,13 +8,13 @@ use clap::Parser;
 use credentials::CredentialProvider;
 use qwe_core::{
     AGENT_MAX_WAIT_MS, AgentCommandId, AgentCommandRecord, AgentCommandState, AgentOutputMode,
-    AttachmentAuthority, AttachmentAuthorityState, AttachmentOperation, AuthorityCredentials,
-    CapabilityOperation, CapabilityScope, DEFAULT_CAPABILITY_TTL_MS, DEFAULT_FREEZE_GRACE_MS,
-    DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_FREEZE_GRACE_MS, MAX_LEASE_TTL_MS, PaneId, PaneKind,
-    PaneRecord, PaneSpec, PaneWorkerRecord, PrincipalId, ProcessIdentity, ReclaimTokenHash,
-    ReconciliationDisposition, ResourcePolicy, ResourceProfile, ResourceScopeId,
-    RevocationSeverity, SandboxProfile, SessionRecord, TaskId, TaskRecord, TaskState, WorkerHealth,
-    tile_pane_specs,
+    AgentSignal, AttachmentAuthority, AttachmentAuthorityState, AttachmentOperation,
+    AuthorityCredentials, CapabilityOperation, CapabilityScope, DEFAULT_CAPABILITY_TTL_MS,
+    DEFAULT_FREEZE_GRACE_MS, DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_FREEZE_GRACE_MS,
+    MAX_LEASE_TTL_MS, PaneId, PaneKind, PaneRecord, PaneSpec, PaneWorkerRecord, PrincipalId,
+    ProcessIdentity, ReclaimTokenHash, ReconciliationDisposition, ResourcePolicy, ResourceProfile,
+    ResourceScopeId, RevocationSeverity, SandboxProfile, SessionRecord, TaskId, TaskRecord,
+    TaskState, WorkerHealth, tile_pane_specs,
 };
 use qwe_protocol::{
     ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope,
@@ -740,7 +740,10 @@ fn agent_command_operation(
             .store
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if operation == "AGENT_COMMAND_TERMINATE" {
+        if matches!(
+            operation,
+            "AGENT_COMMAND_TERMINATE" | "AGENT_COMMAND_SIGNAL"
+        ) {
             security::require_command_terminate(&store, auth_context, &command, now_ms())?;
         } else {
             security::require_command_read(&store, auth_context, &command, now_ms())?;
@@ -753,6 +756,15 @@ fn agent_command_operation(
         WORKER_REQUEST_TIMEOUT
     };
     let mut worker_payload = payload.clone();
+    if operation == "AGENT_COMMAND_SIGNAL" {
+        let signal = payload
+            .get("signal")
+            .and_then(Value::as_str)
+            .ok_or_else(|| error("invalid_request", "missing signal"))?
+            .parse::<AgentSignal>()
+            .map_err(|failure| error("invalid_request", failure))?;
+        worker_payload["signal"] = json!(signal.as_str());
+    }
     if operation == "AGENT_COMMAND_WAIT_IDLE" {
         let timeout_ms = payload
             .get("timeout_ms")
@@ -768,7 +780,7 @@ fn agent_command_operation(
             let lost = mark_agent_command_lost(context, &command)?;
             let sandbox = sandbox_json_for_command(context, &lost)?;
             return Ok(match operation {
-                "AGENT_COMMAND_STATUS" | "AGENT_COMMAND_TERMINATE" => {
+                "AGENT_COMMAND_STATUS" | "AGENT_COMMAND_TERMINATE" | "AGENT_COMMAND_SIGNAL" => {
                     agent_record_json(&lost, sandbox.as_ref())
                 }
                 "AGENT_COMMAND_WAIT_IDLE" => json!({
@@ -802,7 +814,10 @@ fn agent_command_operation(
         .find_pane(&command.pane_id)
         .map_err(storage_error)?
         .ok_or_else(|| error("not_found", "Pane not found"))?;
-    if operation == "AGENT_COMMAND_STATUS" || operation == "AGENT_COMMAND_TERMINATE" {
+    if matches!(
+        operation,
+        "AGENT_COMMAND_STATUS" | "AGENT_COMMAND_TERMINATE" | "AGENT_COMMAND_SIGNAL"
+    ) {
         persist_agent_status(context, &pane, &value)?;
     } else if let Ok(status) = call_pane_worker(
         context,
@@ -4157,7 +4172,8 @@ fn client_operation(
         "AGENT_COMMAND_STATUS"
         | "AGENT_COMMAND_EVENTS"
         | "AGENT_COMMAND_WAIT_IDLE"
-        | "AGENT_COMMAND_TERMINATE" => agent_command_operation(
+        | "AGENT_COMMAND_TERMINATE"
+        | "AGENT_COMMAND_SIGNAL" => agent_command_operation(
             context,
             &request.operation,
             &request.payload,
@@ -4312,6 +4328,7 @@ fn requires_idempotency(operation: &str) -> bool {
             | "SECURITY_PRINCIPAL_REVOKE"
             | "AGENT_EXEC"
             | "AGENT_COMMAND_TERMINATE"
+            | "AGENT_COMMAND_SIGNAL"
             | "SESSION_CREATE"
             | "PANE_CREATE"
             | "PANE_FOCUS"
@@ -4445,6 +4462,7 @@ fn execute_request(
         request.operation.as_str(),
         "AGENT_EXEC"
             | "AGENT_COMMAND_TERMINATE"
+            | "AGENT_COMMAND_SIGNAL"
             | "SECURITY_PRINCIPAL_CREATE"
             | "SECURITY_PRINCIPAL_REVOKE"
     );

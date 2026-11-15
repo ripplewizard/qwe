@@ -1,7 +1,7 @@
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use qwe_core::{
     AGENT_MAX_WAIT_MS, AGENT_OUTPUT_CHUNK_BYTES, AGENT_REPLAY_LIMIT_BYTES, AgentCommandId,
-    AgentCommandState, AgentEvent, AgentEventKind, AgentOutputMode, AgentOutputStream,
+    AgentCommandState, AgentEvent, AgentEventKind, AgentOutputMode, AgentOutputStream, AgentSignal,
     AgentWaitState, ProcessIdentity, SANDBOX_PROFILE_VERSION, SandboxProfile, SandboxSeccompMode,
 };
 use qwe_protocol::ProtocolErrorBody;
@@ -988,6 +988,42 @@ impl AgentManager {
             command.request_termination(libc::SIGKILL);
             let _ = command.wait_for_terminal(Duration::from_secs(1));
         }
+        Ok(command.status_json(&self.session_id, &self.pane_id, &self.worker_identity))
+    }
+
+    pub fn signal(
+        &self,
+        command_id: &AgentCommandId,
+        signal: AgentSignal,
+    ) -> Result<Value, ProtocolErrorBody> {
+        let command = self.command(command_id)?;
+        let state = command.with_inner(|inner| inner.state);
+        if state.is_terminal() {
+            return Err(error(
+                "command_terminal",
+                "cannot signal a command in a terminal state",
+            ));
+        }
+        if command.with_inner(|inner| inner.process_identity.is_none()) {
+            return Err(error(
+                "command_not_started",
+                "the command has not established a process identity",
+            ));
+        }
+        if !command.signal(agent_signal_number(signal)) {
+            return Err(error(
+                "signal_failed",
+                "failed to deliver the signal to the command process group",
+            ));
+        }
+        command.with_inner(|inner| {
+            inner.events.append(
+                command.id.clone(),
+                AgentEventKind::SignalDelivered {
+                    signal: signal.as_str().into(),
+                },
+            );
+        });
         Ok(command.status_json(&self.session_id, &self.pane_id, &self.worker_identity))
     }
 
@@ -2236,6 +2272,15 @@ fn signal_name(signal: i32) -> String {
 fn signal_process_group(pgid: u32, signal: libc::c_int) -> bool {
     let result = unsafe { libc::kill(-(pgid as libc::pid_t), signal) };
     result == 0
+}
+
+fn agent_signal_number(signal: AgentSignal) -> libc::c_int {
+    match signal {
+        AgentSignal::Sigint => libc::SIGINT,
+        AgentSignal::Sigterm => libc::SIGTERM,
+        AgentSignal::Sighup => libc::SIGHUP,
+        AgentSignal::Sigquit => libc::SIGQUIT,
+    }
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

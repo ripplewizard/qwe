@@ -338,6 +338,11 @@ enum AgentCommand {
     Terminate {
         command_id: String,
     },
+    Signal {
+        command_id: String,
+        #[arg(long)]
+        signal: String,
+    },
     Observe {
         command_id: String,
         #[arg(long, default_value_t = 0)]
@@ -416,6 +421,7 @@ fn call_with_auth(
         "SESSION_CREATE"
             | "AGENT_EXEC"
             | "AGENT_COMMAND_TERMINATE"
+            | "AGENT_COMMAND_SIGNAL"
             | "SECURITY_PRINCIPAL_CREATE"
             | "SECURITY_PRINCIPAL_REVOKE"
             | "PANE_CREATE"
@@ -1487,6 +1493,12 @@ fn main() -> ExitCode {
                     &arguments.socket,
                     "AGENT_COMMAND_TERMINATE",
                     json!({"command_id": command_id}),
+                    Some(auth),
+                ),
+                AgentCommand::Signal { command_id, signal } => call_with_auth(
+                    &arguments.socket,
+                    "AGENT_COMMAND_SIGNAL",
+                    json!({"command_id": command_id, "signal": signal}),
                     Some(auth),
                 ),
                 AgentCommand::Observe {

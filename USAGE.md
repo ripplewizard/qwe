@@ -320,7 +320,14 @@ qwe --socket "$QWE_SOCKET" \
 qwe --socket "$QWE_SOCKET" \
   --capability-file "$HOME/.config/qwe/agent.capability" \
   agent terminate "$COMMAND_ID"
+qwe --socket "$QWE_SOCKET" \
+  --capability-file "$HOME/.config/qwe/agent.capability" \
+  agent signal "$COMMAND_ID" --signal SIGINT
 ```
+
+`agent signal` accepts `SIGINT`, `SIGTERM`, `SIGHUP`, or `SIGQUIT`. PTY commands
+receive the signal in their current foreground process group. Arbitrary signal
+numbers and `SIGKILL` are rejected; forced termination remains `agent terminate`.
 
 Inject a private provider credential into one command. The secret is delivered
 on inherited FD3, and exact matches are redacted from stdout/stderr before
