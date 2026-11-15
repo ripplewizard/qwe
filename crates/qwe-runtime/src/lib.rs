@@ -5,6 +5,7 @@ mod cgroup;
 mod landlock;
 mod path;
 mod process;
+mod sandbox_control;
 mod terminal;
 mod terminal_output;
 
@@ -19,6 +20,10 @@ pub use landlock::{
 };
 pub use path::resolve_beneath;
 pub use process::{PidFd, process_identity, process_matches};
+pub use sandbox_control::{
+    CONTROL_HEADER_BYTES, CONTROL_KIND_SIGNAL, CONTROL_MAX_BUFFER, CONTROL_MAX_PAYLOAD,
+    CONTROL_VERSION, PaneControlDecoder, PaneControlMessage,
+};
 pub use terminal::{
     CursorStyle, MouseProtocolEncoding, MouseProtocolMode, TerminalScreen, TerminalSnapshot,
 };
