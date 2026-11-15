@@ -165,7 +165,9 @@ through qwed. The observed path is:
 - bounded metadata-only audit before sandboxed `SESSION_INPUT`, with content
   absent from SQLite; and
 - worker-level rejection of direct Attach input, which has no audited qwed
-  write path.
+  write path; and
+- standalone `SESSION_RESIZE` capability authorization with observed PTY
+  dimension changes.
 
 ## P5: Landlock ABI Distribution
 

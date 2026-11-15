@@ -378,6 +378,12 @@ metadata: a sandboxed Pane may accept an ordinary management delegation, while
 and `pane_resize` remain distinct. Capability delegation cannot broaden the
 active operation or target scope.
 
+`SESSION_RESIZE` carries `session_id`, optional `pane_id`, and positive `rows` /
+`columns`. For a sandboxed Pane it requires a matching Pane-scoped
+`pane_resize` capability. For an ordinary Pane it uses the existing
+InputResize attachment authority. The target worker applies `TIOCSWINSZ` and
+returns `{protocol_version, rows, columns}`.
+
 Capability issue is non-idempotent so the raw token is never copied into the
 durable idempotency response table. Tokens default to 24 hours and are capped at
 30 days; the local-root bootstrap management token uses the 30-day maximum.

@@ -75,7 +75,8 @@ See [Experiment 0004](experiments/0004-lifecycle-regression-fixes.md).
 These are implementation work, not reasons to delay development:
 
 - The long-lived Attach channel implements resize, but the old request/response
-  control surface still has no standalone `SESSION_RESIZE` operation.
+  standalone `SESSION_RESIZE` is implemented; interactive Attach input remains
+  audited-channel work.
 - One-shot `SESSION_ATTACH` remains only as a diagnostic `session snapshot`
   command; its structured `terminal` field now includes cursor, modes,
   alternate-screen state, mouse mode, paste mode, and next stream offset.

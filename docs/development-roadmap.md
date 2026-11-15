@@ -27,7 +27,8 @@ independent manual T03/T04/T08/T11 review pass.
 - Keep the canonical machine-readable protocol schema and drift check passing.
 - Convert the ownership and worker-liveness state matrices into integration
   tests, including every rejection branch.
-- Add production `SESSION_RESIZE`.
+- Production `SESSION_RESIZE` is implemented with `pane_resize` capability
+  enforcement for sandboxed Panes.
 - Complete VT cursor, modes, alternate-screen, mouse, and paste state.
 - Validate TUI attach with Neovim and htop after detach and Host recovery.
 - Keep journal and frame limits enforced.

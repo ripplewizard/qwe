@@ -84,8 +84,10 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   issued by default. Persisted Pane sandbox metadata now selects the trust
   floor: sandboxed targets may use an ordinary management delegation, while
   unsandboxed targets still require high trust.
-- **D10 adopted; operation/scope scaffold implemented:** `pane_resize` is
-  separate from `pane_input`; it still carries terminal-control authority.
+- **D10 adopted and implemented:** `pane_resize` is separate from
+  `pane_input`; it still carries terminal-control authority. Standalone
+  `SESSION_RESIZE` requires the capability for sandboxed Panes and updates the
+  worker PTY dimensions.
 - **D11 adopted:** capability delegation is monotonic. A holder cannot issue a
   broader capability than its own authority.
 - **D12 adopted:** capability expiry and ordinary revocation do not terminate an
@@ -270,7 +272,8 @@ P1-P6 evidence is recorded in
 3. Add `landlock` to the typed profile and enforce effective-level audit.
 4. Sandboxed Pane capability, shim, creation, persistence, and lifecycle are
    implemented. Nested refinement and terminal filtering remain.
-5. Implement `pane_input`, `pane_resize`, bounded audit, and terminal filtering.
+5. `pane_input`, `pane_resize`, bounded audit, and restricted output are
+   implemented. Interactive audited Attach input remains.
 6. Resolve D12, D25, and D48 before their dependent behavior ships.
 
 ## Consequences
