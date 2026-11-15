@@ -730,7 +730,8 @@ def run_positive_probe(
             sandboxed_pane_id,
             "/bin/sh",
             "-c",
-            "printf PANE_EXEC_INHERITED",
+            "printf 'PANE_EXEC_INHERITED\\033]0,TITLE_SHOULD_DROP\\007"
+            "\\033]52;c;Q0xJUA==\\007'",
         )
         pane_exec_done = assert_done(
             socket_path,
@@ -2282,6 +2283,7 @@ def run_recovery_probe(
     workspace,
     pane_id,
     capability,
+    sandboxed_pane_expected,
 ):
     recovering = exec_command(
         socket_path,
@@ -2366,14 +2368,15 @@ def run_recovery_probe(
     )
     wait_cgroup_drained(teardown_cgroup)
 
-    sandboxed_session_id = "stage10-sandboxed-pane"
-    sandboxed_restart_status = request(
-        socket_path,
-        "SESSION_STATUS",
-        {"session_id": sandboxed_session_id},
-    )
     sandboxed_restart = "unavailable"
-    if sandboxed_restart_status.get("code") != "not_found":
+    if sandboxed_pane_expected:
+        sandboxed_session_id = "stage10-sandboxed-pane"
+        sandboxed_restart_status = request(
+            socket_path,
+            "SESSION_STATUS",
+            {"session_id": sandboxed_session_id},
+        )
+        assert "code" not in sandboxed_restart_status, sandboxed_restart_status
         layout = request(
             socket_path,
             "SESSION_LAYOUT",
@@ -2783,6 +2786,7 @@ def main():
             Path(args.qwed).with_name("qwe-sandbox-init"),
         )
         results, pane_id, capability = results
+        sandboxed_pane_expected = results["sandboxed_pane_runtime"] == "pass"
         qwed, recovery_results = run_recovery_probe(
             args.qwed,
             args.socket,
@@ -2791,6 +2795,7 @@ def main():
             workspace,
             pane_id,
             capability,
+            sandboxed_pane_expected,
         )
         results.update(recovery_results)
         stop_qwed(qwed, args.socket)
