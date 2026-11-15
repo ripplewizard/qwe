@@ -202,6 +202,28 @@ def tcp_capture():
     return listener, worker, received, listener.getsockname()[1]
 
 
+def unix_capture():
+    name = f"\0qwe-stage10-{os.getpid()}-{time.time_ns()}".encode()
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(name)
+    listener.listen(1)
+    listener.settimeout(3)
+    received = []
+
+    def accept():
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                connection.settimeout(2)
+                received.append(connection.recv(16384))
+        except OSError:
+            pass
+
+    worker = threading.Thread(target=accept, daemon=True)
+    worker.start()
+    return listener, worker, received, name
+
+
 def run_positive_probe(
     socket_path,
     workspace,
@@ -500,11 +522,27 @@ def run_positive_probe(
 
     protected_git = workspace / ".git"
     protected_target = protected_git / "sandbox-blocked"
+    hardlink_source = protected_git / "hardlink-source"
+    hardlink_source.write_text("ORIGINAL")
+    hardlink_alias = workspace / "hardlink-alias"
+    os.link(hardlink_source, hardlink_alias)
     protected_profile = profile(
         workspace,
         workspace_mode="read_write",
         protected_paths=[protected_git],
     )
+    hardlink_issue = issue_capability(
+        socket_path,
+        management,
+        principal_id,
+        pane_id,
+        protected_profile,
+    )
+    assert hardlink_issue.get("code") == "sandbox_profile_unsupported", hardlink_issue
+    assert "hardlinked file" in hardlink_issue["message"], hardlink_issue
+    hardlink_alias.unlink()
+    hardlink_source.unlink()
+
     protected_capability = issue_capability(
         socket_path,
         management,
@@ -585,6 +623,8 @@ def run_positive_probe(
     assert decode_stream(home_events, "stdout") == b"HOME_READ_ONLY"
     assert not home_marker.exists()
 
+    proc_escape_target = Path(socket_path).parent / "proc-root-escape.txt"
+    proc_escape_target.write_text("PROC_ROOT_ESCAPED")
     shared_profile = profile(workspace)
     shared_profile["process_namespace"] = "shared"
     shared_capability = issue_capability(
@@ -602,7 +642,10 @@ def run_positive_probe(
         "-c",
         (
             f"test -e /proc/{pane['worker_pid']} && "
-            f"test -e /proc/{pane['pid']} && printf 'PID_NAMESPACE_SHARED'"
+            f"test -e /proc/{pane['pid']} && "
+            f"if test -r /proc/{pane['worker_pid']}/root{proc_escape_target}; "
+            "then printf 'PROC_ROOT_EXPOSED'; exit 97; "
+            "else printf 'PID_NAMESPACE_SHARED'; fi"
         ),
     )
     assert_done(socket_path, shared_capability, shared_command)
@@ -612,6 +655,7 @@ def run_positive_probe(
         shared_command["command_id"],
     )
     assert decode_stream(shared_events, "stdout") == b"PID_NAMESPACE_SHARED"
+    proc_escape_target.unlink()
 
     inherited_profile = profile(workspace, network="inherit")
     inherited_capability = issue_capability(
@@ -663,6 +707,49 @@ def run_positive_probe(
     inherited_worker.join(4)
     inherited_listener.close()
     assert inherited_data and inherited_data[0] == COMMAND_SECRET, inherited_data
+
+    abstract_listener, abstract_worker, abstract_data, abstract_name = unix_capture()
+    abstract_inherited_script = (
+        "import socket;"
+        f"s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);"
+        f"s.connect({abstract_name!r});"
+        "s.sendall(b'ABSTRACT_INHERITED');"
+        "s.close()"
+    )
+    abstract_inherited = exec_command(
+        socket_path,
+        inherited_capability,
+        pane_id,
+        "/usr/bin/python3",
+        "-c",
+        abstract_inherited_script,
+    )
+    assert_done(socket_path, inherited_capability, abstract_inherited)
+    abstract_worker.join(4)
+    abstract_listener.close()
+    assert abstract_data == [b"ABSTRACT_INHERITED"], abstract_data
+
+    abstract_listener, abstract_worker, abstract_data, abstract_name = unix_capture()
+    abstract_isolated_script = (
+        "import socket,sys;"
+        f"s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);"
+        "s.settimeout(1);"
+        f"r=s.connect_ex({abstract_name!r});"
+        "print('ABSTRACT_ISOLATED' if r else 'ABSTRACT_LEAKED');"
+        "sys.exit(0 if r else 97)"
+    )
+    abstract_isolated = exec_command(
+        socket_path,
+        read_only_capability,
+        pane_id,
+        "/usr/bin/python3",
+        "-c",
+        abstract_isolated_script,
+    )
+    assert_done(socket_path, read_only_capability, abstract_isolated)
+    abstract_worker.join(4)
+    abstract_listener.close()
+    assert not abstract_data, abstract_data
 
     isolated_listener, isolated_worker, isolated_data, isolated_port = tcp_capture()
     isolated_exfil_script = (
@@ -1045,10 +1132,13 @@ def run_positive_probe(
         "workspace_ro_rw": "pass",
         "credential_workspace_persistence_confirmed": "pass",
         "protected_path": "pass",
+        "protected_hardlink": "pass",
         "symlink_protection": "pass",
         "home_read_only": "pass",
         "process_namespace_shared": "pass",
+        "proc_root_bounded": "pass",
         "network_inherit": "pass",
+        "network_inherit_abstract_socket": "pass",
         "credential_network_exfil_confirmed": "pass",
         "sandbox_risk_audit": "pass",
         "sandbox_audit_persistence": "pass",
@@ -1057,6 +1147,7 @@ def run_positive_probe(
         "environment_and_pid_isolation": "pass",
         "filesystem_boundary": "pass",
         "network_isolation": "pass",
+        "network_isolate_abstract_socket": "pass",
         "loopback": "pass",
         "setuid_no_new_privs": "pass",
         "landlock_defense_in_depth": (

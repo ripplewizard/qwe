@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::fs;
+use std::io;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 
 pub const SANDBOX_PROFILE_VERSION: u16 = 1;
 pub const SANDBOX_SECCOMP_STRICT_PROFILE: &str = "strict";
@@ -96,6 +99,31 @@ impl SandboxProfile {
     #[must_use]
     pub fn is_enforced_v1(&self) -> bool {
         self.version == SANDBOX_PROFILE_VERSION && self.seccomp.is_supported_v1()
+    }
+}
+
+pub fn find_hardlinked_protected_path(protected_paths: &[PathBuf]) -> io::Result<Option<PathBuf>> {
+    for path in protected_paths {
+        if let Some(path) = find_hardlink(path)? {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+fn find_hardlink(path: &Path) -> io::Result<Option<PathBuf>> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)? {
+            if let Some(path) = find_hardlink(&entry?.path())? {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
+    } else if metadata.nlink() > 1 {
+        Ok(Some(path.to_path_buf()))
+    } else {
+        Ok(None)
     }
 }
 

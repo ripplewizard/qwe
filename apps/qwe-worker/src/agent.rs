@@ -1138,6 +1138,24 @@ pub(crate) fn validate_sandbox_profile(profile: &SandboxProfile) -> Result<(), P
             ));
         }
     }
+    match qwe_core::find_hardlinked_protected_path(&profile.protected_paths) {
+        Ok(None) => {}
+        Ok(Some(path)) => {
+            return Err(error(
+                "sandbox_profile_unsupported",
+                format!(
+                    "protected path contains hardlinked file '{}'; hardlink aliases can bypass read-only protection",
+                    path.display()
+                ),
+            ));
+        }
+        Err(failure) => {
+            return Err(error(
+                "sandbox_profile_unsupported",
+                format!("failed to inspect protected paths for hardlinks: {failure}"),
+            ));
+        }
+    }
     Ok(())
 }
 
