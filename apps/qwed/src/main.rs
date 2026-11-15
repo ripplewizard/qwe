@@ -11,9 +11,10 @@ use qwe_core::{
     AgentSignal, AttachmentAuthority, AttachmentAuthorityState, AttachmentOperation,
     AuthorityCredentials, CapabilityOperation, CapabilityScope, DEFAULT_CAPABILITY_TTL_MS,
     DEFAULT_FREEZE_GRACE_MS, DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_FREEZE_GRACE_MS,
-    MAX_LEASE_TTL_MS, PaneId, PaneKind, PaneRecord, PaneSpec, PaneWorkerRecord, PrincipalId,
-    ProcessIdentity, ReclaimTokenHash, ReconciliationDisposition, ResourcePolicy, ResourceProfile,
-    ResourceScopeId, RevocationSeverity, SandboxAuditRecord, SandboxProcessMode, SandboxProfile,
+    MAX_LEASE_TTL_MS, MAX_ORPHANED_SANDBOXED_PANES, PaneId, PaneKind, PaneRecord, PaneSpec,
+    PaneWorkerRecord, PrincipalId, ProcessIdentity, ReclaimTokenHash, ReconciliationDisposition,
+    ResourcePolicy, ResourceProfile, ResourceScopeId, RevocationSeverity,
+    SANDBOXED_PANE_ORPHAN_TTL_MS, SandboxAuditRecord, SandboxProcessMode, SandboxProfile,
     SandboxRiskRecord, SessionRecord, TaskId, TaskRecord, TaskState, WorkerHealth, tile_pane_specs,
 };
 use qwe_protocol::{
@@ -1381,6 +1382,28 @@ fn validate_sandbox_runtime_support(
     Ok(())
 }
 
+fn ensure_sandboxed_pane_capacity(context: &Context) -> Result<(), ProtocolErrorBody> {
+    let count = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .count_pane_orphans()
+        .map_err(storage_error)?;
+    validate_sandboxed_pane_orphan_count(count)
+}
+
+fn validate_sandboxed_pane_orphan_count(count: usize) -> Result<(), ProtocolErrorBody> {
+    if count >= MAX_ORPHANED_SANDBOXED_PANES {
+        return Err(error(
+            "sandbox_orphan_limit",
+            format!(
+                "refusing sandboxed Pane creation: {count} orphaned Panes already exist (maximum {MAX_ORPHANED_SANDBOXED_PANES})"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn create_session(
     context: &Context,
     payload: Value,
@@ -1458,6 +1481,9 @@ fn create_session(
         .and_then(|grant| grant.capability.sandbox_profile.as_ref())
     {
         validate_sandbox_runtime_support(context, profile)?;
+    }
+    if sandbox_grant.is_some() {
+        ensure_sandboxed_pane_capacity(context)?;
     }
     let program = payload
         .get("program")
@@ -1685,6 +1711,9 @@ fn create_pane(
         .and_then(|grant| grant.capability.sandbox_profile.as_ref())
     {
         validate_sandbox_runtime_support(context, profile)?;
+    }
+    if sandbox_grant.is_some() {
+        ensure_sandboxed_pane_capacity(context)?;
     }
     let after_pane_id = payload
         .get("after_pane_id")
@@ -4508,9 +4537,15 @@ fn security_principal_revoke(
         severity,
         revoked.revocation_deadline_ms,
     )?;
+    let affected_panes = if severity == RevocationSeverity::Terminate {
+        apply_revocation_to_sandboxed_panes(context, &principal_id)?
+    } else {
+        0
+    };
     Ok(json!({
         "principal": principal_json(&revoked),
-        "affected_commands": affected_commands
+        "affected_commands": affected_commands,
+        "affected_sandboxed_panes": affected_panes
     }))
 }
 
@@ -4593,6 +4628,245 @@ fn apply_revocation_to_commands(
     Ok(affected)
 }
 
+fn apply_revocation_to_sandboxed_panes(
+    context: &Context,
+    principal_id: &PrincipalId,
+) -> Result<usize, ProtocolErrorBody> {
+    let panes = {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let affected_principals = store
+            .list_principals()
+            .map_err(storage_error)?
+            .into_iter()
+            .filter_map(|principal| {
+                store
+                    .principal_chain(&principal.id)
+                    .ok()
+                    .filter(|chain| chain.iter().any(|ancestor| &ancestor.id == principal_id))
+                    .map(|_| principal.id)
+            })
+            .collect::<HashSet<_>>();
+        let mut panes = Vec::new();
+        for sandbox in store.list_pane_sandboxes().map_err(storage_error)? {
+            let Some(capability) = store
+                .find_capability(&sandbox.capability_id)
+                .map_err(storage_error)?
+            else {
+                continue;
+            };
+            if affected_principals.contains(&capability.principal_id)
+                && let Some(pane) = store.find_pane(&sandbox.pane_id).map_err(storage_error)?
+            {
+                panes.push(pane);
+            }
+        }
+        panes
+    };
+    let mut affected = 0;
+    for pane in panes {
+        if terminate_sandboxed_pane_internal(context, &pane.id, "principal_revocation").is_ok() {
+            affected += 1;
+        }
+    }
+    Ok(affected)
+}
+
+fn pane_has_valid_operation_capability(
+    store: &Store,
+    pane: &PaneRecord,
+    now_ms: i64,
+) -> Result<bool, ProtocolErrorBody> {
+    for capability in store.list_capabilities().map_err(storage_error)? {
+        if capability.revoked_at_ms.is_some() || capability.expires_at_ms <= now_ms {
+            continue;
+        }
+        let relevant = match capability.operation {
+            CapabilityOperation::SandboxedPane => {
+                capability.scope
+                    == (CapabilityScope::Session {
+                        session_id: pane.session_id.clone(),
+                    })
+            }
+            CapabilityOperation::PaneExec
+            | CapabilityOperation::PaneInput
+            | CapabilityOperation::PaneResize => {
+                capability.scope
+                    == (CapabilityScope::Pane {
+                        pane_id: pane.id.clone(),
+                    })
+            }
+            _ => false,
+        };
+        if !relevant {
+            continue;
+        }
+        let chain = store
+            .principal_chain(&capability.principal_id)
+            .map_err(storage_error)?;
+        if chain
+            .iter()
+            .all(|principal| principal.revoked_at_ms.is_none())
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn terminate_sandboxed_pane_internal(
+    context: &Context,
+    pane_id: &PaneId,
+    cause: &str,
+) -> Result<(), ProtocolErrorBody> {
+    let pane = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .find_pane(pane_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("not_found", "Pane not found"))?;
+    let pane_key = pane.id.to_string();
+    let worker_result = call_pane_worker(
+        context,
+        &pane_key,
+        "SESSION_KILL",
+        json!({"session_id": pane.session_id}),
+        WORKER_MAINTENANCE_TIMEOUT,
+    );
+    if worker_result.is_err()
+        && let Some(task) = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .find_task_for_pane(pane_id)
+            .map_err(storage_error)?
+    {
+        unsafe {
+            libc::kill(-(task.identity.pgid as libc::pid_t), libc::SIGKILL);
+        }
+    }
+    let handle = context
+        .workers
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&pane_key);
+    if let Some(handle) = &handle {
+        cleanup_worker_scope(handle);
+        unsafe {
+            libc::kill(handle.worker_pid as libc::pid_t, libc::SIGKILL);
+        }
+        remove_worker_files(context, &pane_key);
+    }
+    let now = now_ms();
+    let mut store = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(task) = store.find_task_for_pane(pane_id).map_err(storage_error)? {
+        if task.state == TaskState::Running {
+            store
+                .update_task(&task.id, TaskState::Stopped, None, None, Some(now))
+                .map_err(storage_error)?;
+        }
+    }
+    if let Some(mut worker) = store.find_pane_worker(pane_id).map_err(storage_error)? {
+        worker.state = "closed".into();
+        worker.updated_at_ms = now;
+        store.upsert_pane_worker(&worker).map_err(storage_error)?;
+    }
+    store
+        .update_resource_scope_state(
+            &pane.resource_scope_id,
+            qwe_core::ResourceScopeState::Closed,
+            Some(cause),
+            now,
+        )
+        .map_err(storage_error)?;
+    store.clear_pane_orphan(pane_id).map_err(storage_error)?;
+    Ok(())
+}
+
+fn reconcile_sandboxed_pane_orphans_at(
+    context: &Context,
+    now_ms: i64,
+) -> Result<usize, ProtocolErrorBody> {
+    let expired = {
+        let mut store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let sandboxes = store.list_pane_sandboxes().map_err(storage_error)?;
+        let mut states = store
+            .list_pane_orphan_states()
+            .map_err(storage_error)?
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let sandbox_ids = sandboxes
+            .iter()
+            .map(|sandbox| sandbox.pane_id.clone())
+            .collect::<HashSet<_>>();
+        let stale = states
+            .keys()
+            .filter(|pane_id| !sandbox_ids.contains(*pane_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for pane_id in stale {
+            store.clear_pane_orphan(&pane_id).map_err(storage_error)?;
+            states.remove(&pane_id);
+        }
+        let mut expired = Vec::new();
+        for sandbox in &sandboxes {
+            let Some(pane) = store.find_pane(&sandbox.pane_id).map_err(storage_error)? else {
+                continue;
+            };
+            let running = store
+                .find_task_for_pane(&pane.id)
+                .map_err(storage_error)?
+                .is_some_and(|task| task.state == TaskState::Running);
+            let attached = store
+                .get_attachment_authority_for_pane(&pane.id)
+                .map_err(storage_error)?
+                .is_some_and(|authority| {
+                    authority.state_at(now_ms) == AttachmentAuthorityState::Active
+                });
+            let capable = running && pane_has_valid_operation_capability(&store, &pane, now_ms)?;
+            if !running || attached || capable {
+                if states.remove(&pane.id).is_some() {
+                    store.clear_pane_orphan(&pane.id).map_err(storage_error)?;
+                }
+                continue;
+            }
+            let since = if let Some(since) = states.get(&pane.id) {
+                *since
+            } else {
+                store
+                    .mark_pane_orphan_if_absent(&pane.id, now_ms)
+                    .map_err(storage_error)?;
+                states.insert(pane.id.clone(), now_ms);
+                now_ms
+            };
+            if now_ms.saturating_sub(since) >= SANDBOXED_PANE_ORPHAN_TTL_MS {
+                expired.push(pane);
+            }
+        }
+        expired
+    };
+    let mut terminated = 0;
+    for pane in expired {
+        if terminate_sandboxed_pane_internal(context, &pane.id, "orphan_ttl").is_ok() {
+            terminated += 1;
+        }
+    }
+    Ok(terminated)
+}
+
+fn reconcile_sandboxed_pane_orphans(context: &Context) {
+    let _ = reconcile_sandboxed_pane_orphans_at(context, now_ms());
+}
+
 fn reconcile_expired_freeze_revocations(context: &Context) {
     let _security_guard = context
         .security_lock
@@ -4624,6 +4898,7 @@ fn reconcile_expired_freeze_revocations(context: &Context) {
                 RevocationSeverity::Terminate,
                 None,
             );
+            let _ = apply_revocation_to_sandboxed_panes(context, &escalated.id);
             eprintln!(
                 "security freeze expired; escalated Principal {} to termination",
                 escalated.id
@@ -6546,6 +6821,7 @@ fn start_monitor_threads(
         loop {
             thread::sleep(SECURITY_RECONCILE_INTERVAL);
             reconcile_expired_freeze_revocations(&security_context);
+            reconcile_sandboxed_pane_orphans(&security_context);
         }
     });
     Ok(())
@@ -6742,5 +7018,16 @@ mod startup_tests {
         );
         assert_eq!(temporary.code, "sandbox_backend_unavailable");
         assert_eq!(temporary.details.unwrap().reason, "mount_denied");
+    }
+
+    #[test]
+    fn sandboxed_pane_creation_enforces_orphan_count_limit() {
+        validate_sandboxed_pane_orphan_count(MAX_ORPHANED_SANDBOXED_PANES - 1).unwrap();
+        assert_eq!(
+            validate_sandboxed_pane_orphan_count(MAX_ORPHANED_SANDBOXED_PANES)
+                .unwrap_err()
+                .code,
+            "sandbox_orphan_limit"
+        );
     }
 }

@@ -384,6 +384,7 @@ def run_positive_probe(
     sandboxed_input_secret = None
     interactive_input_secret = None
     sandboxed_shared_result = "unavailable"
+    sandboxed_orphan_result = "unavailable"
     if audit["fd_bind"]:
         assert sandboxed_pane.get("token"), sandboxed_pane
         assert sandboxed_pane["sandbox_audit"]["fd_bind"] is True, sandboxed_pane
@@ -882,6 +883,179 @@ def run_positive_probe(
         else:
             assert shared_issue.get("code") == "unsupported_capability", shared_issue
             sandboxed_shared_result = "unavailable"
+
+        orphan_session_id = "stage10-sandboxed-pane-orphan"
+        orphan_capability = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": principal_id,
+                "operation": "sandboxed_pane",
+                "scope": {"kind": "session", "session_id": orphan_session_id},
+                "sandbox_profile": read_only_profile,
+                "ttl_ms": 5000,
+            },
+            management,
+        )
+        assert orphan_capability.get("token"), orphan_capability
+        orphan_session = request_with_capability(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": orphan_session_id,
+                "program": "/bin/sh",
+                "args": ["-c", "exec /bin/sleep 120"],
+                "owner": OWNER,
+                "sandboxed": True,
+            },
+            orphan_capability["token"],
+        )
+        orphan_pane_id = orphan_session["pane_id"]
+        orphan_worker_pid = orphan_session["worker_pid"]
+        orphan_database = Path(f"{socket_path}.sqlite")
+
+        def orphan_state_exists():
+            connection = sqlite3.connect(orphan_database, timeout=2)
+            try:
+                return (
+                    connection.execute(
+                        "SELECT COUNT(*) FROM pane_orphan_states WHERE pane_id = ?",
+                        (orphan_pane_id,),
+                    ).fetchone()[0]
+                    == 1
+                )
+            finally:
+                connection.close()
+
+        wait_for(
+            orphan_state_exists,
+            "expired sandboxed Pane did not become orphaned",
+            8,
+        )
+        connection = sqlite3.connect(orphan_database, timeout=2)
+        try:
+            connection.execute(
+                "UPDATE pane_orphan_states SET orphan_since_ms = 0 WHERE pane_id = ?",
+                (orphan_pane_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        wait_for(
+            lambda: process_gone(orphan_worker_pid),
+            "orphaned sandboxed Pane worker survived TTL teardown",
+            5,
+        )
+        sandboxed_orphan_result = "pass"
+
+        revocable_principal = request_with_capability(
+            socket_path,
+            "SECURITY_PRINCIPAL_CREATE",
+            {"parent_id": principal_id},
+            management,
+        )["principal_id"]
+        revocable_session_id = "stage10-sandboxed-pane-revoked"
+        revocable_capability = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": revocable_principal,
+                "operation": "sandboxed_pane",
+                "scope": {"kind": "session", "session_id": revocable_session_id},
+                "sandbox_profile": read_only_profile,
+                "ttl_ms": 60000,
+            },
+            management,
+        )
+        assert revocable_capability.get("token"), revocable_capability
+        revocable_session = request_with_capability(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": revocable_session_id,
+                "program": "/bin/sh",
+                "args": ["-c", "exec /bin/sleep 120"],
+                "owner": OWNER,
+                "sandboxed": True,
+            },
+            revocable_capability["token"],
+        )
+        revocable_worker_pid = revocable_session["worker_pid"]
+        revoked = request_with_capability(
+            socket_path,
+            "SECURITY_PRINCIPAL_REVOKE",
+            {"principal_id": revocable_principal, "severity": "terminate"},
+            management,
+        )
+        assert revoked.get("affected_sandboxed_panes") == 1, revoked
+        wait_for(
+            lambda: process_gone(revocable_worker_pid),
+            "sandboxed Pane survived termination-level Principal revocation",
+            5,
+        )
+
+        preserved_principal = request_with_capability(
+            socket_path,
+            "SECURITY_PRINCIPAL_CREATE",
+            {"parent_id": principal_id},
+            management,
+        )["principal_id"]
+        preserved_session_id = "stage10-sandboxed-pane-admin-revoked"
+        preserved_capability = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": preserved_principal,
+                "operation": "sandboxed_pane",
+                "scope": {"kind": "session", "session_id": preserved_session_id},
+                "sandbox_profile": read_only_profile,
+                "ttl_ms": 60000,
+            },
+            management,
+        )
+        preserved_session = request_with_capability(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": preserved_session_id,
+                "program": "/bin/sh",
+                "args": ["-c", "exec /bin/sleep 120"],
+                "owner": OWNER,
+                "sandboxed": True,
+            },
+            preserved_capability["token"],
+        )
+        preserved_worker_pid = preserved_session["worker_pid"]
+        administratively_revoked = request_with_capability(
+            socket_path,
+            "SECURITY_PRINCIPAL_REVOKE",
+            {"principal_id": preserved_principal, "severity": "administrative"},
+            management,
+        )
+        assert (
+            administratively_revoked["affected_sandboxed_panes"] == 0
+        ), administratively_revoked
+        time.sleep(0.5)
+        assert not process_gone(preserved_worker_pid), administratively_revoked
+        preserved_generation = claim(
+            socket_path,
+            preserved_session_id,
+            OWNER,
+        )
+        request(
+            socket_path,
+            "SESSION_KILL",
+            {
+                "session_id": preserved_session_id,
+                "owner": OWNER,
+                "generation": preserved_generation,
+            },
+        )
+        wait_for(
+            lambda: process_gone(preserved_worker_pid),
+            "administratively preserved Pane did not stop on explicit kill",
+            5,
+        )
 
     landlock_off_profile = profile(workspace, landlock={"mode": "off"})
     landlock_off = issue_capability(
@@ -2028,6 +2202,9 @@ def run_positive_probe(
         "sandboxed_pane_resize": "pass",
         "pane_exec_refinement": "pass",
         "sandboxed_pane_shared_namespace": sandboxed_shared_result,
+        "sandboxed_pane_orphan_ttl": sandboxed_orphan_result,
+        "sandboxed_pane_revocation_terminate": "pass",
+        "sandboxed_pane_admin_revoke_preserves": "pass",
         "pane_input_trust_floor": "pass",
         "fd_bind_probe": "pass",
         "strict_seccomp": "pass",
