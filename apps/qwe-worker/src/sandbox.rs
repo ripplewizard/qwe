@@ -1,12 +1,15 @@
 use qwe_core::{
-    SandboxHomeMode, SandboxNetworkMode, SandboxProcessMode, SandboxProfile, SandboxWorkspaceMode,
+    SANDBOX_SECCOMP_STRICT_PROFILE, SandboxHomeMode, SandboxNetworkMode, SandboxProcessMode,
+    SandboxProfile, SandboxSeccompMode, SandboxWorkspaceMode,
 };
 use qwe_protocol::ProtocolErrorDetails;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io;
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::io::{FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -443,8 +446,8 @@ pub fn bubblewrap_invocation(
     })
 }
 
-pub fn write_tiocsti_filter(path: &Path) -> io::Result<()> {
-    let filters = tiocsti_filter_program()?;
+pub fn write_seccomp_filter(path: &Path, mode: &SandboxSeccompMode) -> io::Result<()> {
+    let filters = seccomp_filter_program(mode)?;
     let filter_bytes = unsafe {
         std::slice::from_raw_parts(
             filters.as_ptr().cast::<u8>(),
@@ -460,20 +463,97 @@ pub fn write_tiocsti_filter(path: &Path) -> io::Result<()> {
     file.flush()
 }
 
-fn tiocsti_filter_program() -> io::Result<Vec<libc::sock_filter>> {
+pub fn seccomp_filter_hash(mode: &SandboxSeccompMode) -> io::Result<String> {
+    let filters = seccomp_filter_program(mode)?;
+    let bytes = filter_bytes(&filters);
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+pub fn create_seccomp_filter_fd(mode: &SandboxSeccompMode) -> io::Result<RawFd> {
+    let filters = seccomp_filter_program(mode)?;
+    let bytes = filter_bytes(&filters);
+    let mut descriptors = [-1_i32; 2];
+    if unsafe { libc::pipe(descriptors.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut writer = unsafe { std::fs::File::from_raw_fd(descriptors[1]) };
+    if let Err(failure) = writer.write_all(bytes).and_then(|()| writer.flush()) {
+        unsafe {
+            libc::close(descriptors[0]);
+        }
+        return Err(failure);
+    }
+    drop(writer);
+    let inherited = unsafe { libc::fcntl(descriptors[0], libc::F_DUPFD_CLOEXEC, 10) };
+    unsafe {
+        libc::close(descriptors[0]);
+    }
+    if inherited < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let flags = unsafe { libc::fcntl(inherited, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(inherited, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0
+    {
+        let failure = io::Error::last_os_error();
+        unsafe {
+            libc::close(inherited);
+        }
+        return Err(failure);
+    }
+    Ok(inherited)
+}
+
+fn filter_bytes(filters: &[libc::sock_filter]) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts(
+            filters.as_ptr().cast::<u8>(),
+            std::mem::size_of_val(filters),
+        )
+    }
+}
+
+fn seccomp_filter_program(mode: &SandboxSeccompMode) -> io::Result<Vec<libc::sock_filter>> {
     #[cfg(target_arch = "x86_64")]
     const AUDIT_ARCH: u32 = 0xc000_003e;
     #[cfg(target_arch = "x86_64")]
     const SYS_IOCTL: u32 = 16;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_PTRACE: u32 = 101;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_KEYCTL: u32 = 250;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_ADD_KEY: u32 = 248;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_REQUEST_KEY: u32 = 249;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_BPF: u32 = 321;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_USERFAULTFD: u32 = 323;
+    #[cfg(target_arch = "x86_64")]
+    const SYS_IO_URING_SETUP: u32 = 425;
     #[cfg(target_arch = "aarch64")]
     const AUDIT_ARCH: u32 = 0xc000_00b7;
     #[cfg(target_arch = "aarch64")]
     const SYS_IOCTL: u32 = 29;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_PTRACE: u32 = 117;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_KEYCTL: u32 = 219;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_ADD_KEY: u32 = 217;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_REQUEST_KEY: u32 = 218;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_BPF: u32 = 280;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_USERFAULTFD: u32 = 282;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_IO_URING_SETUP: u32 = 425;
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "TIOCSTI seccomp filter is not implemented for this architecture",
+            "sandbox seccomp filter is not implemented for this architecture",
         ));
     }
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -483,7 +563,7 @@ fn tiocsti_filter_program() -> io::Result<Vec<libc::sock_filter>> {
         const SECCOMP_DATA_ARG1: u32 = 24;
         const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
         let deny = libc::SECCOMP_RET_ERRNO | libc::EPERM as u32;
-        Ok(vec![
+        let mut filters = vec![
             bpf(
                 libc::BPF_LD | libc::BPF_W | libc::BPF_ABS,
                 SECCOMP_DATA_ARCH,
@@ -496,6 +576,42 @@ fn tiocsti_filter_program() -> io::Result<Vec<libc::sock_filter>> {
             ),
             bpf_return(SECCOMP_RET_KILL_PROCESS),
             bpf(libc::BPF_LD | libc::BPF_W | libc::BPF_ABS, SECCOMP_DATA_NR),
+        ];
+        if matches!(
+            mode,
+            SandboxSeccompMode::Named { profile }
+                if profile == SANDBOX_SECCOMP_STRICT_PROFILE
+        ) {
+            for syscall in [
+                SYS_PTRACE,
+                SYS_BPF,
+                SYS_KEYCTL,
+                SYS_ADD_KEY,
+                SYS_REQUEST_KEY,
+                SYS_USERFAULTFD,
+            ] {
+                filters.push(bpf_jump(
+                    libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K,
+                    syscall,
+                    0,
+                    1,
+                ));
+                filters.push(bpf_return(deny));
+            }
+            filters.push(bpf_jump(
+                libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K,
+                SYS_IO_URING_SETUP,
+                0,
+                1,
+            ));
+            filters.push(bpf_return(libc::SECCOMP_RET_ERRNO | libc::ENOSYS as u32));
+        } else if !matches!(mode, SandboxSeccompMode::None) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "only the named seccomp profile 'strict' is supported",
+            ));
+        }
+        filters.extend([
             bpf_jump(libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K, SYS_IOCTL, 0, 4),
             bpf(
                 libc::BPF_LD | libc::BPF_W | libc::BPF_ABS,
@@ -510,7 +626,8 @@ fn tiocsti_filter_program() -> io::Result<Vec<libc::sock_filter>> {
             bpf_return(deny),
             bpf_return(libc::SECCOMP_RET_ALLOW),
             bpf_return(libc::SECCOMP_RET_ALLOW),
-        ])
+        ]);
+        Ok(filters)
     }
 }
 
@@ -640,6 +757,25 @@ mod tests {
         assert_eq!(
             failure.details.diagnostics["stderr"],
             "unrecognized bubblewrap failure"
+        );
+    }
+
+    #[test]
+    fn strict_seccomp_filter_is_versioned_by_content_hash() {
+        let none = seccomp_filter_hash(&SandboxSeccompMode::None).unwrap();
+        let strict = seccomp_filter_hash(&SandboxSeccompMode::Named {
+            profile: "strict".into(),
+        })
+        .unwrap();
+        assert_eq!(none.len(), 64);
+        assert_eq!(strict.len(), 64);
+        assert_ne!(none, strict);
+
+        assert!(
+            seccomp_filter_hash(&SandboxSeccompMode::Named {
+                profile: "unknown".into(),
+            })
+            .is_err()
         );
     }
 }

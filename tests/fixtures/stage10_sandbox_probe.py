@@ -238,7 +238,72 @@ def run_positive_probe(
     assert audit["backend_version"].startswith("bubblewrap"), audit
     assert len(audit["profile_hash"]) == 64, audit
     assert audit["probe_time_ms"] > 0, audit
+    assert len(audit["seccomp_profile_hash"]) == 64, audit
     read_only_capability = read_only["token"]
+
+    strict_profile = profile(workspace)
+    strict_profile["seccomp"] = {"mode": "named", "profile": "strict"}
+    strict_capability = issue_capability(
+        socket_path,
+        management,
+        principal_id,
+        pane_id,
+        strict_profile,
+    )
+    assert strict_capability.get("token"), strict_capability
+    strict_hash = strict_capability["sandbox_audit"]["seccomp_profile_hash"]
+    assert len(strict_hash) == 64, strict_capability
+    assert strict_hash != audit["seccomp_profile_hash"], strict_capability
+    strict_script = (
+        "import ctypes,errno,os;"
+        "machine=os.uname().machine;"
+        "numbers={'x86_64':{'ptrace':101,'add_key':248,'request_key':249,"
+        "'keyctl':250,'bpf':321,'userfaultfd':323,'io_uring':425},"
+        "'aarch64':{'ptrace':117,'add_key':217,'request_key':218,"
+        "'keyctl':219,'bpf':280,'userfaultfd':282,'io_uring':425}}[machine];"
+        "libc=ctypes.CDLL(None,use_errno=True);"
+        "CALL=lambda nr,*args:(ctypes.set_errno(0),libc.syscall(ctypes.c_long(nr),"
+        "*[ctypes.c_long(a) for a in args]),ctypes.get_errno())[1:];"
+        "assert CALL(numbers['ptrace'],0,0,0,0)[1] == errno.EPERM;"
+        "assert CALL(numbers['add_key'],0,0,0,0,0)[1] == errno.EPERM;"
+        "assert CALL(numbers['request_key'],0,0,0,0)[1] == errno.EPERM;"
+        "assert CALL(numbers['keyctl'],0,0,0,0,0)[1] == errno.EPERM;"
+        "assert CALL(numbers['bpf'],0,0,0)[1] == errno.EPERM;"
+        "assert CALL(numbers['userfaultfd'],0)[1] == errno.EPERM;"
+        "assert CALL(numbers['io_uring'],0,0)[1] == errno.ENOSYS;"
+        "print('STRICT_SECCOMP_OK')"
+    )
+    strict_command = exec_command(
+        socket_path,
+        strict_capability["token"],
+        pane_id,
+        "/usr/bin/python3",
+        "-c",
+        strict_script,
+    )
+    assert_done(socket_path, strict_capability["token"], strict_command)
+    strict_events = events(
+        socket_path,
+        strict_capability["token"],
+        strict_command["command_id"],
+    )
+    assert decode_stream(strict_events, "stdout") == b"STRICT_SECCOMP_OK\n"
+    strict_pty = exec_command(
+        socket_path,
+        strict_capability["token"],
+        pane_id,
+        "/bin/sh",
+        "-c",
+        "printf 'STRICT_PTY_OK'",
+        pty=True,
+    )
+    assert_done(socket_path, strict_capability["token"], strict_pty)
+    strict_pty_events = events(
+        socket_path,
+        strict_capability["token"],
+        strict_pty["command_id"],
+    )
+    assert b"STRICT_PTY_OK" in decode_stream(strict_pty_events, "pty")
 
     basic = exec_command(
         socket_path,
@@ -888,6 +953,7 @@ def run_positive_probe(
 
     return {
         "profile_authorization": "pass",
+        "strict_seccomp": "pass",
         "request_cannot_enable": "pass",
         "request_cannot_downgrade": "pass",
         "workspace_ro_rw": "pass",
@@ -1233,7 +1299,10 @@ def main():
         print(
             json.dumps(
                 {
-                    "case": "SANDBOX-004/SANDBOX-005/SANDBOX-006/SANDBOX-007",
+                    "case": (
+                        "SANDBOX-004/SANDBOX-005/SANDBOX-006/"
+                        "SANDBOX-007/SANDBOX-008"
+                    ),
                     "status": "skip",
                     "reason": "Linux and Bubblewrap are required",
                 }
@@ -1286,7 +1355,10 @@ def main():
         print(
             json.dumps(
                 {
-                    "case": "SANDBOX-004/SANDBOX-005/SANDBOX-006/SANDBOX-007",
+                    "case": (
+                        "SANDBOX-004/SANDBOX-005/SANDBOX-006/"
+                        "SANDBOX-007/SANDBOX-008"
+                    ),
                     "status": "pass",
                     **results,
                 }

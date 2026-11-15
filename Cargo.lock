@@ -505,6 +505,7 @@ dependencies = [
  "qwe-runtime",
  "serde",
  "serde_json",
+ "sha2",
  "vt100",
  "zeroize",
 ]

@@ -3925,6 +3925,7 @@ mod tests {
                 backend_path: "/opt/local/bin/bwrap".into(),
                 backend_version: "bubblewrap 0.13.1".into(),
                 probe_time_ms: 23,
+                seccomp_profile_hash: Some("seccomp-hash".into()),
             }),
         };
         store.install_capability(&capability).unwrap();

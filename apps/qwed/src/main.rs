@@ -3834,6 +3834,10 @@ fn probe_sandbox_worker(
         .get("probe_time_ms")
         .and_then(Value::as_i64)
         .ok_or_else(|| error("worker_contract", "sandbox probe has no probe time"))?;
+    let seccomp_profile_hash = result
+        .get("seccomp_profile_hash")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("worker_contract", "sandbox probe has no seccomp hash"))?;
     let profile_json =
         serde_json::to_vec(profile).map_err(|failure| error("internal", failure.to_string()))?;
     Ok(SandboxAuditRecord {
@@ -3841,6 +3845,7 @@ fn probe_sandbox_worker(
         backend_path: backend_path.into(),
         backend_version: backend_version.into(),
         probe_time_ms,
+        seccomp_profile_hash: Some(seccomp_profile_hash.into()),
     })
 }
 

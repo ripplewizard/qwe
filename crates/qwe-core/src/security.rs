@@ -200,6 +200,8 @@ pub struct SandboxAuditRecord {
     pub backend_path: String,
     pub backend_version: String,
     pub probe_time_ms: i64,
+    #[serde(default)]
+    pub seccomp_profile_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub const SANDBOX_PROFILE_VERSION: u16 = 1;
+pub const SANDBOX_SECCOMP_STRICT_PROFILE: &str = "strict";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +46,16 @@ pub enum SandboxSeccompMode {
     },
 }
 
+impl SandboxSeccompMode {
+    #[must_use]
+    pub fn is_supported_v1(&self) -> bool {
+        match self {
+            Self::None => true,
+            Self::Named { profile } => profile == SANDBOX_SECCOMP_STRICT_PROFILE,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxProfile {
@@ -84,7 +95,7 @@ impl SandboxProfile {
 
     #[must_use]
     pub fn is_enforced_v1(&self) -> bool {
-        self.version == SANDBOX_PROFILE_VERSION && self.seccomp == SandboxSeccompMode::None
+        self.version == SANDBOX_PROFILE_VERSION && self.seccomp.is_supported_v1()
     }
 }
 
@@ -124,12 +135,14 @@ mod tests {
     }
 
     #[test]
-    fn named_seccomp_is_not_silently_accepted() {
-        let profile = SandboxProfile {
-            seccomp: SandboxSeccompMode::Named {
-                profile: "strict".into(),
-            },
-            ..SandboxProfile::new(PathBuf::from("/tmp/workspace"))
+    fn named_seccomp_only_accepts_strict() {
+        let mut profile = SandboxProfile::new(PathBuf::from("/tmp/workspace"));
+        profile.seccomp = SandboxSeccompMode::Named {
+            profile: "strict".into(),
+        };
+        assert!(profile.is_enforced_v1());
+        profile.seccomp = SandboxSeccompMode::Named {
+            profile: "unknown".into(),
         };
         assert!(!profile.is_enforced_v1());
     }

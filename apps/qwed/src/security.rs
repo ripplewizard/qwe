@@ -1,7 +1,7 @@
 use qwe_core::{
     AgentCommandRecord, CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
     MAX_CAPABILITY_TTL_MS, PaneId, PrincipalEpoch, PrincipalId, PrincipalRecord, ReclaimTokenHash,
-    SANDBOX_PROFILE_VERSION, SandboxAuditRecord, SandboxProfile, SandboxSeccompMode,
+    SANDBOX_PROFILE_VERSION, SandboxAuditRecord, SandboxProfile,
 };
 use qwe_protocol::{AuthContext, ProtocolErrorBody};
 use qwe_storage::{StorageError, Store};
@@ -129,10 +129,10 @@ pub fn validate_sandbox_grant(
             ),
         ));
     }
-    if profile.seccomp != SandboxSeccompMode::None {
+    if !profile.seccomp.is_supported_v1() {
         return Err(error(
             "sandbox_profile_unsupported",
-            "named seccomp profiles are not implemented",
+            "only the named seccomp profile 'strict' is implemented",
         ));
     }
     if !profile.workspace.is_absolute() {
@@ -440,6 +440,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use qwe_core::SandboxSeccompMode;
     use std::path::PathBuf;
 
     fn profile() -> SandboxProfile {
@@ -474,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_sandbox_profile_fields_fail_closed() {
+    fn sandbox_profile_fields_are_versioned_and_strict_seccomp_is_supported() {
         let mut wrong_version = profile();
         wrong_version.version = 2;
         let failure = validate_sandbox_grant(CapabilityOperation::AgentExec, Some(&wrong_version))
@@ -484,6 +485,10 @@ mod tests {
         let mut named_seccomp = profile();
         named_seccomp.seccomp = SandboxSeccompMode::Named {
             profile: "strict".into(),
+        };
+        validate_sandbox_grant(CapabilityOperation::AgentExec, Some(&named_seccomp)).unwrap();
+        named_seccomp.seccomp = SandboxSeccompMode::Named {
+            profile: "unknown".into(),
         };
         let failure = validate_sandbox_grant(CapabilityOperation::AgentExec, Some(&named_seccomp))
             .unwrap_err();
