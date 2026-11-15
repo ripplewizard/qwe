@@ -90,17 +90,18 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   worker PTY dimensions.
 - **D11 adopted:** capability delegation is monotonic. A holder cannot issue a
   broader capability than its own authority.
-- **D12 adopted:** capability expiry and ordinary revocation do not terminate an
-  existing Pane. The Principal loses operation authority immediately.
-  - Revocation carries `terminate: false` by default. High-risk profiles,
-    including `network:inherit`, force `terminate: true`.
+- **D12 adopted and enforced:** capability expiry and administrative revocation
+  do not terminate an existing Pane. The Principal loses operation authority
+  immediately. `terminate`-severity Principal revocation stops affected
+  sandboxed Panes immediately.
   - Revocation invalidates queued input and output operations before returning;
     buffered bytes from a revoked Principal cannot be written to the PTY.
   - An orphaned sandboxed Pane has no valid operation capability and no human
     attachment. Default idle TTL is 15 minutes, with at most 16 orphaned
     sandboxed Panes per qwed. Exceeding the limit rejects new Pane creation.
     These values are frozen as `SANDBOXED_PANE_ORPHAN_TTL_MS` and
-    `MAX_ORPHANED_SANDBOXED_PANES`.
+    `MAX_ORPHANED_SANDBOXED_PANES`. The first orphan timestamp is durable across
+    qwed restart.
   - A separate high-trust administrative teardown path does not depend on a
     revoked capability.
 

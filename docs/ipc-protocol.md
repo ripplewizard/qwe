@@ -476,6 +476,14 @@ and is capped at 300000 ms. Expiry escalates to termination. Administrative
 revocation and `hold: true` require a high-trust Principal. The single local
 root bootstrap token is written by qwed to
 `<socket>.runtime/security.bootstrap` with mode `0600`.
+The response reports both `affected_commands` and
+`affected_sandboxed_panes`. `terminate` stops sandboxed Panes created by an
+affected Principal; `administrative` preserves them.
+
+A sandboxed Pane with no unexpired, unrevoked operation capability and no active
+human attachment becomes orphaned. qwed persists the first orphan timestamp,
+terminates after 15 minutes, and rejects new sandboxed Pane creation while 16
+or more orphaned Panes exist.
 
 Authorization failures use:
 

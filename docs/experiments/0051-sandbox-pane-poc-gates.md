@@ -172,7 +172,9 @@ through qwed. The observed path is:
   control, host child-PID monitoring, and detached-process teardown on shell
   exit; and
 - `pane_exec` enforcement with inherited parent profiles and construction-time
-  only-tighten refinement.
+  only-tighten refinement; and
+- durable orphan TTL enforcement, orphan-count admission control, and
+  termination-level Principal revocation of affected sandboxed Panes.
 
 ## P5: Landlock ABI Distribution
 

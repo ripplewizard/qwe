@@ -229,3 +229,6 @@ Restricted terminal output, capability-audited input, interactive Attach input,
 standalone resize, and shared process namespace mode with cgroup-authoritative
 descendant teardown are implemented locally. `pane_exec` commands inherit the
 parent sandbox unless an explicit profile is proven not to broaden it.
+Sandboxed Panes without an operation capability or active attachment become
+durable orphans, expire after 15 minutes, and count against a global admission
+limit. Termination-level Principal revocation stops affected Panes.

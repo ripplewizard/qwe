@@ -10,7 +10,8 @@
 - [Storage Migration](storage-migration.md): v10-to-v11 shared prerequisites,
   Pane layout through v13, command metadata in v14, capability/revocation state
   in v15, sandbox profiles in v16, capability audit metadata in v17, and
-  v18 Pane sandbox metadata, with current v19 bounded input audit.
+  v18 Pane sandbox metadata, v19 bounded input audit, and current v20 orphan
+  lifecycle state.
 - [Protocol Schema](../protocol/schema/qwe-v1.schema.json): canonical Attach
   frames, payloads, limits, state machines, and stable test-ID manifest.
 - [Extension Architecture](extension-architecture.md): deferred capabilities

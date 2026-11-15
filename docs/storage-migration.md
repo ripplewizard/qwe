@@ -1,6 +1,6 @@
 # Storage Migration: Pane Layout, Agent Security, and Sandbox Profiles
 
-Status: Implemented through sandboxed Pane input audit; schema v19 is current
+Status: Implemented through sandboxed Pane orphan tracking; schema v20 is current
 Date: 2026-11-16
 Authority: [ADR 0021](adr/0021-shared-prerequisites.md) and the v11 schema in
 `crates/qwe-storage`; Pane layout metadata is governed by
@@ -314,3 +314,14 @@ Rows are inserted before sandboxed input is forwarded. The table retains the
 newest 4096 rows globally. A failed insert rejects the input. The migration is
 transactional and sets `PRAGMA user_version = 19`; a v18 binary must refuse a
 v19 database.
+
+## 17. v19 to v20: Sandboxed Pane Orphan State
+
+Schema v20 adds `pane_orphan_states(pane_id, orphan_since_ms)`, keyed by Pane
+with cascade deletion. The first orphan timestamp is preserved across qwed
+restart and is cleared when a valid operation capability or active human
+attachment returns. qwed reconciles these rows on its security interval and
+enforces the frozen TTL and global orphan-count limit.
+
+The migration is transactional and sets `PRAGMA user_version = 20`; a v19
+binary must refuse a v20 database.
