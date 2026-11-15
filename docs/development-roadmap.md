@@ -70,7 +70,7 @@ macOS Secret Provider design pass on both platforms.
 ## Milestone D4: User-Facing V0
 
 Status: Complete for Linux-first V0. Stage 5 now has checksummed native packages, isolated
-installation and in-place reinstall acceptance, SQLite v9-to-v10 migration,
+installation and in-place reinstall acceptance, SQLite v9-to-current migration,
 worker adoption, release-mode eight-Session Attach/soak benchmarks, and a
 strict macOS Developer ID/notarization gate. Release gates pass on macOS and
 Fedora. macOS temporarily uses a local self-signed `-local` package under ADR
@@ -192,12 +192,14 @@ Bubblewrap `--json-status-fd`, internal `TIOCSTI` seccomp, and
 `--die-with-parent`. Sandboxed restart recovery and Pane-teardown qualification
 pass locally and on Ubuntu 22.04/Debian 12 real VMs. Ubuntu 24.04 currently
 fails closed under the tested AppArmor/userns policy. Session/Pane
-startup-program sandboxing, Landlock fallback, init shims, additional platform
-qualification, additional named seccomp profiles, and stronger VM/OCI backends
-remain deferred.
+startup-program sandboxing, Landlock-only fallback, terminal/signal init shim
+responsibilities, additional platform qualification, additional named seccomp
+profiles, and stronger VM/OCI backends remain deferred.
 
 Capability issue now checks the backend's required-option help contract in
 addition to namespace viability. A backend with an insufficient feature set is
 rejected as `bwrap_version_incompatible` before a capability token is issued.
 Credential boundary tests confirm both network exfiltration and writable
 workspace persistence when the profile and command permit them.
+Landlock ABI 1+ adds an optional write-focused layer inside mandatory
+Bubblewrap confinement; it is not a standalone sandbox backend.

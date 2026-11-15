@@ -390,10 +390,11 @@ adds a deny-focused cBPF layer. It rejects `ptrace`, `bpf`, `keyctl`,
 complete syscall sandbox. Unknown names are rejected rather than downgraded.
 
 A sandboxed capability also returns `sandbox_audit` with `profile_hash`,
-`seccomp_profile_hash`, `backend_path`, `backend_version`, and
-`probe_time_ms`. The seccomp hash is the SHA-256 of the exact cBPF bytes passed
-to Bubblewrap. These values are stored with the capability and included in
-live and recovered sandbox status.
+`seccomp_profile_hash`, optional `landlock_abi`, `backend_path`,
+`backend_version`, and `probe_time_ms`. The seccomp hash is the SHA-256 of the
+exact cBPF bytes passed to Bubblewrap. `landlock_abi` is present only when the
+kernel supports Landlock defense in depth. These values are stored with the
+capability and included in live and recovered sandbox status.
 
 `SECURITY_PRINCIPAL_REVOKE.severity` is `administrative`, `freeze`, or
 `terminate`; omission defaults to `freeze`. Freeze grace defaults to 60000 ms

@@ -93,7 +93,7 @@ These are implementation work, not reasons to delay development:
   Packaged installation and migration pass on macOS and Fedora. Public macOS
   release acceptance is deferred post-V0.
 - The release package, offline installer, checksum and version checks,
-  isolated-home installation, in-place reinstall, SQLite v9-to-v10 migration,
+  isolated-home installation, in-place reinstall, SQLite v9-to-current migration,
   worker adoption, and an eight-Session release-mode Attach/soak benchmark are
   implemented. macOS ARM64 and Fedora Linux x86_64 pass these probes.
 - Fedora additionally passes the installed-systemd crash-restart probe,
@@ -163,7 +163,7 @@ updates, local signed Keychain ACL behavior, and real second-UID rejection.
 Structured closure evidence is in
 [Experiment 0020](experiments/0020-stage-4-closure.md).
 
-Linux V0 release packaging, installation, reinstall, v9-to-v10 migration,
+Linux V0 release packaging, installation, reinstall, v9-to-current migration,
 systemd crash recovery, release-mode performance, TUI/job-control smoke,
 historical evidence disposition, and independent manual acceptance are
 complete. Public macOS distribution is deferred post-V0 under ADR 0020.
@@ -243,3 +243,8 @@ matrix.
 Credential boundary tests now confirm both declared exfiltration channels:
 inherited networking reaches a host listener, and a writable workspace retains
 the FD3 credential in a host-visible file.
+
+Landlock ABI 1+ is used as write-focused defense in depth inside mandatory
+Bubblewrap confinement. The init helper leaves reads, execution, and private
+`/tmp` available, records the ABI in capability audit metadata, and has no
+Landlock-only fallback path.

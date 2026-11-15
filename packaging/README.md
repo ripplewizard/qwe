@@ -31,8 +31,9 @@ account.
 
 ## systemd user service
 
-Install `qwed`, `qwe-worker`, and `qwe-session-exec` in `~/.local/bin`, the
-systemd unit at `~/.config/systemd/user/qwe.service`, and then run:
+Install `qwed`, `qwe-worker`, `qwe-session-exec`, and `qwe-sandbox-init` in
+`~/.local/bin`, the systemd unit at `~/.config/systemd/user/qwe.service`, and
+then run:
 
 ```sh
 systemctl --user daemon-reload
@@ -57,9 +58,10 @@ files, logs, or SQLite.
 ## launchd user agent
 
 The release installer places `qwed`, `qwe`, `qwe-worker`,
-`qwe-session-exec`, and the launchd wrapper in `~/.local/bin`. It renders the
-installed plist at `~/Library/LaunchAgents/com.qwe.qwed.plist`; no checkout
-path is required. Load it with:
+`qwe-session-exec`, `qwe-sandbox-init`, and the launchd wrapper in
+`~/.local/bin`. It renders the installed plist at
+`~/Library/LaunchAgents/com.qwe.qwed.plist`; no checkout path is required. Load
+it with:
 
 ```sh
 launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.qwe.qwed.plist"

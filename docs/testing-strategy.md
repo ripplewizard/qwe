@@ -192,7 +192,7 @@ The release probes exercise:
 - Native service-template rendering with no checkout-path dependency.
 - In-place reinstall, SQLite preservation, qwed crash/restart, and worker/task
   adoption through the installed sibling executables.
-- SQLite v9-to-v10 startup migration without resetting state.
+- SQLite v9-to-current startup migration without resetting state.
 - Eight independent Sessions, real Attach handshakes and snapshots, aggregate
   RSS sampling, and a configurable sustained soak.
 - On Linux, the installed systemd unit, binary reinstall, supervisor
@@ -270,14 +270,17 @@ ADR 0033 adds `just bubblewrap-poc`, a Linux-only Rust contract test suite. It
 skips when Bubblewrap is unavailable and currently covers SANDBOX-001 through
 SANDBOX-003: FD3/cgroup/structured child PID, PTY resize/signal/job-control
 semantics, and synchronized `--die-with-parent`. `just stage10-sandbox` covers
-SANDBOX-004 through SANDBOX-010 through qwed, worker, and Bubblewrap, including
+SANDBOX-004 through SANDBOX-011 through qwed, worker, and Bubblewrap, including
 capability authorization, backend failure, workspace, protected paths, home,
 tmp, network policy, sandboxed PTY, `TIOCSTI` denial, qwed restart, worker loss,
 Pane teardown, the content-hashed `strict` named seccomp denylist, and rejection
 of a backend missing a production-required option. It explicitly confirms that
 a writable workspace can persist a credential and reports the corresponding
-risk. It also verifies that a backend failure followed by repair is observed by
-the next capability issue without restarting qwed or the worker.
+risk. `just landlock-poc` separately verifies write confinement and read/private
+tmp preservation; Stage 10 confirms the ABI is applied through the full
+Bubblewrap process chain. It also verifies that a backend failure followed by
+repair is observed by the next capability issue without restarting qwed or the
+worker.
 `just sandbox-container-matrix` verifies fail-closed behavior on Ubuntu 22.04,
 Ubuntu 24.04, and Debian 12 when Podman disallows Bubblewrap's nested mount/PID
 setup.

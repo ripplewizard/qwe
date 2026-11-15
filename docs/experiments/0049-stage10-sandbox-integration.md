@@ -29,6 +29,8 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
 - isolated networking has no default route, keeps `lo` UP, and supports a
   local `127.0.0.1` listen/connect pair;
 - `NoNewPrivs: 1` makes setuid privilege gain denial an observable guarantee;
+- on Landlock-capable kernels, the optional init applies write confinement
+  inside Bubblewrap and records the detected ABI in capability audit metadata;
 - FD3 credentials and exact-match redaction remain intact;
 - wrapper and structured child PIDs both inherit the Pane workload cgroup;
 - sandboxed PTY commands preserve terminal size, FD3 credentials, redaction,
@@ -219,6 +221,26 @@ It asserts the specified errno results, confirms the strict hash differs from
 the base adapter filter, and verifies the hash survives in live sandbox audit
 metadata. `strict` remains a denylist rather than a complete syscall sandbox.
 
+### Landlock defense in depth
+
+The worker probes Landlock ABI support independently of Bubblewrap. When ABI 1
+or newer is available, Bubblewrap binds `qwe-sandbox-init` into the sandbox and
+executes it as the command wrapper. The init sets `PR_SET_NO_NEW_PRIVS`, applies
+a write-focused Landlock ruleset, records `QWE_LANDLOCK_ABI`, and immediately
+execs the requested program.
+
+The ruleset handles write, remove, and create operations while leaving reads,
+directory listing, and execution unhandled. Writes are allowed under private
+`/tmp`, `/dev`, and a read-write workspace. A read-only workspace receives no
+write rule. Bubblewrap remains mandatory and authoritative for mount
+visibility and protected paths; this is not a Landlock-only fallback.
+
+`just landlock-poc` verifies RW and RO workspace behavior, denial outside
+allowed write roots, and preservation of reads and private `/tmp`. Stage 10
+confirms the same helper is applied through the production Bubblewrap and
+PTY process chains, and that capability audit metadata records the ABI. The
+Ubuntu 22.04 VM kernel also exposes Landlock.
+
 ### Mount layout
 
 The adapter mounts existing common system roots read-only, provides private
@@ -233,6 +255,7 @@ that Bubblewrap cannot mount.
   and the incompatible-backend feature probe.
 - `just stage9-agent-exec`: pass, covering the pre-sandbox agent regression.
 - `just bubblewrap-poc`: pass, 5 tests.
+- `just landlock-poc`: pass, 2 tests.
 - `just sandbox-container-matrix`: Ubuntu 22.04, Ubuntu 24.04, and Debian 12
   have installed Bubblewrap, reject the nested mount/path setup imposed by
   Podman, and return `sandbox_backend_unavailable` without fallback.
@@ -266,4 +289,4 @@ claim that Bubblewrap succeeds inside a restricted container.
 - full behavioral qualification against the oldest supported Bubblewrap
   version in addition to the runtime required-option check;
 - additional named seccomp profiles, broader runtime compatibility coverage,
-  Landlock, and stronger VM/OCI isolation.
+  newer Landlock ABIs, and stronger VM/OCI isolation.

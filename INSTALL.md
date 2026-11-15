@@ -88,8 +88,8 @@ On Fedora, use `sha256sum` instead of `shasum`.
 The installer:
 
 - verifies every payload against `SHA256SUMS`;
-- installs `qwe`, `qwed`, `qwe-worker`, and `qwe-session-exec` into
-  `~/.local/bin`;
+- installs `qwe`, `qwed`, `qwe-worker`, `qwe-session-exec`, and
+  `qwe-sandbox-init` into `~/.local/bin`;
 - installs the systemd user unit into `~/.config/systemd/user`;
 - does not start or enable the service automatically.
 
@@ -161,7 +161,8 @@ rm -f "$HOME/.config/systemd/user/qwe.service"
 rm -f "$HOME/.local/bin/qwe" \
   "$HOME/.local/bin/qwed" \
   "$HOME/.local/bin/qwe-worker" \
-  "$HOME/.local/bin/qwe-session-exec"
+  "$HOME/.local/bin/qwe-session-exec" \
+  "$HOME/.local/bin/qwe-sandbox-init"
 systemctl --user daemon-reload
 ```
 

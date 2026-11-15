@@ -27,11 +27,12 @@ moves to supported only after the structured release gates pass on that target.
    reconciliation probes.
 3. An optimized workspace build.
 4. A checksummed native package containing `qwe`, `qwed`, `qwe-worker`,
-   `qwe-session-exec`, native service assets, and a release manifest.
+   `qwe-session-exec`, `qwe-sandbox-init`, native service assets, and a release
+   manifest.
 5. Safe archive extraction and installation into an isolated home prefix,
    followed by package-version and service-template verification.
 6. In-place reinstall with SQLite preservation, qwed crash/restart worker
-   adoption, and SQLite v9-to-v10 migration.
+   adoption, and SQLite v9-to-current migration.
 7. A release-mode benchmark with eight independent Sessions, rotating
    exclusive Attach, bounded memory sampling, and a sustained soak period.
 8. On Linux, a real installed-systemd probe covering binary reinstall,
@@ -56,6 +57,7 @@ qwe-VERSION-TARGET[-local]/
   bin/
     qwe
     qwed
+    qwe-sandbox-init
     qwe-session-exec
     qwe-worker
   share/qwe/service/

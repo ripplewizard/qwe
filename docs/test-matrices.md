@@ -158,7 +158,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 ## Bubblewrap Sandbox
 
-Rows 001-010 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
+Rows 001-011 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown.
 Ubuntu 22.04 and Debian 12 real VMs pass the complete matrix; Ubuntu 24.04
 returns `sandbox_backend_unavailable` under its tested AppArmor/userns policy.
@@ -178,6 +178,7 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-008 | Apply the content-hashed `strict` named seccomp denylist and adapter `TIOCSTI` denial in pipe-split and PTY modes, reject unknown profile names, and persist the filter hash in capability audit metadata |
 | SANDBOX-009 | Reject a Bubblewrap backend whose help output lacks a production-required option before issuing a capability token |
 | SANDBOX-010 | Confirm that a writable workspace plus FD3 credential permits credential persistence, and that the command exposes and persists the corresponding risk flags |
+| SANDBOX-011 | Apply optional Landlock write confinement inside mandatory Bubblewrap confinement, record the detected ABI, and preserve reads, execution, and private `/tmp` |
 
 ## Core Object Model
 
@@ -316,7 +317,7 @@ measurements pass.
 | MAC-001 | Create, use, expose, and remove the temporary local signing identity | Dedicated Keychain signs all four executables; package records `local-self-signed` and `public_trust: false`; public gate rejects it; cleanup removes Keychain/trust and restores the user search list |
 | PACK-001 | Build a native release package | All four executables report the manifest version; payload paths are portable; a safely extractable archive, SHA-256 checksums, and `qwe-release/v1` metadata are present |
 | PACK-002 | Verify and install a package into an isolated prefix | Checksums pass, executable modes are correct, native service assets are rendered without a checkout path, and no service is started |
-| PACK-003 | Reinstall while preserving state, restart qwed, and migrate v9 state | SQLite is preserved during install; the same worker/task are adopted; startup migrates schema v9 to v10 |
+| PACK-003 | Reinstall while preserving state, restart qwed, and migrate v9 state | SQLite is preserved during install; the same worker/task are adopted; startup migrates schema v9 through the current schema v17 |
 | PACK-004 | Sign, notarize, and assess the public macOS artifact | Developer ID signatures are verified, notarization is accepted, and Gatekeeper assessment passes |
 | PACK-005 | Exercise the installed Linux service through systemd | The installed unit starts qwed; binary reinstall preserves state; SIGKILL restarts the service; the same worker/task are adopted; stop cleans processes and persists closed/stopped state |
 | PERF-001 | Run release-mode Attach and soak | Eight independent Sessions complete real Attach/snapshot/detach cycles within configured latency and aggregate-RSS limits throughout the soak |

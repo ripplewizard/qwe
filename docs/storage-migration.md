@@ -270,7 +270,7 @@ Schema v17 adds:
 
 - `agent_capabilities.sandbox_audit_json`, containing the sandbox profile
   SHA-256 hash, effective seccomp cBPF SHA-256 hash, resolved Bubblewrap
-  path/version, and probe timestamp;
+  path/version, optional Landlock ABI, and probe timestamp;
 - `agent_commands.sandbox_risk_json`, containing network-inherit, writable
   workspace, and credential-exposure flags.
 

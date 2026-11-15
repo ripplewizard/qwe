@@ -169,7 +169,8 @@ profile checks and runs Linux pipe-split or PTY commands:
 qwe-worker
   -> qwe-session-exec
        -> bwrap
-            -> command
+            -> qwe-sandbox-init (Landlock ABI >= 1)
+                 -> command
 ```
 
 The worker waits for Bubblewrap's structured `child-pid` before reporting
@@ -178,6 +179,12 @@ and structured child PID while the command is live. Both PIDs remain in the
 Pane workload cgroup. Bubblewrap startup failure, missing namespaces, or an
 unsupported profile fails the command or capability request; there is no
 sandbox-to-unsandboxed fallback.
+
+When Landlock is available, `qwe-sandbox-init` applies a write-focused ruleset
+inside Bubblewrap before executing the command. It permits mutations only under
+a read-write workspace, private `/tmp`, and `/dev`; reads, directory listing,
+execute, and loader behavior remain available. This is defense in depth, not a
+Landlock-only backend. The capability audit records the detected ABI.
 
 For `network:isolated_loopback`, Stage 10 verifies an UP `lo` interface, a real
 `127.0.0.1` listen/connect pair, and no default route across Bubblewrap 0.5,

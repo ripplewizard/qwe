@@ -68,7 +68,8 @@ The Pane worker remains the command owner and direct Bubblewrap parent:
 qwe-worker
   -> qwe-session-exec
        -> bwrap
-            -> sandboxed command
+            -> qwe-sandbox-init (when Landlock is available)
+                 -> sandboxed command
 ```
 
 The worker is already inside the Pane scope. Bubblewrap and all descendants
@@ -197,7 +198,36 @@ file retains it after command exit under `workspace:read_write`. The derived
 risk flags are therefore auditable claims about capability composition, not
 guarantees that every attempted transfer succeeds.
 
-### 7. Lifecycle synchronization
+### 7. Landlock defense in depth
+
+Landlock is optional defense in depth on Linux; Bubblewrap remains the only
+primary sandbox backend and there is no Landlock-only mode. When the kernel
+reports Landlock ABI 1 or newer, the adapter binds `qwe-sandbox-init` into the
+Bubblewrap mount namespace. The init process enables `PR_SET_NO_NEW_PRIVS`,
+applies an ABI-v1 write-access ruleset, and then executes the requested
+program.
+
+The ruleset handles file writes, removals, and file/directory/socket/FIFO/device
+creation. It allows those mutations only beneath the workspace when
+`workspace:read_write`, private `/tmp`, and `/dev`. Read, directory listing, and
+execute are intentionally not handled, preserving runtime and loader behavior.
+
+This is narrower than a complete filesystem sandbox:
+
+- Bubblewrap remains authoritative for mount visibility and protected paths;
+- Landlock v1 cannot express a write deny beneath an allowed writable
+  workspace, so protected-path enforcement still depends on Bubblewrap;
+- unhandled operations such as metadata changes and truncation remain outside
+  this ruleset unless a later ABI-specific extension adds them; and
+- when Landlock is unavailable, the command still runs through mandatory
+  Bubblewrap confinement but without this extra layer.
+
+Capability audit metadata records the detected `landlock_abi` when available.
+The environment variable `QWE_LANDLOCK_ABI` is set only after successful
+initialization. A missing init binary when Landlock is otherwise available
+fails command startup closed; it never switches to an unsandboxed path.
+
+### 8. Lifecycle synchronization
 
 `--die-with-parent` depends on the thread that creates Bubblewrap remaining
 alive through sandbox setup. The implementation must:
@@ -209,7 +239,7 @@ alive through sandbox setup. The implementation must:
 
 The Pane cgroup and Pane teardown remain the final cleanup fallback.
 
-### 8. First delivery
+### 9. First delivery
 
 The first production slice applies to Linux `AGENT_EXEC` only:
 
@@ -237,11 +267,11 @@ The worker repeats capability-independent profile checks and requires the
 structured startup record before reporting `running`.
 
 Session and Pane startup-program sandboxing follows after the agent command
-path is qualified. Seccomp policy packaging, Landlock fallback, shim-based init,
-external sandbox providers, and untrusted multi-tenant isolation require
-separate decisions.
+path is qualified. Additional seccomp profiles, Landlock-only fallback,
+terminal/signal responsibilities for an init shim, external sandbox providers,
+and untrusted multi-tenant isolation require separate decisions.
 
-### 9. Parallel workstreams and dependencies
+### 10. Parallel workstreams and dependencies
 
 Two follow-on routes are deliberately separate:
 
@@ -260,16 +290,19 @@ Two follow-on routes are deliberately separate:
      tighten, never broaden, the effective policy; and
    - an explicit capability boundary for the sandboxed Pane operation.
 
-   The current direct-Bubblewrap, no-shim conclusion applies only to
-   `AGENT_EXEC`. It must not be extrapolated to an interactive Pane shell.
-   `qwe-sandbox-init` remains a reserve design pending those experiments.
+   The current direct-Bubblewrap, no-terminal-shim conclusion applies only to
+   `AGENT_EXEC`. `qwe-sandbox-init` currently applies Landlock and immediately
+   execs; it does not establish a controlling terminal, forward signals, or
+   synchronize window size. Those responsibilities remain unresolved for an
+   interactive Pane shell.
 
 2. **Backend hardening for `AGENT_EXEC`**
 
    Named seccomp profiles and Landlock defense-in-depth do not depend on the
-   Pane product decision and can be developed independently. Any Landlock-only
-   mode must use a distinct backend type and must never be reported as a
-   Bubblewrap sandbox.
+   Pane product decision and can be developed independently. The current
+   Landlock layer is attached inside mandatory Bubblewrap confinement. Any
+   future Landlock-only mode must use a distinct backend type and must never be
+   reported as a Bubblewrap sandbox.
 
 ## Validation
 
@@ -307,6 +340,9 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
 - `just stage10-sandbox` verifies the `strict` named seccomp profile in both
   pipe-split and PTY commands, including denial return codes and the distinct
   seccomp content hash in capability audit metadata.
+- `just landlock-poc` verifies Landlock ABI detection, RW/RO workspace write
+  enforcement, denial outside allowed write roots, and preservation of reads
+  and private `/tmp`.
 - The same probe supplies a backend with a valid `--version` but an incomplete
   `--help` contract and verifies capability issue fails with
   `bwrap_version_incompatible` before issuing a token.
