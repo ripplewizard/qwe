@@ -226,6 +226,9 @@ Capability audit metadata records the detected `landlock_abi` when available.
 The environment variable `QWE_LANDLOCK_ABI` is set only after successful
 initialization. A missing init binary when Landlock is otherwise available
 fails command startup closed; it never switches to an unsandboxed path.
+Capability issue validates the init binary in advance and returns
+`sandbox_init_unavailable` before issuing a token if it is missing or not
+executable.
 
 ### 8. Lifecycle synchronization
 
@@ -343,6 +346,8 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
 - `just landlock-poc` verifies Landlock ABI detection, RW/RO workspace write
   enforcement, denial outside allowed write roots, and preservation of reads
   and private `/tmp`.
+- Stage 10 runs qwed from an isolated binary directory without the init helper
+  and verifies capability issue fails closed with `sandbox_init_unavailable`.
 - The same probe supplies a backend with a valid `--version` but an incomplete
   `--help` contract and verifies capability issue fails with
   `bwrap_version_incompatible` before issuing a token.

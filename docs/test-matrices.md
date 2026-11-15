@@ -158,7 +158,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 ## Bubblewrap Sandbox
 
-Rows 001-011 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
+Rows 001-012 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown.
 Ubuntu 22.04 and Debian 12 real VMs pass the complete matrix; Ubuntu 24.04
 returns `sandbox_backend_unavailable` under its tested AppArmor/userns policy.
@@ -179,6 +179,7 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-009 | Reject a Bubblewrap backend whose help output lacks a production-required option before issuing a capability token |
 | SANDBOX-010 | Confirm that a writable workspace plus FD3 credential permits credential persistence, and that the command exposes and persists the corresponding risk flags |
 | SANDBOX-011 | Apply optional Landlock write confinement inside mandatory Bubblewrap confinement, record the detected ABI, and preserve reads, execution, and private `/tmp` |
+| SANDBOX-012 | Fail capability issue closed with `sandbox_init_unavailable` when Landlock is available but the init helper is missing or non-executable |
 
 ## Core Object Model
 

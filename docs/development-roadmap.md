@@ -202,4 +202,5 @@ rejected as `bwrap_version_incompatible` before a capability token is issued.
 Credential boundary tests confirm both network exfiltration and writable
 workspace persistence when the profile and command permit them.
 Landlock ABI 1+ adds an optional write-focused layer inside mandatory
-Bubblewrap confinement; it is not a standalone sandbox backend.
+Bubblewrap confinement; it is not a standalone sandbox backend. Capability
+issue fails closed if the required init helper is missing.

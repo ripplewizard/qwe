@@ -437,7 +437,8 @@ Error bodies may include an optional backward-compatible `details` object:
 
 Stable sandbox reason values are `bwrap_missing`,
 `bwrap_version_incompatible`, `userns_disabled`, `userns_create_denied`,
-`uid_map_denied`, `mount_denied`, `probe_timeout`, `unsupported_platform`, and
+`uid_map_denied`, `mount_denied`, `landlock_probe_failed`,
+`sandbox_init_unavailable`, `probe_timeout`, `unsupported_platform`, and
 `unknown`. `details.diagnostics` is diagnostic context, not a stable protocol
 surface. Diagnostics are bounded and sanitized, and clients must treat unknown
 reason values as `unknown`.
@@ -447,6 +448,11 @@ fails or when the backend's help output lacks a production-required option.
 Required options include `--json-status-fd`, `--seccomp`, namespace, bind,
 environment, and lifecycle flags. A version string alone is not treated as a
 compatibility guarantee.
+
+When Landlock is available, capability issue also requires an executable
+`qwe-sandbox-init` adjacent to the worker. A missing or non-executable helper
+returns `sandbox_init_unavailable` with `failed_stage: landlock_init`; the token
+is not issued and there is no silent fallback to Bubblewrap-only startup.
 
 High-trust Principals receive the full diagnostics object. Other authenticated
 Principals receive only `environment`, `failed_stage`, and `target`; stderr,

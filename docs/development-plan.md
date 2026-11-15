@@ -560,10 +560,11 @@ AppArmor/userns policy. The content-hashed `strict` named seccomp denylist
 passes pipe-split and PTY execution, and capability issue rejects backends
 missing a production-required option. Credential boundary tests confirm both
 network exfiltration and writable-workspace persistence. Landlock ABI 1+
-provides optional write confinement inside mandatory Bubblewrap confinement.
-Session/Pane startup-program sandboxing, Landlock-only fallback, additional
-named seccomp profiles, additional platform qualification, and VM/OCI backends
-remain later decisions.
+provides optional write confinement inside mandatory Bubblewrap confinement,
+with capability issue rejecting a missing init helper. Session/Pane
+startup-program sandboxing, Landlock-only fallback, additional named seccomp
+profiles, additional platform qualification, and VM/OCI backends remain later
+decisions.
 
 ## Test and Delivery Gates
 

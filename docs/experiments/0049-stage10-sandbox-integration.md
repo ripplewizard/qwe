@@ -44,6 +44,8 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
 - a backend with an acceptable `--version` but an incomplete production
   `--help` option set fails capability issue with
   `bwrap_version_incompatible`;
+- when Landlock is available but `qwe-sandbox-init` is missing from an isolated
+  binary directory, capability issue fails with `sandbox_init_unavailable`;
 - qwed restart reconnects to the same worker, wrapper, child, profile, and
   events;
 - forced Pane teardown removes the worker, wrapper, child, descendants, and
@@ -241,6 +243,12 @@ confirms the same helper is applied through the production Bubblewrap and
 PTY process chains, and that capability audit metadata records the ABI. The
 Ubuntu 22.04 VM kernel also exposes Landlock.
 
+Capability issue validates that the init helper exists, is executable, and is
+adjacent to the worker whenever Landlock is available. The Stage 10 probe runs
+qwed from a copied binary directory that omits the helper and requires
+`sandbox_backend_unavailable` with reason `sandbox_init_unavailable` before a
+token is returned.
+
 ### Mount layout
 
 The adapter mounts existing common system roots read-only, provides private
@@ -251,8 +259,8 @@ that Bubblewrap cannot mount.
 
 ## Verification
 
-- `just stage10-sandbox`: pass, including the named `strict` seccomp profile
-  and the incompatible-backend feature probe.
+- `just stage10-sandbox`: pass, including the named `strict` seccomp profile,
+  incompatible-backend feature probe, and missing-init fail-closed probe.
 - `just stage9-agent-exec`: pass, covering the pre-sandbox agent regression.
 - `just bubblewrap-poc`: pass, 5 tests.
 - `just landlock-poc`: pass, 2 tests.
