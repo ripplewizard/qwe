@@ -33,7 +33,8 @@ pub use sandbox::{
 pub use security::{
     CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
     DEFAULT_CAPABILITY_TTL_MS, DEFAULT_FREEZE_GRACE_MS, MAX_CAPABILITY_TTL_MS, MAX_FREEZE_GRACE_MS,
-    PrincipalEpoch, RevocationSeverity, SandboxAuditRecord,
+    MAX_PANE_INPUT_AUDIT_ROWS, PaneInputAuditRecord, PrincipalEpoch, RevocationSeverity,
+    SandboxAuditRecord,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

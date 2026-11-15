@@ -9,6 +9,7 @@ pub const DEFAULT_CAPABILITY_TTL_MS: i64 = 24 * 60 * 60 * 1_000;
 pub const MAX_CAPABILITY_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 pub const DEFAULT_FREEZE_GRACE_MS: i64 = 60_000;
 pub const MAX_FREEZE_GRACE_MS: i64 = 5 * 60_000;
+pub const MAX_PANE_INPUT_AUDIT_ROWS: u64 = 4_096;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CapabilityId(Uuid);
@@ -226,6 +227,20 @@ pub struct SandboxAuditRecord {
     pub landlock_abi: Option<u32>,
     #[serde(default)]
     pub fd_bind: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneInputAuditRecord {
+    pub sequence: u64,
+    pub pane_id: crate::PaneId,
+    pub principal_id: PrincipalId,
+    pub capability_id: CapabilityId,
+    pub recorded_at_ms: i64,
+    pub byte_length: u64,
+    pub maximum_bytes: u64,
+    pub profile_version: u16,
+    pub landlock_abi: Option<u32>,
+    pub content_recorded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,18 +1,18 @@
 use qwe_core::{
     AgentCommandId, AgentCommandRecord, AgentCommandState, AgentOutputMode, AttachmentAuthority,
     AttachmentAuthorityState, CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
-    LeaseRecord, PaneId, PaneRecord, PaneSandboxRecord, PaneWorkerRecord, PrincipalEpoch,
-    PrincipalId, PrincipalRecord, ProcessIdentity, ResourceBackend, ResourcePolicy,
-    ResourceScopeId, ResourceScopeRecord, ResourceScopeState, ResourceScopeTargetKind,
-    RevocationSeverity, SandboxAuditRecord, SandboxRiskRecord, SessionRecord, TaskId, TaskRecord,
-    TaskState,
+    LeaseRecord, MAX_PANE_INPUT_AUDIT_ROWS, PaneId, PaneInputAuditRecord, PaneRecord,
+    PaneSandboxRecord, PaneWorkerRecord, PrincipalEpoch, PrincipalId, PrincipalRecord,
+    ProcessIdentity, ResourceBackend, ResourcePolicy, ResourceScopeId, ResourceScopeRecord,
+    ResourceScopeState, ResourceScopeTargetKind, RevocationSeverity, SandboxAuditRecord,
+    SandboxRiskRecord, SessionRecord, TaskId, TaskRecord, TaskState,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::json;
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 18;
+pub const SCHEMA_VERSION: i64 = 19;
 pub const IDEMPOTENCY_RETENTION_MS: i64 = 24 * 60 * 60 * 1_000;
 pub const HISTORY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 pub const HISTORY_MAX_TERMINAL_SESSIONS: i64 = 10_000;
@@ -556,6 +556,10 @@ impl Store {
         }
         if current == 17 {
             self.migrate_v17_to_v18()?;
+            current = 18;
+        }
+        if current == 18 {
+            self.migrate_v18_to_v19()?;
         }
         Ok(())
     }
@@ -590,6 +594,10 @@ impl Store {
 
     fn migrate_v17_to_v18(&mut self) -> Result<(), StorageError> {
         migrate_v17_to_v18(self)
+    }
+
+    fn migrate_v18_to_v19(&mut self) -> Result<(), StorageError> {
+        migrate_v18_to_v19(self)
     }
 
     #[must_use]
@@ -1250,6 +1258,75 @@ impl Store {
             })
         })
         .transpose()
+    }
+
+    pub fn record_pane_input_audit(
+        &mut self,
+        mut audit: PaneInputAuditRecord,
+    ) -> Result<PaneInputAuditRecord, StorageError> {
+        if audit.content_recorded {
+            return Err(StorageError::Invariant(
+                "content-bearing Pane input audit is not implemented".into(),
+            ));
+        }
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO pane_input_audits (
+                pane_id, principal_id, capability_id, recorded_at_ms,
+                byte_length, maximum_bytes, profile_version, landlock_abi,
+                content_recorded
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)",
+            params![
+                audit.pane_id.to_string(),
+                audit.principal_id.to_string(),
+                audit.capability_id.to_string(),
+                audit.recorded_at_ms,
+                i64::try_from(audit.byte_length)
+                    .map_err(|failure| StorageError::Invariant(failure.to_string()))?,
+                i64::try_from(audit.maximum_bytes)
+                    .map_err(|failure| StorageError::Invariant(failure.to_string()))?,
+                i64::from(audit.profile_version),
+                audit.landlock_abi.map(i64::from)
+            ],
+        )?;
+        let sequence = transaction.last_insert_rowid();
+        transaction.execute(
+            "DELETE FROM pane_input_audits
+             WHERE id NOT IN (
+                 SELECT id FROM pane_input_audits
+                 ORDER BY id DESC LIMIT ?1
+             )",
+            [i64::try_from(MAX_PANE_INPUT_AUDIT_ROWS)
+                .map_err(|failure| StorageError::Invariant(failure.to_string()))?],
+        )?;
+        transaction.commit()?;
+        audit.sequence = u64::try_from(sequence)
+            .map_err(|failure| StorageError::Invariant(failure.to_string()))?;
+        Ok(audit)
+    }
+
+    pub fn list_pane_input_audits(
+        &self,
+        pane_id: &PaneId,
+        limit: usize,
+    ) -> Result<Vec<PaneInputAuditRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, pane_id, principal_id, capability_id, recorded_at_ms,
+                    byte_length, maximum_bytes, profile_version, landlock_abi,
+                    content_recorded
+             FROM pane_input_audits
+             WHERE pane_id = ?1
+             ORDER BY id DESC
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(
+            params![
+                pane_id.to_string(),
+                i64::try_from(limit).unwrap_or(i64::MAX)
+            ],
+            pane_input_audit_from_row,
+        )?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn list_panes(&self) -> Result<Vec<PaneRecord>, StorageError> {
@@ -3343,6 +3420,34 @@ fn migrate_v17_to_v18(store: &mut Store) -> Result<(), StorageError> {
     Ok(())
 }
 
+fn migrate_v18_to_v19(store: &mut Store) -> Result<(), StorageError> {
+    let transaction = store.connection.transaction()?;
+    transaction.execute_batch(
+        "
+        CREATE TABLE pane_input_audits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pane_id TEXT NOT NULL
+                REFERENCES panes(id) ON DELETE CASCADE,
+            principal_id TEXT NOT NULL
+                REFERENCES principals(id) ON DELETE RESTRICT,
+            capability_id TEXT NOT NULL
+                REFERENCES agent_capabilities(id) ON DELETE RESTRICT,
+            recorded_at_ms INTEGER NOT NULL,
+            byte_length INTEGER NOT NULL,
+            maximum_bytes INTEGER NOT NULL,
+            profile_version INTEGER NOT NULL,
+            landlock_abi INTEGER,
+            content_recorded INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX pane_input_audits_by_pane
+            ON pane_input_audits(pane_id, id);
+        PRAGMA user_version = 19;
+        ",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn unix_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -3781,6 +3886,82 @@ fn insert_pane_sandbox(
     Ok(())
 }
 
+fn pane_input_audit_from_row(row: &Row<'_>) -> rusqlite::Result<PaneInputAuditRecord> {
+    let sequence: i64 = row.get(0)?;
+    let pane_id: String = row.get(1)?;
+    let principal_id: String = row.get(2)?;
+    let capability_id: String = row.get(3)?;
+    let byte_length: i64 = row.get(5)?;
+    let maximum_bytes: i64 = row.get(6)?;
+    let profile_version: i64 = row.get(7)?;
+    Ok(PaneInputAuditRecord {
+        sequence: u64::try_from(sequence).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Integer,
+                Box::new(failure),
+            )
+        })?,
+        pane_id: pane_id.parse().map_err(|failure: uuid::Error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        principal_id: principal_id
+            .parse()
+            .map_err(|failure: std::convert::Infallible| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    2,
+                    rusqlite::types::Type::Text,
+                    Box::new(failure),
+                )
+            })?,
+        capability_id: capability_id.parse().map_err(|failure: uuid::Error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                3,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        recorded_at_ms: row.get(4)?,
+        byte_length: u64::try_from(byte_length).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                5,
+                rusqlite::types::Type::Integer,
+                Box::new(failure),
+            )
+        })?,
+        maximum_bytes: u64::try_from(maximum_bytes).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                6,
+                rusqlite::types::Type::Integer,
+                Box::new(failure),
+            )
+        })?,
+        profile_version: u16::try_from(profile_version).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                7,
+                rusqlite::types::Type::Integer,
+                Box::new(failure),
+            )
+        })?,
+        landlock_abi: row
+            .get::<_, Option<i64>>(8)?
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|failure| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    8,
+                    rusqlite::types::Type::Integer,
+                    Box::new(failure),
+                )
+            })?,
+        content_recorded: row.get::<_, i64>(9)? != 0,
+    })
+}
+
 fn lease_from_row(row: &Row<'_>) -> rusqlite::Result<LeaseRecord> {
     Ok(LeaseRecord {
         session_id: row.get(0)?,
@@ -4058,7 +4239,7 @@ mod tests {
             pane_id: pane.id.clone(),
             profile: capability.sandbox_profile.clone().unwrap(),
             audit: capability.sandbox_audit.clone().unwrap(),
-            capability_id: capability.id,
+            capability_id: capability.id.clone(),
             created_at_ms: 12,
         };
         store
@@ -4070,6 +4251,73 @@ mod tests {
             )
             .unwrap();
         assert_eq!(store.find_pane_sandbox(&pane.id).unwrap(), Some(sandbox));
+        let audit = store
+            .record_pane_input_audit(PaneInputAuditRecord {
+                sequence: 0,
+                pane_id: pane.id.clone(),
+                principal_id: capability.principal_id.clone(),
+                capability_id: capability.id.clone(),
+                recorded_at_ms: 13,
+                byte_length: 7,
+                maximum_bytes: 1024,
+                profile_version: 1,
+                landlock_abi: Some(1),
+                content_recorded: false,
+            })
+            .unwrap();
+        assert!(audit.sequence > 0);
+        assert_eq!(
+            store.list_pane_input_audits(&pane.id, 10).unwrap(),
+            vec![audit.clone()]
+        );
+        let mut content_audit = audit;
+        content_audit.sequence = 0;
+        content_audit.content_recorded = true;
+        assert!(store.record_pane_input_audit(content_audit).is_err());
+        store
+            .connection
+            .execute(
+                "WITH RECURSIVE generated(value) AS (
+                    SELECT 1
+                    UNION ALL
+                    SELECT value + 1 FROM generated WHERE value < ?4
+                 )
+                 INSERT INTO pane_input_audits (
+                    pane_id, principal_id, capability_id, recorded_at_ms,
+                    byte_length, maximum_bytes, profile_version, landlock_abi,
+                    content_recorded
+                 )
+                 SELECT ?1, ?2, ?3, value, 1, 1024, 1, 1, 0 FROM generated",
+                params![
+                    pane.id.to_string(),
+                    capability.principal_id.to_string(),
+                    capability.id.to_string(),
+                    i64::try_from(MAX_PANE_INPUT_AUDIT_ROWS + 1).unwrap()
+                ],
+            )
+            .unwrap();
+        let latest = store
+            .record_pane_input_audit(PaneInputAuditRecord {
+                sequence: 0,
+                pane_id: pane.id.clone(),
+                principal_id: capability.principal_id.clone(),
+                capability_id: capability.id,
+                recorded_at_ms: 14,
+                byte_length: 1,
+                maximum_bytes: 1024,
+                profile_version: 1,
+                landlock_abi: Some(1),
+                content_recorded: false,
+            })
+            .unwrap();
+        assert!(latest.sequence > 0);
+        let retained: i64 = store
+            .connection
+            .query_row("SELECT COUNT(*) FROM pane_input_audits", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(retained, i64::try_from(MAX_PANE_INPUT_AUDIT_ROWS).unwrap());
     }
 
     #[test]
@@ -4843,7 +5091,7 @@ mod tests {
         assert_eq!(store.list_resource_scopes().unwrap().len(), 2);
         assert_eq!(store.local_root_principal().unwrap().epoch, 1);
 
-        let backup_prefix = format!("{}.pre-v18-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v19-", path.file_name().unwrap().to_string_lossy());
         let backup = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
             .flatten()
@@ -4862,7 +5110,7 @@ mod tests {
         drop(backup);
         drop(store);
 
-        let backup_prefix = format!("{}.pre-v18-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v19-", path.file_name().unwrap().to_string_lossy());
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry
                 .file_name()
@@ -4969,7 +5217,7 @@ mod tests {
         let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry.file_name().to_string_lossy().starts_with(&format!(
-                "{}.pre-v18-",
+                "{}.pre-v19-",
                 path.file_name().unwrap().to_string_lossy()
             )) {
                 let _ = std::fs::remove_file(entry.path());
@@ -5041,7 +5289,7 @@ mod tests {
 
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry.file_name().to_string_lossy().starts_with(&format!(
-                "{}.pre-v18-",
+                "{}.pre-v19-",
                 path.file_name().unwrap().to_string_lossy()
             )) {
                 let _ = std::fs::remove_file(entry.path());
