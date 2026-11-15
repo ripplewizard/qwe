@@ -4,6 +4,7 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use qwe_core::SANDBOXED_PANE_SHUTDOWN_GRACE_MS;
 use std::fs;
 use std::io::{Read, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -62,18 +63,57 @@ fn read_until(
     }
 }
 
+fn disable_terminal_echo(descriptor: libc::c_int) {
+    let mut settings = unsafe { std::mem::zeroed::<libc::termios>() };
+    assert_eq!(
+        unsafe { libc::tcgetattr(descriptor, &mut settings) },
+        0,
+        "failed to inspect PTY settings"
+    );
+    settings.c_lflag &= !libc::ECHO;
+    assert_eq!(
+        unsafe { libc::tcsetattr(descriptor, libc::TCSANOW, &settings) },
+        0,
+        "failed to disable PTY input echo"
+    );
+}
+
 fn signal_shim_and_expect(
-    writer: &mut impl Write,
+    controller: &mut UnixStream,
+    terminal: &mut impl Write,
     receiver: &std::sync::mpsc::Receiver<Vec<u8>>,
     output: &mut Vec<u8>,
-    signal: &str,
-    marker: &[u8],
+    signal_name: &str,
+    signal: libc::c_int,
 ) {
-    writer
-        .write_all(format!("kill -{signal} $PPID\n").as_bytes())
+    let ready_marker = format!("WAIT_{signal_name}");
+    let forwarded_marker = format!("{signal_name}_FORWARDED");
+    let python_signal = format!("SIG{signal_name}");
+    terminal
+        .write_all(
+            format!(
+                "/usr/bin/python3 -c 'import signal,time; signal.signal(signal.{python_signal}, lambda *_: (print(\"{forwarded_marker}\", flush=True), exit(0))); print(\"{ready_marker}\", flush=True); time.sleep(30)'\n"
+            )
+            .as_bytes(),
+        )
         .unwrap();
-    writer.flush().unwrap();
-    read_until(receiver, output, marker, Duration::from_secs(2));
+    terminal.flush().unwrap();
+    read_until(
+        receiver,
+        output,
+        ready_marker.as_bytes(),
+        Duration::from_secs(2),
+    );
+    controller
+        .write_all(&[1, 1, 0, 1, u8::try_from(signal).unwrap()])
+        .unwrap();
+    controller.flush().unwrap();
+    read_until(
+        receiver,
+        output,
+        forwarded_marker.as_bytes(),
+        Duration::from_secs(2),
+    );
 }
 
 #[test]
@@ -92,7 +132,14 @@ fn pane_init_owns_terminal_forwards_signals_and_reaps_namespace() {
     let workspace = root.join("workspace");
     fs::create_dir_all(&workspace).unwrap();
     let init = fs::canonicalize(env!("CARGO_BIN_EXE_qwe-sandbox-init")).unwrap();
+    let launcher = fs::canonicalize(env!("CARGO_BIN_EXE_qwe-session-exec")).unwrap();
     let workspace_arg = workspace.to_str().unwrap();
+    let control_path = std::env::temp_dir().join(format!(
+        "qwe-pane-control-{}-{nonce}.sock",
+        std::process::id()
+    ));
+    let control_listener = UnixListener::bind(&control_path).unwrap();
+    control_listener.set_nonblocking(true).unwrap();
 
     let pair = native_pty_system()
         .openpty(PtySize {
@@ -102,7 +149,15 @@ fn pane_init_owns_terminal_forwards_signals_and_reaps_namespace() {
             pixel_height: 0,
         })
         .unwrap();
-    let mut builder = CommandBuilder::new("bwrap");
+    disable_terminal_echo(pair.master.as_raw_fd().unwrap());
+    let mut builder = CommandBuilder::new(launcher);
+    builder.args([
+        "--control-socket",
+        control_path.to_str().unwrap(),
+        "--control-fd",
+        "10",
+        "bwrap",
+    ]);
     builder.args([
         "--ro-bind",
         "/usr",
@@ -126,6 +181,8 @@ fn pane_init_owns_terminal_forwards_signals_and_reaps_namespace() {
         "--unshare-pid",
         "--as-pid-1",
         "--die-with-parent",
+        "--sync-fd",
+        "10",
         "--clearenv",
         "--setenv",
         "PATH",
@@ -139,6 +196,8 @@ fn pane_init_owns_terminal_forwards_signals_and_reaps_namespace() {
     builder.args([
         "/qwe-sandbox-init",
         "--pane-init",
+        "--control-fd",
+        "10",
         "--workspace",
         workspace_arg,
         "--workspace-mode",
@@ -151,6 +210,20 @@ fn pane_init_owns_terminal_forwards_signals_and_reaps_namespace() {
         "-i",
     ]);
     let mut child = pair.slave.spawn_command(builder).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let (mut control, _) = loop {
+        match control_listener.accept() {
+            Ok(connection) => break connection,
+            Err(failure) if failure.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    Instant::now() < deadline,
+                    "Pane control broker connection timed out"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(failure) => panic!("failed to accept Pane control broker: {failure}"),
+        }
+    };
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().unwrap();
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -171,10 +244,16 @@ fn pane_init_owns_terminal_forwards_signals_and_reaps_namespace() {
     let mut output = Vec::new();
     writer
         .write_all(
-            b"trap 'printf \"\\nTERM_FORWARDED\\n\"' TERM; trap 'printf \"\\nINT_FORWARDED\\n\"' INT; trap 'printf \"\\nHUP_FORWARDED\\n\"' HUP; trap 'printf \"\\nWINCH_FORWARDED\\n\"' WINCH; printf 'PANE_READY pid=%s pgrp=%s tpgid=%s\\n' \"$$\" \"$(ps -o pgid= -p $$ | tr -d ' ')\" \"$(ps -o tpgid= -p $$ | tr -d ' ')\"\n",
+            b"if [ -e /proc/self/fd/10 ]; then printf 'CONTROL_FD_VISIBLE\\n'; else printf 'CONTROL_FD_HIDDEN\\n'; fi; printf 'PANE_READY pid=%s pgrp=%s tpgid=%s\\n' \"$$\" \"$(ps -o pgid= -p $$ | tr -d ' ')\" \"$(ps -o tpgid= -p $$ | tr -d ' ')\"\n",
         )
         .unwrap();
     writer.flush().unwrap();
+    read_until(
+        &receiver,
+        &mut output,
+        b"CONTROL_FD_HIDDEN",
+        Duration::from_secs(3),
+    );
     read_until(
         &receiver,
         &mut output,
@@ -183,15 +262,42 @@ fn pane_init_owns_terminal_forwards_signals_and_reaps_namespace() {
     );
 
     signal_shim_and_expect(
+        &mut control,
+        &mut writer,
+        &receiver,
+        &mut output,
+        "HUP",
+        libc::SIGHUP,
+    );
+    signal_shim_and_expect(
+        &mut control,
         &mut writer,
         &receiver,
         &mut output,
         "TERM",
-        b"TERM_FORWARDED",
+        libc::SIGTERM,
     );
-    signal_shim_and_expect(&mut writer, &receiver, &mut output, "INT", b"INT_FORWARDED");
-    signal_shim_and_expect(&mut writer, &receiver, &mut output, "HUP", b"HUP_FORWARDED");
+    signal_shim_and_expect(
+        &mut control,
+        &mut writer,
+        &receiver,
+        &mut output,
+        "INT",
+        libc::SIGINT,
+    );
 
+    writer
+        .write_all(
+            b"/usr/bin/python3 -c 'import signal,time; signal.signal(signal.SIGWINCH, lambda *_: (print(\"WINCH_FORWARDED\", flush=True), exit(0))); print(\"WAIT_WINCH\", flush=True); time.sleep(30)'\n",
+        )
+        .unwrap();
+    writer.flush().unwrap();
+    read_until(
+        &receiver,
+        &mut output,
+        b"WAIT_WINCH",
+        Duration::from_secs(2),
+    );
     pair.master
         .resize(PtySize {
             rows: 40,
@@ -209,7 +315,7 @@ fn pane_init_owns_terminal_forwards_signals_and_reaps_namespace() {
 
     writer
         .write_all(
-            b"/bin/bash -c '/bin/sleep 0.05 &'\nfor _ in {1..100}; do children=\"$(cat /proc/1/task/1/children)\"; [ \"$children\" = \"$$\" ] && { printf 'ORPHANS_REAPED\\n'; break; }; /bin/sleep 0.02; done\n",
+            b"/bin/bash -c '/bin/sleep 0.05 &'\nfor _ in {1..100}; do children=\"$(cat /proc/1/task/1/children | tr -d '[:space:]')\"; [ \"$children\" = \"$$\" ] && { printf 'ORPHANS_REAPED\\n'; break; }; /bin/sleep 0.02; done\n[ \"$children\" = \"$$\" ] || printf 'ORPHANS_PENDING=%s\\n' \"$children\"\n",
         )
         .unwrap();
     writer.flush().unwrap();
@@ -260,5 +366,6 @@ fn pane_init_owns_terminal_forwards_signals_and_reaps_namespace() {
         );
         thread::sleep(Duration::from_millis(20));
     }
+    let _ = fs::remove_file(control_path);
     let _ = fs::remove_dir_all(root);
 }

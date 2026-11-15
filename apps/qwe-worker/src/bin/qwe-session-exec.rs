@@ -25,6 +25,10 @@ struct Args {
     sandbox_seccomp_file: Option<std::path::PathBuf>,
     #[arg(long, hide = true)]
     sandbox_seccomp_fd: Option<i32>,
+    #[arg(long, hide = true)]
+    control_socket: Option<std::path::PathBuf>,
+    #[arg(long, hide = true)]
+    control_fd: Option<i32>,
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<String>,
 }
@@ -92,6 +96,20 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         (None, None) => {}
         _ => {
             return Err("sandbox status socket and descriptor must be provided together".into());
+        }
+    }
+    match (&args.control_socket, args.control_fd) {
+        (Some(path), Some(target)) => {
+            let stream = UnixStream::connect(path)
+                .map_err(|failure| format!("failed to connect Pane control broker: {failure}"))?;
+            qwe_protocol::verify_same_uid(&stream)
+                .map_err(|failure| format!("Pane control broker identity rejected: {failure}"))?;
+            map_descriptor(stream.as_raw_fd(), target, "Pane control")?;
+            std::mem::forget(stream);
+        }
+        (None, None) => {}
+        _ => {
+            return Err("Pane control socket and descriptor must be provided together".into());
         }
     }
     let program = CString::new(args.command[0].as_bytes())?;
