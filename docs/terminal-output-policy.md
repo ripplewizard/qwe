@@ -3,8 +3,8 @@
 Date: 2026-11-15
 Status: Restricted output filtering is implemented before journal, VT, and
 Attach retention. Sandboxed `SESSION_INPUT` uses a capability-authorized,
-bounded metadata-only audit before forwarding; direct Attach input remains fail
-closed.
+bounded metadata-only audit before forwarding. Interactive Attach Input uses
+the same model and revalidates `pane_input` on every frame.
 
 ## Scope
 
@@ -90,6 +90,8 @@ replay cannot reintroduce a dropped sequence.
 The v19 implementation retains the newest 4096 metadata rows globally. Audit
 insertion happens before PTY forwarding and failure rejects the input. Content
 opt-in remains intentionally unimplemented; no content or hash is stored.
+Interactive Attach audits occur in qwed's client-to-worker proxy; the worker
+only accepts input when qwed marks the internal attach as authorized.
 
 ## Configuration Rules
 

@@ -164,8 +164,8 @@ through qwed. The observed path is:
   title/clipboard and terminal-query sequences removed; and
 - bounded metadata-only audit before sandboxed `SESSION_INPUT`, with content
   absent from SQLite; and
-- worker-level rejection of direct Attach input, which has no audited qwed
-  write path; and
+- interactive Attach capability binding plus per-Input audit, while unmarked
+  direct worker Attach input remains fail closed; and
 - standalone `SESSION_RESIZE` capability authorization with observed PTY
   dimension changes.
 

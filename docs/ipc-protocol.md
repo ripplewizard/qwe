@@ -135,8 +135,11 @@ Sandboxed Pane output is filtered before journal retention and Attach delivery.
 Read-only observation is available. `SESSION_INPUT` requires a matching
 `pane_input` capability and inserts a bounded metadata-only audit row before
 forwarding. The response includes `input_audit`; content and hashes are never
-stored. Direct Attach input remains fail closed with `sandbox_input_disabled`
-because it has no qwed audit-before-write path.
+stored. A sandboxed write `ATTACH_OPEN` also requires `input_auth_context` with
+a matching `pane_input` capability. qwed revalidates that capability and writes
+one audit row per Input frame before forwarding. qwed's internal worker attach
+sets the non-client `input_authorized` marker; direct worker Attach without
+that marker still returns `sandbox_input_disabled`.
 
 `CONTROL_STATUS` computes reconciliation from current durable and worker state.
 It returns `sessions`, `panes`, `tasks`, `workers`, and a `reconciliation`

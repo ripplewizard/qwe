@@ -160,7 +160,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 Rows 001-034 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown. Rows
-035-044 pass local real-PTY/PID-namespace shim, control-channel, standalone
+035-045 pass local real-PTY/PID-namespace shim, control-channel, standalone
 probe, long-lived sandboxed worker, and qwed creation/lifecycle contracts; the
 new runtime rows are not yet part of the remote distribution matrix. Ubuntu
 22.04 and Debian 12 real VMs pass the complete `AGENT_EXEC` matrix. Default
@@ -216,8 +216,9 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-040 | Apply the restricted terminal-output state machine before journal/VT/attachment retention; preserve fragmented display sequences and drop OSC title/clipboard, terminal queries, unknown CSI, and malformed escapes |
 | SANDBOX-041 | Grade `pane_input` capability issuance by persisted target metadata: ordinary management delegation for a sandboxed Pane, high-trust issuer for an unsandboxed Pane |
 | SANDBOX-042 | Require a matching `pane_input` capability for sandboxed `SESSION_INPUT`, persist bounded metadata-only input audit before forwarding, return audit metadata, and never store content or hashes |
-| SANDBOX-043 | Keep direct sandboxed Pane Attach input fail closed with `sandbox_input_disabled`, preventing bypass of qwed's pane-input capability and audit path |
+| SANDBOX-043 | Require `pane_input` capability in sandboxed write ATTACH_OPEN, revalidate and audit every Input frame before forwarding, and expose capability-aware CLI/compositor paths |
 | SANDBOX-044 | Implement standalone `SESSION_RESIZE`; require `pane_resize` capability for sandboxed Panes, attachment authority for ordinary Panes, and verify the worker PTY dimensions change |
+| SANDBOX-045 | Keep worker Attach input fail closed unless qwed's internal `input_authorized` marker is present, preventing a direct worker Attach from bypassing capability and audit checks |
 
 ## Core Object Model
 
