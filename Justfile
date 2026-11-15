@@ -1100,6 +1100,130 @@ stage8-check:
     just --justfile "{{ justfile() }}" check-qwe
     just --justfile "{{ justfile() }}" stage8-layout
 
+stage9-agent-exec:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(mktemp -d "/tmp/qwe-stage9-agent.XXXXXX")"
+    cleanup_stage9() {
+      find "$root" -depth -delete 2>/dev/null || true
+    }
+    trap cleanup_stage9 EXIT
+    cargo build -p qwe -p qwe-worker -p qwed
+    python3 "{{ fixtures }}/stage9_agent_exec_probe.py" \
+      --cli target/debug/qwe \
+      --qwed target/debug/qwed \
+      --socket "$root/qwed.sock"
+
+stage9-check:
+    just --justfile "{{ justfile() }}" check-qwe
+    just --justfile "{{ justfile() }}" stage9-agent-exec
+    just --justfile "{{ justfile() }}" stage8-layout
+    just --justfile "{{ justfile() }}" stage7-resource-profile
+    just --justfile "{{ justfile() }}" stage7-multi-pane
+    just --justfile "{{ justfile() }}" credential-smoke
+
+bubblewrap-poc:
+    cargo test -p qwe-worker --test bubblewrap_contract -- --nocapture
+
+stage10-sandbox:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(mktemp -d "/tmp/qwe-stage10-sandbox.XXXXXX")"
+    cleanup_stage10() {
+      find "$root" -depth -delete 2>/dev/null || true
+    }
+    trap cleanup_stage10 EXIT
+    cargo build -p qwe-worker -p qwed
+    python3 "{{ fixtures }}/stage10_sandbox_probe.py" \
+      --qwed target/debug/qwed \
+      --socket "$root/qwed.sock"
+
+stage10-check:
+    just --justfile "{{ justfile() }}" check-qwe
+    just --justfile "{{ justfile() }}" bubblewrap-poc
+    just --justfile "{{ justfile() }}" stage10-sandbox
+
+sandbox-container-matrix images="ubuntu:22.04 ubuntu:24.04 debian:12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'sandbox container matrix must run on Linux\n' >&2
+      exit 2
+    }
+    command -v podman >/dev/null || {
+      printf 'podman is required for sandbox container matrix\n' >&2
+      exit 2
+    }
+    root="{{ justfile_directory() }}"
+    cd "$root"
+    cargo build --release -p qwe-worker -p qwed
+    for image in {{ images }}; do
+      podman run --rm --network=host --security-opt label=disable \
+        --volume "$root/target/release:/qwe-bin:ro" \
+        --volume "$root/tests/fixtures:/qwe-fixtures:ro" \
+        --env "PYTHONPATH=/qwe-fixtures" \
+        "$image" /bin/sh -c '
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            bubblewrap python3 >/dev/null
+          python3 /qwe-fixtures/sandbox_container_fail_closed.py \
+            --qwed /qwe-bin/qwed --image "$1"
+        ' sh "$image"
+    done
+
+sandbox-vm-matrix hosts="ubuntu2204 ubuntu2404 debian12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'sandbox VM matrix must run on Linux\n' >&2
+      exit 2
+    }
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="$lab/ssh_config"
+    remote_dir="/home/qwe/bianca/qwe-sandbox-vm"
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    cd "$root"
+    cargo build --release -p qwe-worker -p qwed
+    for host in {{ hosts }}; do
+      printf '==> %s\n' "$host"
+      target="qwe-$host"
+      ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+      scp -q -F "$ssh_config" \
+        target/release/qwed \
+        target/release/qwe-worker \
+        target/release/qwe-session-exec \
+        tests/fixtures/stage7_resource_probe.py \
+        tests/fixtures/stage10_sandbox_probe.py \
+        tests/fixtures/sandbox_container_fail_closed.py \
+        "$target:$remote_dir/"
+      if ssh -F "$ssh_config" "$target" '
+        bwrap --ro-bind /usr /usr \
+          --ro-bind-try /lib /lib \
+          --ro-bind-try /lib64 /lib64 \
+          --proc /proc --dev /dev \
+          --unshare-user --unshare-pid --as-pid-1 --die-with-parent \
+          -- /usr/bin/true
+      '; then
+        ssh -F "$ssh_config" "$target" "
+          root=\$(mktemp -d /tmp/qwe-sandbox-vm.XXXXXX)
+          PYTHONPATH=$remote_dir python3 $remote_dir/stage10_sandbox_probe.py \
+            --qwed $remote_dir/qwed --socket \"\$root/qwed.sock\"
+          rc=\$?
+          find \"\$root\" -depth -delete 2>/dev/null || true
+          exit \$rc
+        "
+      else
+        ssh -F "$ssh_config" "$target" "
+          PYTHONPATH=$remote_dir python3 $remote_dir/sandbox_container_fail_closed.py \
+            --qwed $remote_dir/qwed --image '$host-vm' --matrix vm
+        "
+      fi
+    done
+
 state-matrix:
     cargo test -p qwe-core authority::tests
     cargo test -p qwe-core tests::session_state_machine_rejects_resurrection

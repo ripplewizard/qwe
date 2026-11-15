@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import shutil
+import tempfile
+from pathlib import Path
+
+from stage7_resource_probe import (
+    request,
+    request_with_capability,
+    start_qwed,
+    stop_qwed,
+)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--qwed", required=True)
+    parser.add_argument("--image", required=True)
+    parser.add_argument("--matrix", default="container")
+    args = parser.parse_args()
+
+    bwrap = shutil.which("bwrap")
+    assert bwrap is not None, "container matrix requires an installed Bubblewrap"
+    root = Path(tempfile.mkdtemp(prefix="qwe-sandbox-matrix-"))
+    workspace = root / "workspace"
+    workspace.mkdir()
+    socket_path = str(root / "qwed.sock")
+    qwed = start_qwed(
+        args.qwed,
+        socket_path,
+        root / "qwed.log",
+    )
+    try:
+        management = Path(
+            f"{socket_path}.runtime/security.bootstrap"
+        ).read_text().strip()
+        principal_id = request_with_capability(
+            socket_path,
+            "SECURITY_BOOTSTRAP",
+            {},
+            management,
+        )["principal"]["principal_id"]
+        created = request(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": "sandbox-matrix",
+                "program": "/bin/sh",
+                "args": ["-c", "exec /bin/sleep 120"],
+                "owner": "sandbox-matrix",
+            },
+        )
+        assert created.get("running") is True, created
+        result = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": principal_id,
+                "operation": "agent_exec",
+                "scope": {"kind": "pane", "pane_id": created["pane_id"]},
+                "ttl_ms": 60000,
+                "sandbox_profile": {
+                    "version": 1,
+                    "workspace": str(workspace),
+                    "workspace_mode": "read_only",
+                    "network": "isolated_loopback",
+                    "home": "hidden",
+                    "private_tmp": True,
+                    "process_namespace": "isolated",
+                    "seccomp": {"mode": "none"},
+                },
+            },
+            management,
+        )
+        assert result.get("code") == "sandbox_backend_unavailable", result
+    finally:
+        stop_qwed(qwed, socket_path)
+
+    print(
+        json.dumps(
+            {
+                "case": "SANDBOX-004",
+                "matrix": args.matrix,
+                "image": args.image,
+                "bwrap": bwrap,
+                "status": "pass",
+                "behavior": "sandbox_backend_unavailable",
+            }
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()
