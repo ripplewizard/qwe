@@ -286,6 +286,9 @@ ID mapping under the tested AppArmor/userns policy, and qwed must fail closed.
 and requires classified `userns_disabled`, restoring sysctls afterward.
 `just sandbox-systemd-properties` verifies Bubblewrap RW workspace mounts under
 the packaged user-service hardening properties.
+`just sandbox-systemd-service-smoke` exercises the full qwed service lifecycle:
+sandbox Agent execution, crash recovery, binary replacement, restart, and
+teardown.
 
 ## ADR 0012-0015 Contract Matrices
 

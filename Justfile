@@ -1308,6 +1308,54 @@ sandbox-systemd-properties:
         "$base" "$bwrap_path"
     done
 
+sandbox-systemd-service-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'systemd service smoke must run on Linux\n' >&2
+      exit 2
+    }
+    command -v systemd-run >/dev/null || {
+      printf 'systemd-run is required for the service smoke\n' >&2
+      exit 2
+    }
+    root="$(mktemp -d "/run/user/$(id -u)/qwe-service-smoke.XXXXXX")"
+    unit="qwe-service-smoke-$$"
+    bin="$root/bin"
+    workspace="$root/workspace"
+    mkdir -p "$bin" "$workspace"
+    cleanup_service() {
+      systemctl --user stop "$unit.service" >/dev/null 2>&1 || true
+      systemctl --user reset-failed "$unit.service" >/dev/null 2>&1 || true
+      find "$root" -depth -delete 2>/dev/null || true
+    }
+    trap cleanup_service EXIT
+    cargo build --release -p qwe-worker -p qwed
+    cp target/release/qwed target/release/qwe-worker target/release/qwe-session-exec "$bin/"
+    bwrap_path="${QWE_BWRAP_PATH:-$(command -v bwrap)}"
+    systemd-run --user --unit="$unit" --quiet \
+      --working-directory="$root" \
+      --property=NoNewPrivileges=yes \
+      --property=ProtectSystem=strict \
+      --property=ProtectHome=read-only \
+      --property=PrivateTmp=yes \
+      --property=UMask=0077 \
+      --property=KillMode=process \
+      --property=TimeoutStopSec=10 \
+      --property=Restart=on-failure \
+      --property=RestartSec=1 \
+      --setenv="PATH=/opt/local/bin:/usr/local/bin:/usr/bin:/bin" \
+      --setenv="QWE_BWRAP_PATH=$bwrap_path" \
+      -- "$bin/qwed" \
+        --socket "$root/qwe.sock" \
+        --store "$root/qwe.sqlite"
+    python3 "{{ fixtures }}/systemd_service_probe.py" \
+      --socket "$root/qwe.sock" \
+      --unit "$unit" \
+      --workspace "$workspace" \
+      --service-bin-dir "$bin" \
+      --release-bin-dir target/release
+
 state-matrix:
     cargo test -p qwe-core authority::tests
     cargo test -p qwe-core tests::session_state_machine_rejects_resurrection

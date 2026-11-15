@@ -213,6 +213,11 @@ that Bubblewrap cannot mount.
   `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`, and
   `PrivateTmp` properties. RW workspace writes pass under both `/run/user` and
   `$HOME`.
+- `just sandbox-systemd-service-smoke`: starts qwed in a transient user service
+  with packaged security properties, runs sandboxed Agent commands, kills and
+  restarts qwed, atomically replaces the qwed binary, restarts again, executes
+  another sandbox command, stops the service, and verifies this smoke's Pane
+  scopes are no longer active.
 
 The container matrix verifies fail-closed deployment behavior only. It does not
 claim that Bubblewrap succeeds inside a restricted container.

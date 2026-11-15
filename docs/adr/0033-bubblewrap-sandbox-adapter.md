@@ -277,6 +277,9 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
   AppArmor/userns policy and qwed returns `sandbox_backend_unavailable`.
 - `just sandbox-systemd-properties` verifies an RW workspace under `/run/user`
   and `$HOME` with the packaged systemd hardening properties.
+- `just sandbox-systemd-service-smoke` verifies sandboxed Agent execution,
+  qwed crash recovery, binary replacement, and teardown in a transient user
+  service using the packaged security properties.
 
 Remaining qualification before production:
 
