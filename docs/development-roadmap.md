@@ -191,7 +191,8 @@ Linux `AGENT_EXEC`, preserves FD3 credentials and Pane cgroups, and uses
 Bubblewrap `--json-status-fd`, internal `TIOCSTI` seccomp, and
 `--die-with-parent`. Sandboxed restart recovery and Pane-teardown qualification
 pass locally and on Ubuntu 22.04/Debian 12 real VMs. Ubuntu 24.04 currently
-fails closed under the tested AppArmor/userns policy. Session/Pane
+fails closed by default; the packaged path-scoped AppArmor profile passes the
+complete matrix without disabling the global userns restriction. Session/Pane
 startup-program sandboxing, Landlock-only fallback, terminal/signal init shim
 responsibilities, additional platform qualification, additional named seccomp
 profiles, and stronger VM/OCI backends remain deferred.

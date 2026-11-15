@@ -63,6 +63,9 @@ qwe-VERSION-TARGET[-local]/
   share/qwe/service/
     launchd/
     systemd/
+  share/qwe/apparmor/
+    qwe-bwrap
+    install.sh
 ```
 
 `release.json` uses schema `qwe-release/v1` and records product and IPC

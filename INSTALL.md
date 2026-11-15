@@ -95,6 +95,20 @@ The installer:
 
 If `~/.local/bin` is not on `PATH`, add it in your shell configuration.
 
+## Ubuntu 24.04 AppArmor
+
+Ubuntu 24.04 restricts unprivileged user namespaces by default. Install the
+path-scoped Bubblewrap profile instead of disabling that global restriction:
+
+```sh
+sudo "$HOME/share/qwe/apparmor/install.sh"
+```
+
+The packaged profile allows user namespaces for Bubblewrap at
+`/usr/bin/bwrap`, `/usr/local/bin/bwrap`, and `/opt/local/bin/bwrap`. If QWE is
+configured with another `QWE_BWRAP_PATH`, an administrator must review and
+extend the profile for that exact path.
+
 ## Start the service
 
 ```sh

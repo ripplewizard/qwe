@@ -51,6 +51,12 @@ implement mount or namespace setup itself.
   than inferring compatibility from a version string alone.
 - Profile fields that cannot be enforced return `sandbox_profile_unsupported`.
 
+Ubuntu 24.04 deployments may keep
+`kernel.apparmor_restrict_unprivileged_userns=1` and load the packaged
+path-scoped AppArmor profile. The profile grants `userns` only to Bubblewrap at
+the documented `/usr/bin`, `/usr/local/bin`, and `/opt/local/bin` paths.
+Disabling the global restriction is not the approved QWE deployment path.
+
 Backend failure reasons must use observable failed-stage evidence, not stderr
 guessing; container context does not by itself prove seccomp blocked namespace
 creation. See Experiment 0049.
@@ -333,8 +339,11 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
   nested mount/PID environment. This is a fail-closed deployment check, not a
   successful sandbox qualification inside containers.
 - `just sandbox-vm-matrix` passes the complete Stage 10 probe on Ubuntu 22.04
-  and Debian 12. Ubuntu 24.04 rejects user-ID mapping under its tested
-  AppArmor/userns policy and qwed returns `sandbox_backend_unavailable`.
+  and Debian 12. Default Ubuntu 24.04 rejects user-ID mapping and qwed returns
+  `sandbox_backend_unavailable`.
+- `just sandbox-apparmor-vm` loads the packaged path-scoped profile on Ubuntu
+  24.04 while preserving `apparmor_restrict_unprivileged_userns=1`, verifies the
+  expected profiles are loaded, and passes the complete Stage 10 probe.
 - `just sandbox-systemd-properties` verifies an RW workspace under `/run/user`
   and `$HOME` with the packaged systemd hardening properties.
 - `just sandbox-systemd-service-smoke` verifies sandboxed Agent execution,
@@ -355,7 +364,6 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
 Remaining qualification before production:
 
 - explicit user-namespace-disabled configurations on additional distributions;
-- a successful Ubuntu 24.04 AppArmor/userns configuration;
 - real Bubblewrap minimum-version/feature behavior across the supported release
   matrix, beyond the runtime required-option probe;
 - additional named seccomp profiles and wider runtime compatibility coverage;

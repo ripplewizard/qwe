@@ -21,10 +21,15 @@ configuration:
 ./install.py --prefix /path/to/test-home
 ```
 
-The installer verifies `SHA256SUMS`, installs binaries under
-`.local/bin`, and writes native service assets under the selected prefix.
-It does not start or enable a service. See `INSTALL.md` for service-manager and
-credential setup.
+The installer verifies `SHA256SUMS`, installs binaries under `.local/bin`, and
+writes native service and AppArmor assets under the selected prefix. It does
+not start or enable a service. See `INSTALL.md` for service-manager,
+credential, and Ubuntu AppArmor setup.
+
+On Ubuntu 24.04, install the path-scoped Bubblewrap AppArmor profile from
+`share/qwe/apparmor/install.sh` with root privileges. This keeps the global
+unprivileged-userns restriction enabled while allowing Bubblewrap at the
+documented install paths.
 
 Every release archive is accompanied by `release.json`, which records the
 product version, IPC protocol version, target, source revision, dirty-source

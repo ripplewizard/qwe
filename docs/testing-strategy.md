@@ -286,8 +286,12 @@ Ubuntu 24.04, and Debian 12 when Podman disallows Bubblewrap's nested mount/PID
 setup.
 
 `just sandbox-vm-matrix` uses the existing rootless QEMU lab. Ubuntu 22.04 and
-Debian 12 pass the complete Stage 10 probe. Ubuntu 24.04 currently rejects user
-ID mapping under the tested AppArmor/userns policy, and qwed must fail closed.
+Debian 12 pass the complete Stage 10 probe. Default Ubuntu 24.04 rejects user
+ID mapping under the system-wide AppArmor/userns policy, and qwed must fail
+closed.
+`just sandbox-apparmor-vm` installs the packaged path-scoped Bubblewrap profile
+on Ubuntu 24.04, verifies the global restriction remains enabled, and passes
+the complete Stage 10 probe.
 `just sandbox-userns-disabled-vm` temporarily disables userns on Ubuntu 22.04
 and requires classified `userns_disabled`, restoring sysctls afterward.
 `just sandbox-systemd-properties` verifies Bubblewrap RW workspace mounts under

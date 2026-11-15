@@ -25,7 +25,8 @@ from an unpacked package with:
 ```
 
 The installer verifies `SHA256SUMS`, writes executables to `~/.local/bin`, and
-writes the native service asset. It does not start or enable the service.
+writes the native service and AppArmor assets. It does not start or enable the
+service.
 Use `--prefix` to test against an isolated home without touching the current
 account.
 
@@ -43,6 +44,18 @@ systemctl --user enable --now qwe.service
 The installed unit prefers `/opt/local/bin/bwrap` before the distro
 `/usr/bin/bwrap`. Set `QWE_BWRAP_PATH` in the user service environment to pin
 another compiled Bubblewrap executable.
+
+On Ubuntu 24.04, install the packaged path-scoped AppArmor profile without
+disabling the system-wide userns restriction:
+
+```sh
+sudo "$HOME/share/qwe/apparmor/install.sh"
+```
+
+The profile grants user-namespace creation only to Bubblewrap at
+`/usr/bin/bwrap`, `/usr/local/bin/bwrap`, and `/opt/local/bin/bwrap`. A custom
+`QWE_BWRAP_PATH` outside those paths requires an administrator-reviewed profile
+extension.
 
 The unit uses the systemd credentials directory when the user adds an
 encrypted credential entry such as:

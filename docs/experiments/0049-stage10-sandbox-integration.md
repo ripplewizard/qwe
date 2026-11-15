@@ -46,6 +46,9 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
   `bwrap_version_incompatible`;
 - when Landlock is available but `qwe-sandbox-init` is missing from an isolated
   binary directory, capability issue fails with `sandbox_init_unavailable`;
+- Ubuntu 24.04 keeps `apparmor_restrict_unprivileged_userns=1` while the
+  packaged path-scoped profile grants `userns` only to supported Bubblewrap
+  paths, and the complete Stage 10 probe passes;
 - qwed restart reconnects to the same worker, wrapper, child, profile, and
   events;
 - forced Pane teardown removes the worker, wrapper, child, descendants, and
@@ -140,10 +143,11 @@ The same probe was run across available Bubblewrap and distribution versions:
 | Fedora 35 | 0.13.1 | compiled install at `/opt/local/bin/bwrap` | `0x49` | pass | pass |
 | Ubuntu 22.04 | 0.6.1 | unprivileged | `0x49` | pass | pass |
 | Debian 12 | 0.8.0 | unprivileged | `0x49` | pass | pass |
-| Ubuntu 24.04 | 0.9.0 | unprivileged, AppArmor restriction temporarily disabled | `0x49` | pass | pass |
+| Ubuntu 24.04 | 0.9.0 | unprivileged, packaged path-scoped AppArmor profile | `0x49` | pass | pass |
 
-`0x49` contains both `IFF_UP` and `IFF_LOOPBACK`. Ubuntu 24.04 restored
-`kernel.apparmor_restrict_unprivileged_userns=1` after the probe.
+`0x49` contains both `IFF_UP` and `IFF_LOOPBACK`. Ubuntu 24.04 keeps
+`kernel.apparmor_restrict_unprivileged_userns=1`; the approved profile grants
+`userns` only to Bubblewrap.
 These are verified versions, not a guarantee for future Bubblewrap releases;
 the loopback probe must run whenever the backend version changes.
 
@@ -185,6 +189,21 @@ module. The real matrices now assert:
 - Podman -> `mount_denied` with target `/proc`;
 - Ubuntu 24.04 AppArmor -> `uid_map_denied`;
 - unknown stderr -> `unknown` while retaining a bounded, sanitized snapshot.
+
+### Ubuntu 24.04 AppArmor profile
+
+The Ubuntu 24.04 default policy still produces `uid_map_denied`, which is the
+expected fail-closed result when no profile grants user-namespace creation.
+The approved deployment asset is a path-scoped AppArmor profile for Bubblewrap,
+not a global sysctl relaxation.
+
+The packaged profile attaches to `/usr/bin/bwrap`, `/usr/local/bin/bwrap`, and
+`/opt/local/bin/bwrap` with `flags=(unconfined)` plus the `userns` rule.
+`just sandbox-apparmor-vm` installs that profile, asserts all three attachment
+profiles are loaded and the global restriction remains `1`, then runs the full
+Stage 10 probe. The probe restores the VM's previous profile state afterward.
+A custom `QWE_BWRAP_PATH` outside the documented paths requires an
+administrator-reviewed extension.
 
 Capability issue separately checks that `bwrap --help` lists every option used
 by the production adapter. This catches backends that can start simple
@@ -269,10 +288,12 @@ that Bubblewrap cannot mount.
   Podman, and return `sandbox_backend_unavailable` without fallback.
 - `just sandbox-vm-matrix`:
   - Ubuntu 22.04 and Debian 12 pass the complete real-VM Stage 10 probe;
-  - Ubuntu 24.04 has Bubblewrap installed but rejects user-ID mapping under the
-    tested AppArmor/userns policy;
-  - qwed returns `sandbox_backend_unavailable` on Ubuntu 24.04 and does not
-    execute the command.
+  - default Ubuntu 24.04 rejects user-ID mapping under the system-wide
+    AppArmor/userns policy and qwed fails closed.
+- `just sandbox-apparmor-vm`: installs the packaged path-scoped profile on
+  Ubuntu 24.04, verifies all three supported Bubblewrap attachment paths load
+  while the global restriction remains enabled, and passes the complete Stage
+  10 probe.
 - `just sandbox-userns-disabled-vm`: temporarily sets the Ubuntu 22.04
   namespace sysctls to zero, verifies reason `userns_disabled`, and restores
   the original sysctl values through a shell trap.
@@ -291,8 +312,6 @@ claim that Bubblewrap succeeds inside a restricted container.
 
 ## Not Yet Validated
 
-- a successful Ubuntu 24.04 configuration with an approved AppArmor/userns
-  policy;
 - other distributions and kernels with user namespaces explicitly disabled;
 - full behavioral qualification against the oldest supported Bubblewrap
   version in addition to the runtime required-option check;
