@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import socket
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -339,6 +340,7 @@ def run_positive_probe(
         management,
     )
     sandboxed_pane_capability = None
+    sandboxed_input_secret = None
     if audit["fd_bind"]:
         assert sandboxed_pane.get("token"), sandboxed_pane
         assert sandboxed_pane["sandbox_audit"]["fd_bind"] is True, sandboxed_pane
@@ -441,7 +443,7 @@ def run_positive_probe(
         assert sandboxed_session["sandbox"]["enforced"] is True, sandboxed_session
         assert sandboxed_session["sandbox"]["output_policy"] == "restricted", sandboxed_session
         assert (
-            sandboxed_session["sandbox"]["input_policy"] == "disabled_pending_audit"
+            sandboxed_session["sandbox"]["input_policy"] == "audited_session_input"
         ), sandboxed_session
         assert sandboxed_session["sandbox"]["profile"] == read_only_profile, sandboxed_session
         assert sandboxed_session["sandbox"]["audit"]["fd_bind"] is True, sandboxed_session
@@ -511,12 +513,43 @@ def run_positive_probe(
         journal = bytes.fromhex(attach_status["journal_hex"])
         assert b"TITLE_SHOULD_DROP" not in journal, journal
         assert b"Q0xJUA==" not in journal, journal
-        input_blocked = request(
+        input_secret = "SANDBOX_INPUT_SECRET_7f4e"
+        sandboxed_input_secret = input_secret
+        input_command = (
+            f"printf 'INPUT_EXECUTED:{input_secret}\\n'\n"
+        )
+        missing_input_capability = request(
             socket_path,
             "SESSION_INPUT",
-            {"session_id": sandboxed_session_id, "data": "true\n"},
+            {"session_id": sandboxed_session_id, "data": input_command},
         )
-        assert input_blocked.get("code") == "sandbox_input_audit_unavailable", input_blocked
+        assert (
+            missing_input_capability.get("code") == "capability_missing"
+        ), missing_input_capability
+        input_status = request_with_capability(
+            socket_path,
+            "SESSION_INPUT",
+            {"session_id": sandboxed_session_id, "data": input_command},
+            sandboxed_pane_input["token"],
+        )
+        assert input_status.get("running") is True, input_status
+        input_audit = input_status["input_audit"]
+        assert input_audit["pane_id"] == sandboxed_pane_id, input_audit
+        assert input_audit["principal_id"] == low_pane_principal, input_audit
+        assert input_audit["capability_id"] == sandboxed_pane_input["capability_id"], input_audit
+        assert input_audit["byte_length"] == len(input_command.encode()), input_audit
+        assert input_audit["maximum_bytes"] == 1024 * 1024, input_audit
+        assert input_audit["profile_version"] == 1, input_audit
+        assert input_audit["content_recorded"] is False, input_audit
+        wait_for(
+            lambda: "INPUT_EXECUTED"
+            in request(
+                socket_path,
+                "PANE_ATTACH",
+                {"pane_id": sandboxed_pane_id},
+            )["screen"],
+            "sandboxed Pane input did not execute",
+        )
 
     landlock_off_profile = profile(workspace, landlock={"mode": "off"})
     landlock_off = issue_capability(
@@ -1627,6 +1660,8 @@ def run_positive_probe(
         contents = database.read_bytes()
         assert COMMAND_SECRET not in contents
         assert HOST_ENV_SECRET.encode() not in contents
+        if sandboxed_input_secret is not None:
+            assert sandboxed_input_secret.encode() not in contents
         for token in capability_tokens:
             assert token.encode() not in contents
     log_path = Path(f"{socket_path}.runtime").parent / "qwed-stage10.log"
@@ -1634,6 +1669,17 @@ def run_positive_probe(
         contents = log_path.read_bytes()
         assert COMMAND_SECRET not in contents
         assert HOST_ENV_SECRET.encode() not in contents
+    if sandboxed_input_secret is not None:
+        connection = sqlite3.connect(f"{socket_path}.sqlite")
+        try:
+            rows = connection.execute(
+                "SELECT byte_length, content_recorded FROM pane_input_audits"
+            ).fetchall()
+        finally:
+            connection.close()
+        assert len(rows) == 1, rows
+        assert rows[0][0] == len(input_command.encode()), rows
+        assert rows[0][1] == 0, rows
 
     return {
         "profile_authorization": "pass",
@@ -1642,7 +1688,7 @@ def run_positive_probe(
             "pass" if sandboxed_pane_capability is not None else "unavailable"
         ),
         "sandboxed_pane_restricted_output": "pass",
-        "sandboxed_pane_input_fail_closed": "pass",
+        "sandboxed_pane_input_audit": "pass",
         "pane_input_trust_floor": "pass",
         "fd_bind_probe": "pass",
         "strict_seccomp": "pass",

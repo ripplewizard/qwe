@@ -148,10 +148,6 @@ fn worker_starts_and_controls_a_long_lived_sandboxed_pane() {
         );
         thread::sleep(Duration::from_millis(20));
     }
-    let input_failure =
-        call_result(&mut stream, "SESSION_INPUT", json!({"data": "true\n"})).unwrap_err();
-    assert_eq!(input_failure.code, "sandbox_input_disabled");
-
     let attach_path = fs::read_dir(&root)
         .unwrap()
         .flatten()

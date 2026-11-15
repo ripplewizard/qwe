@@ -997,7 +997,7 @@ impl WorkerSession {
                 "profile": profile,
                 "control_protocol_version": 1,
                 "output_policy": "restricted",
-                "input_policy": "disabled_pending_audit"
+                "input_policy": "audited_session_input"
             }),
             None => json!({"enforced": false, "output_policy": "full"}),
         }
@@ -1092,12 +1092,6 @@ impl WorkerSession {
     }
 
     fn input(&self, session_id: &str, payload: &Value) -> Result<Value, ProtocolErrorBody> {
-        if self.sandbox_profile.is_some() {
-            return Err(error(
-                "sandbox_input_disabled",
-                "sandboxed Pane PTY input is disabled until bounded input audit is implemented",
-            ));
-        }
         let data = payload
             .get("data")
             .and_then(Value::as_str)

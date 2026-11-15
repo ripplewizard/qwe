@@ -1329,20 +1329,33 @@ fn annotate_persisted_sandbox(status: &mut Value, sandbox: Option<&qwe_core::Pan
     status["sandbox"]["capability_id"] = json!(sandbox.capability_id);
 }
 
-fn reject_sandboxed_input(context: &Context, pane_id: &PaneId) -> Result<(), ProtocolErrorBody> {
-    let sandbox = context
+fn record_pane_input_audit(
+    context: &Context,
+    pane_id: &PaneId,
+    sandbox: &qwe_core::PaneSandboxRecord,
+    grant: &security::SecurityGrant,
+    byte_length: usize,
+    recorded_at_ms: i64,
+) -> Result<qwe_core::PaneInputAuditRecord, ProtocolErrorBody> {
+    context
         .store
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .find_pane_sandbox(pane_id)
-        .map_err(storage_error)?;
-    if sandbox.is_some() {
-        return Err(error(
-            "sandbox_input_audit_unavailable",
-            "sandboxed Pane input is disabled until bounded input audit is implemented",
-        ));
-    }
-    Ok(())
+        .record_pane_input_audit(qwe_core::PaneInputAuditRecord {
+            sequence: 0,
+            pane_id: pane_id.clone(),
+            principal_id: grant.principal.id.clone(),
+            capability_id: grant.capability.id.clone(),
+            recorded_at_ms,
+            byte_length: u64::try_from(byte_length)
+                .map_err(|failure| error("invalid_request", failure.to_string()))?,
+            maximum_bytes: u64::try_from(MAX_CONTROL_INPUT_BYTES)
+                .map_err(|failure| error("internal", failure.to_string()))?,
+            profile_version: sandbox.profile.version,
+            landlock_abi: sandbox.audit.landlock_abi,
+            content_recorded: false,
+        })
+        .map_err(storage_error)
 }
 
 fn create_session(
@@ -4677,20 +4690,12 @@ fn client_operation(
         "SERVER_KILL" => kill_server(context, &request.payload),
         "SESSION_INPUT" => {
             let session_id = required_string(&request.payload, "session_id")?;
-            let pane = context
-                .store
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .find_pane_for_session(session_id)
-                .map_err(storage_error)?
-                .ok_or_else(|| error("terminal_lost", "session has no Pane"))?;
-            reject_sandboxed_input(context, &pane.id)?;
-            let input_bytes = request
+            let data = request
                 .payload
                 .get("data")
                 .and_then(Value::as_str)
-                .ok_or_else(|| error("invalid_request", "missing input data"))?
-                .len();
+                .ok_or_else(|| error("invalid_request", "missing input data"))?;
+            let input_bytes = data.len();
             if input_bytes > MAX_CONTROL_INPUT_BYTES {
                 return Err(error(
                     "input_too_large",
@@ -4699,11 +4704,45 @@ fn client_operation(
                     ),
                 ));
             }
-            let _authority_guard = context
+            let _input_guard = context
                 .attachment_lock
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            {
+            let (pane, sandbox, input_grant) = {
+                let store = context
+                    .store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let pane = store
+                    .find_pane_for_session(session_id)
+                    .map_err(storage_error)?
+                    .ok_or_else(|| error("terminal_lost", "session has no Pane"))?;
+                let sandbox = store.find_pane_sandbox(&pane.id).map_err(storage_error)?;
+                let grant = if sandbox.is_some() {
+                    Some(security::require_pane_input(
+                        &store,
+                        request.auth_context.as_ref(),
+                        &pane.id,
+                        now_ms(),
+                    )?)
+                } else {
+                    None
+                };
+                (pane, sandbox, grant)
+            };
+            let input_audit = if let (Some(sandbox), Some(grant)) = (&sandbox, &input_grant) {
+                Some(record_pane_input_audit(
+                    context,
+                    &pane.id,
+                    sandbox,
+                    grant,
+                    input_bytes,
+                    now_ms(),
+                )?)
+            } else {
+                None
+            };
+            if sandbox.is_none() {
                 let mut store = context
                     .store
                     .lock()
@@ -4716,13 +4755,17 @@ fn client_operation(
                     now_ms(),
                 )?;
             }
-            call_worker(
+            let mut status = call_worker(
                 context,
                 session_id,
                 &request.operation,
                 request.payload.clone(),
                 WORKER_REQUEST_TIMEOUT,
-            )
+            )?;
+            if let Some(audit) = input_audit {
+                status["input_audit"] = json!(audit);
+            }
+            Ok(status)
         }
         "PANE_STATUS" | "PANE_ATTACH" => {
             let pane_id = required_pane_id(&request.payload)?;

@@ -281,6 +281,21 @@ pub fn require_sandboxed_pane(
     Ok(grant)
 }
 
+pub fn require_pane_input(
+    store: &Store,
+    auth_context: Option<&AuthContext>,
+    pane_id: &PaneId,
+    now_ms: i64,
+) -> Result<SecurityGrant, ProtocolErrorBody> {
+    authorize(
+        store,
+        auth_context,
+        Authorization::PaneInput(pane_id),
+        now_ms,
+        None,
+    )
+}
+
 pub fn require_command_read(
     store: &Store,
     auth_context: Option<&AuthContext>,
@@ -331,6 +346,7 @@ enum Authorization<'a> {
     Management,
     AgentExec(&'a PaneId),
     SandboxedPane(&'a str),
+    PaneInput(&'a PaneId),
     CommandRead,
     CommandTerminate,
 }
@@ -409,6 +425,13 @@ fn authorize(
                 && active.scope
                     == (CapabilityScope::Session {
                         session_id: session_id.to_string(),
+                    })
+        }
+        Authorization::PaneInput(pane_id) => {
+            active.operation == CapabilityOperation::PaneInput
+                && active.scope
+                    == (CapabilityScope::Pane {
+                        pane_id: pane_id.clone(),
                     })
         }
         Authorization::CommandRead => command.is_some_and(|command| {
