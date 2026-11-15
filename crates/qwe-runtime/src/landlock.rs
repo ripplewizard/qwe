@@ -72,12 +72,27 @@ const LANDLOCK_ACCESS_FS_MAKE_BLOCK: u64 = 1 << 11;
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 const LANDLOCK_ACCESS_FS_MAKE_SYM: u64 = 1 << 12;
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+const LANDLOCK_ACCESS_FS_REFER: u64 = 1 << 13;
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+const LANDLOCK_ACCESS_FS_TRUNCATE: u64 = 1 << 14;
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+const LANDLOCK_ACCESS_FS_IOCTL_DEV: u64 = 1 << 15;
 
 #[cfg(all(
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
-const WRITE_ACCESS: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
+const WRITE_ACCESS_V1: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
     | LANDLOCK_ACCESS_FS_REMOVE_DIR
     | LANDLOCK_ACCESS_FS_REMOVE_FILE
     | LANDLOCK_ACCESS_FS_MAKE_CHAR
@@ -188,6 +203,7 @@ pub fn abi_version() -> Result<u32, LandlockError> {
 ))]
 pub fn apply(policy: &LandlockPolicy<'_>) -> Result<u32, LandlockError> {
     let abi = abi_version()?;
+    let write_access = write_access_for_abi(abi);
     if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } < 0 {
         return Err(LandlockError::Syscall {
             operation: "no_new_privs setup",
@@ -196,7 +212,7 @@ pub fn apply(policy: &LandlockPolicy<'_>) -> Result<u32, LandlockError> {
     }
 
     let ruleset = RulesetAttr {
-        handled_access_fs: WRITE_ACCESS,
+        handled_access_fs: write_access,
     };
     let ruleset_fd = unsafe {
         libc::syscall(
@@ -215,11 +231,11 @@ pub fn apply(policy: &LandlockPolicy<'_>) -> Result<u32, LandlockError> {
     let ruleset = unsafe { std::fs::File::from_raw_fd(ruleset_fd as i32) };
 
     if policy.private_tmp {
-        allow_write_path(&ruleset, Path::new("/tmp"))?;
+        allow_write_path(&ruleset, Path::new("/tmp"), write_access)?;
     }
-    allow_write_path(&ruleset, Path::new("/dev"))?;
+    allow_write_path(&ruleset, Path::new("/dev"), write_access)?;
     if policy.workspace_read_write {
-        allow_write_path(&ruleset, policy.workspace)?;
+        allow_write_path(&ruleset, policy.workspace, write_access)?;
     }
 
     if unsafe { libc::syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset.as_raw_fd(), 0_u32) } < 0 {
@@ -243,7 +259,11 @@ pub fn apply(_policy: &LandlockPolicy<'_>) -> Result<u32, LandlockError> {
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
-fn allow_write_path(ruleset: &std::fs::File, path: &Path) -> Result<(), LandlockError> {
+fn allow_write_path(
+    ruleset: &std::fs::File,
+    path: &Path,
+    write_access: u64,
+) -> Result<(), LandlockError> {
     let descriptor = unsafe {
         libc::open(
             c_path(path)?.as_ptr(),
@@ -258,7 +278,7 @@ fn allow_write_path(ruleset: &std::fs::File, path: &Path) -> Result<(), Landlock
     }
     let descriptor = unsafe { std::fs::File::from_raw_fd(descriptor) };
     let rule = PathBeneathAttr {
-        allowed_access: WRITE_ACCESS,
+        allowed_access: write_access,
         parent_fd: descriptor.as_raw_fd(),
     };
     if unsafe {
@@ -283,6 +303,24 @@ fn allow_write_path(ruleset: &std::fs::File, path: &Path) -> Result<(), Landlock
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
+fn write_access_for_abi(abi: u32) -> u64 {
+    let mut access = WRITE_ACCESS_V1;
+    if abi >= 2 {
+        access |= LANDLOCK_ACCESS_FS_REFER;
+    }
+    if abi >= 3 {
+        access |= LANDLOCK_ACCESS_FS_TRUNCATE;
+    }
+    if abi >= 5 {
+        access |= LANDLOCK_ACCESS_FS_IOCTL_DEV;
+    }
+    access
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn c_path(path: &Path) -> Result<std::ffi::CString, LandlockError> {
     use std::os::unix::ffi::OsStrExt;
 
@@ -301,13 +339,32 @@ mod tests {
         any(target_arch = "x86_64", target_arch = "aarch64")
     ))]
     #[test]
-    fn write_mask_covers_file_and_directory_mutations() {
-        assert_ne!(WRITE_ACCESS & LANDLOCK_ACCESS_FS_WRITE_FILE, 0);
-        assert_ne!(WRITE_ACCESS & LANDLOCK_ACCESS_FS_REMOVE_FILE, 0);
-        assert_ne!(WRITE_ACCESS & LANDLOCK_ACCESS_FS_MAKE_DIR, 0);
-        assert_ne!(WRITE_ACCESS & LANDLOCK_ACCESS_FS_MAKE_SOCK, 0);
-        assert_eq!(WRITE_ACCESS & (1 << 0), 0);
-        assert_eq!(WRITE_ACCESS & (1 << 2), 0);
-        assert_eq!(WRITE_ACCESS & (1 << 3), 0);
+    fn write_mask_grows_with_supported_landlock_abi() {
+        let v1 = write_access_for_abi(1);
+        assert_ne!(v1 & LANDLOCK_ACCESS_FS_WRITE_FILE, 0);
+        assert_ne!(v1 & LANDLOCK_ACCESS_FS_REMOVE_FILE, 0);
+        assert_ne!(v1 & LANDLOCK_ACCESS_FS_MAKE_DIR, 0);
+        assert_ne!(v1 & LANDLOCK_ACCESS_FS_MAKE_SOCK, 0);
+        assert_eq!(v1 & (1 << 0), 0);
+        assert_eq!(v1 & (1 << 2), 0);
+        assert_eq!(v1 & (1 << 3), 0);
+        assert_eq!(v1 & LANDLOCK_ACCESS_FS_REFER, 0);
+        assert_eq!(v1 & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+        assert_eq!(v1 & LANDLOCK_ACCESS_FS_IOCTL_DEV, 0);
+
+        let v2 = write_access_for_abi(2);
+        assert_ne!(v2 & LANDLOCK_ACCESS_FS_REFER, 0);
+        assert_eq!(v2 & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+
+        let v3 = write_access_for_abi(3);
+        assert_ne!(v3 & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+        assert_eq!(v3 & LANDLOCK_ACCESS_FS_IOCTL_DEV, 0);
+
+        let v4 = write_access_for_abi(4);
+        assert_eq!(v4 & LANDLOCK_ACCESS_FS_IOCTL_DEV, 0);
+
+        let v5 = write_access_for_abi(5);
+        assert_ne!(v5 & LANDLOCK_ACCESS_FS_IOCTL_DEV, 0);
+        assert_eq!(write_access_for_abi(10), v5);
     }
 }

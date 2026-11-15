@@ -1127,6 +1127,9 @@ bubblewrap-poc:
 
 landlock-poc:
     cargo test -p qwe-worker --test landlock_contract -- --nocapture
+    cargo build -p qwe-worker --bin qwe-sandbox-init
+    python3 "{{ fixtures }}/landlock_abi_probe.py" \
+      --init target/debug/qwe-sandbox-init
 
 stage10-sandbox:
     #!/usr/bin/env bash
@@ -1278,6 +1281,28 @@ sandbox-apparmor-vm host="ubuntu2404":
       find \"\$root\" -depth -delete 2>/dev/null || true
       exit \$rc
     "
+
+sandbox-landlock-vm host="ubuntu2404":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="$lab/ssh_config"
+    target="qwe-{{ host }}"
+    remote_dir="/home/qwe/bianca/qwe-landlock-vm"
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    cd "$root"
+    cargo build --release -p qwe-worker --bin qwe-sandbox-init
+    ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+    scp -q -F "$ssh_config" \
+      target/release/qwe-sandbox-init \
+      tests/fixtures/landlock_abi_probe.py \
+      "$target:$remote_dir/"
+    ssh -F "$ssh_config" "$target" \
+      "python3 $remote_dir/landlock_abi_probe.py --init $remote_dir/qwe-sandbox-init"
 
 sandbox-userns-disabled-vm host="ubuntu2204":
     #!/usr/bin/env bash
