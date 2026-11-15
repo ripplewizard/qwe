@@ -6,6 +6,7 @@ mod landlock;
 mod path;
 mod process;
 mod terminal;
+mod terminal_output;
 
 pub use cgroup::{
     CgroupStats, Pressure, ResourceSupport, apply_resource_policy, current_cgroup_path,
@@ -21,6 +22,7 @@ pub use process::{process_identity, process_matches};
 pub use terminal::{
     CursorStyle, MouseProtocolEncoding, MouseProtocolMode, TerminalScreen, TerminalSnapshot,
 };
+pub use terminal_output::RestrictedTerminalFilter;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum JournalError {
