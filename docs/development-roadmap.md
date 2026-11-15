@@ -197,8 +197,8 @@ complete matrix without disabling the global userns restriction.
 interactive Agent PTY as the next implementation milestone. Landlock-only
 fallback, additional platform qualification, additional named seccomp profiles,
 and stronger VM/OCI backends remain deferred.
-The next gate is PoC P1-P6 plus three product decisions: revocation semantics,
-sandboxed-Pane exit behavior, and Rocky/openEuler/Kylin support.
+The next gate is implementation. Revocation and sandboxed-Pane exit semantics
+are resolved; Rocky/openEuler/Kylin scope remains a product input.
 P1-P6 are complete: FD binding, shim stacking, terminal behavior, Landlock ABI
 distribution, and current strict seccomp runtime compatibility are fixed.
 

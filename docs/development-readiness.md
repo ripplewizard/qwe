@@ -274,7 +274,7 @@ node outside allowed write roots is denied.
 direction: sandboxed Pane uses a separate capability and long-lived shim, while
 interactive Agent input/resize is designed with the same terminal milestone.
 Implementation and qualification remain open.
-The adopted decision register and terminal output policy are frozen; product
-decisions D12, D25, and D48 remain open.
-P1-P6 are complete. The remaining blockers are product decisions and code
-implementation, not architecture PoCs.
+The adopted decision register and terminal output policy are frozen. D12
+revocation and D25 Pane-exit semantics are resolved; D48 target-distribution
+scope remains a product input. P1-P6 are complete, so implementation is no
+longer blocked on architecture PoCs.

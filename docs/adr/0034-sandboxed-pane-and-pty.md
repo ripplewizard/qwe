@@ -74,9 +74,19 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   terminal-control authority.
 - **D11 adopted:** capability delegation is monotonic. A holder cannot issue a
   broader capability than its own authority.
-- **D12 product pending:** capability expiry/revocation does not terminate an
-  existing Pane by default. The Principal loses operation authority; linked
-  termination requires explicit policy.
+- **D12 adopted:** capability expiry and ordinary revocation do not terminate an
+  existing Pane. The Principal loses operation authority immediately.
+  - Revocation carries `terminate: false` by default. High-risk profiles,
+    including `network:inherit`, force `terminate: true`.
+  - Revocation invalidates queued input and output operations before returning;
+    buffered bytes from a revoked Principal cannot be written to the PTY.
+  - An orphaned sandboxed Pane has no valid operation capability and no human
+    attachment. Default idle TTL is 15 minutes, with at most 16 orphaned
+    sandboxed Panes per qwed. Exceeding the limit rejects new Pane creation.
+    These values are frozen as `SANDBOXED_PANE_ORPHAN_TTL_MS` and
+    `MAX_ORPHANED_SANDBOXED_PANES`.
+  - A separate high-trust administrative teardown path does not depend on a
+    revoked capability.
 
 ### C. Profile and nesting
 
@@ -119,8 +129,17 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   before target exec and is surfaced as `sandbox_setup_failed`.
 - **D24 decided:** replacing the shell with `exec bash`, `exec zsh`, or another
   program does not change the shim or effective policy.
-- **D25 product pending:** when both foreground program and shell exit, the
-  sandboxed Pane must match ordinary Pane close/restart semantics.
+- **D25 resolved:** ordinary Panes transition to `exited`, retain final output,
+  terminal status, and identity until explicit `SESSION_CLOSE`; they do not
+  auto-restart. Sandboxed Pane follows the same observable lifecycle.
+  - Shell exit stops input acceptance and starts sandbox-tree teardown.
+  - The shim sends SIGTERM to remaining namespace processes, waits a bounded
+    five-second grace period, then sends SIGKILL.
+    `SANDBOXED_PANE_SHUTDOWN_GRACE_MS` freezes the grace period.
+  - This intentionally differs from an ordinary Pane where detached background
+    processes may survive. Work that must outlive the shell uses `AGENT_EXEC`.
+  - Exit records identify normal exit, signal, `terminate`, revocation, TTL, or
+    teardown cause.
 
 ### E. Terminal and PTY
 
@@ -182,8 +201,12 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 
 - **D47 decided:** container success is not a product requirement. Containers
   normally fail closed and user documentation names the reason code.
-- **D48 product pending:** whether Rocky, openEuler, and Kylin enter the
-  supported matrix. Their userns and Landlock behavior may affect D5 defaults.
+- **D48 policy adopted; target scope pending product:** the matrix has separate
+  `AGENT_EXEC` and `sandboxed_pane` capability columns and is split by CPU
+  architecture. Tier 1 currently contains Ubuntu 22.04, Ubuntu 24.04 AppArmor,
+  Debian 12, and Fedora 44 SELinux enforcing. Tier 2 evaluation order is
+  openEuler, Kylin, then Rocky. No distribution is publicly claimed as
+  sandboxed-Pane supported before its evidence is archived.
 - **D49 decided:** macOS remains Linux-only sandbox unsupported.
 - **D50 decided:** VM, OCI, and external providers require separate ADRs.
 
@@ -228,9 +251,9 @@ P1-P6 evidence is recorded in
 - The shim becomes a focused TCB with fuzzing and dependency review.
 - Restricted terminal output trades some terminal features for resistance to
   output-to-input injection.
-- Pending product decisions do not block path hardening, PoCs, or protocol
-  scaffolding, but they block revocation behavior, Pane-exit behavior, and the
-  final supported distribution matrix.
+- D12 and D25 no longer block protocol scaffolding or Pane-exit/revocation
+  implementation. D48 target scope remains a product input to the public
+  distribution matrix.
 
 ## References
 
