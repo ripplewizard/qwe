@@ -425,8 +425,13 @@ def run_positive_probe(
             "SESSION_CREATE",
             {
                 "session_id": sandboxed_session_id,
-                "program": "/bin/bash",
-                "args": ["--noprofile", "--norc", "-i"],
+                "program": "/bin/sh",
+                "args": [
+                    "-c",
+                    "printf 'SAFE_BEFORE\\033]0,TITLE_SHOULD_DROP\\007"
+                    "\\033]52;c,Q0xJUA==\\007SAFE_AFTER\\n'; "
+                    "exec /bin/bash --noprofile --norc -i",
+                ],
                 "owner": OWNER,
                 "sandboxed": True,
             },
@@ -434,6 +439,10 @@ def run_positive_probe(
         )
         assert sandboxed_session.get("running") is True, sandboxed_session
         assert sandboxed_session["sandbox"]["enforced"] is True, sandboxed_session
+        assert sandboxed_session["sandbox"]["output_policy"] == "restricted", sandboxed_session
+        assert (
+            sandboxed_session["sandbox"]["input_policy"] == "disabled_pending_audit"
+        ), sandboxed_session
         assert sandboxed_session["sandbox"]["profile"] == read_only_profile, sandboxed_session
         assert sandboxed_session["sandbox"]["audit"]["fd_bind"] is True, sandboxed_session
         sandboxed_pane_id = sandboxed_session["pane_id"]
@@ -490,22 +499,24 @@ def run_positive_probe(
             low_pane_management,
         )
         assert sandboxed_pane_input.get("token"), sandboxed_pane_input
-        attach_blocked = request(
+        attach_status = request(
             socket_path,
             "PANE_ATTACH",
             {"pane_id": sandboxed_pane_id},
         )
-        assert (
-            attach_blocked.get("code") == "sandbox_terminal_filter_unavailable"
-        ), attach_blocked
+        assert attach_status.get("running") is True, attach_status
+        assert "SAFE_BEFORE" in attach_status["screen"], attach_status
+        assert "SAFE_AFTER" in attach_status["screen"], attach_status
+        assert "TITLE_SHOULD_DROP" not in attach_status["screen"], attach_status
+        journal = bytes.fromhex(attach_status["journal_hex"])
+        assert b"TITLE_SHOULD_DROP" not in journal, journal
+        assert b"Q0xJUA==" not in journal, journal
         input_blocked = request(
             socket_path,
             "SESSION_INPUT",
             {"session_id": sandboxed_session_id, "data": "true\n"},
         )
-        assert (
-            input_blocked.get("code") == "sandbox_terminal_filter_unavailable"
-        ), input_blocked
+        assert input_blocked.get("code") == "sandbox_input_audit_unavailable", input_blocked
 
     landlock_off_profile = profile(workspace, landlock={"mode": "off"})
     landlock_off = issue_capability(
@@ -1630,7 +1641,8 @@ def run_positive_probe(
         "sandboxed_pane_runtime": (
             "pass" if sandboxed_pane_capability is not None else "unavailable"
         ),
-        "sandboxed_pane_terminal_fail_closed": "pass",
+        "sandboxed_pane_restricted_output": "pass",
+        "sandboxed_pane_input_fail_closed": "pass",
         "pane_input_trust_floor": "pass",
         "fd_bind_probe": "pass",
         "strict_seccomp": "pass",

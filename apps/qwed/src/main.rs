@@ -1329,10 +1329,7 @@ fn annotate_persisted_sandbox(status: &mut Value, sandbox: Option<&qwe_core::Pan
     status["sandbox"]["capability_id"] = json!(sandbox.capability_id);
 }
 
-fn require_unrestricted_terminal_available(
-    context: &Context,
-    pane_id: &PaneId,
-) -> Result<(), ProtocolErrorBody> {
+fn reject_sandboxed_input(context: &Context, pane_id: &PaneId) -> Result<(), ProtocolErrorBody> {
     let sandbox = context
         .store
         .lock()
@@ -1341,8 +1338,8 @@ fn require_unrestricted_terminal_available(
         .map_err(storage_error)?;
     if sandbox.is_some() {
         return Err(error(
-            "sandbox_terminal_filter_unavailable",
-            "sandboxed Pane Attach and input require the restricted terminal output policy",
+            "sandbox_input_audit_unavailable",
+            "sandboxed Pane input is disabled until bounded input audit is implemented",
         ));
     }
     Ok(())
@@ -4687,7 +4684,7 @@ fn client_operation(
                 .find_pane_for_session(session_id)
                 .map_err(storage_error)?
                 .ok_or_else(|| error("terminal_lost", "session has no Pane"))?;
-            require_unrestricted_terminal_available(context, &pane.id)?;
+            reject_sandboxed_input(context, &pane.id)?;
             let input_bytes = request
                 .payload
                 .get("data")
@@ -4737,9 +4734,6 @@ fn client_operation(
                 .find_pane(&pane_id)
                 .map_err(storage_error)?
                 .ok_or_else(|| error("not_found", "Pane not found"))?;
-            if request.operation == "PANE_ATTACH" {
-                require_unrestricted_terminal_available(context, &pane.id)?;
-            }
             let operation = if request.operation == "PANE_STATUS" {
                 "SESSION_STATUS"
             } else {
@@ -4765,16 +4759,6 @@ fn client_operation(
         }
         "SESSION_STATUS" | "SESSION_ATTACH" => {
             let session_id = required_string(&request.payload, "session_id")?;
-            if request.operation == "SESSION_ATTACH" {
-                let pane = context
-                    .store
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .find_pane_for_session(session_id)
-                    .map_err(storage_error)?
-                    .ok_or_else(|| error("terminal_lost", "session has no Pane"))?;
-                require_unrestricted_terminal_available(context, &pane.id)?;
-            }
             let mut status = match call_worker(
                 context,
                 session_id,
