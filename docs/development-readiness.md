@@ -242,6 +242,10 @@ Protected-path hardlink aliases are rejected before capability issue, including
 hardlinks reached through a symlinked protected directory; shared PID namespace
 `/proc/<pid>/root` access stays bounded, and abstract Unix sockets follow the
 selected network namespace.
+Protected paths and workspace cwd now use
+`openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)`. Absolute protected-path
+symlinks fail closed, commands inherit only expected descriptors, and workspace
+FIFO credential transfer is recorded as an explicit trust-transfer channel.
 
 The optional `strict` named seccomp profile passes pipe-split and PTY execution
 and records the SHA-256 of the exact cBPF program in capability audit metadata.
@@ -265,3 +269,8 @@ metadata, and has no Landlock-only fallback path. Capability issue requires the
 helper to be present and executable whenever Landlock is available.
 Fedora 44 ABI 7 verification confirms `/dev` ioctls work while a char-device
 node outside allowed write roots is denied.
+
+[ADR 0034](adr/0034-sandboxed-pane-and-pty.md) now fixes the next product
+direction: sandboxed Pane uses a separate capability and long-lived shim, while
+interactive Agent input/resize is designed with the same terminal milestone.
+Implementation and qualification remain open.

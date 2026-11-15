@@ -38,3 +38,4 @@ that links to the replaced decision.
 | [0031](0031-scrollback-and-mouse-copy.md) | Client scrollback navigation and focused-Pane mouse copy | Accepted; implemented |
 | [0032](0032-agent-execution-model.md) | Fresh-process agent execution, command handles, events, and capability model | Accepted; first delivery implemented |
 | [0033](0033-bubblewrap-sandbox-adapter.md) | External Bubblewrap sandbox adapter and fail-closed profile model | Accepted; core PoC complete |
+| [0034](0034-sandboxed-pane-and-pty.md) | Sandboxed Pane, interactive PTY, and workspace path trust | Accepted for next milestone |

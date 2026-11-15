@@ -279,9 +279,10 @@ Recovery never converts missing process or output state into success.
 The capability layer prevents ambient authority between principals even when
 clients share one UID. It does not replace OS multi-user isolation:
 same-UID processes can still read the root bootstrap file. Environment mutation,
-`shell_exec`, Session/Pane startup-program sandboxing, cross-Pane
-orchestration, persistent history, and host management remain outside this
-delivery.
+`shell_exec`, cross-Pane orchestration, persistent history, and host management
+remain outside this delivery. Session/Pane startup-program sandboxing and
+interactive Agent PTY are accepted by
+[ADR 0034](adr/0034-sandboxed-pane-and-pty.md) as the next milestone.
 
 `shell_exec`, broader sandbox backends and deployment qualification, cross-Pane
 orchestration, persistent semantic history, host management, and multi-writer

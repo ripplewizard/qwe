@@ -21,12 +21,15 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
 - `workspace:read_write` can persist an inherited FD3 credential in a
   host-visible workspace file after the command exits;
 - an existing protected path inside a writable workspace remains read-only;
-- protected-path symlinks resolve inside the canonical workspace and remain
-  read-only;
+- workspace-relative protected-path symlinks resolve inside the canonical
+  workspace and remain read-only, while absolute symlinks fail closed;
 - protected paths containing hardlinked files are rejected before capability
   issue, preventing a writable alias from mutating the same inode;
 - symlinked protected directories are canonicalized before hardlink inspection,
   so the symlink form cannot bypass the same check;
+- protected path and cwd resolution use
+  `openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)`, rejecting absolute symlinks
+  and magic-link escapes;
 - host `$HOME` is absent and `/tmp` is private;
 - host PIDs, `/etc/shadow`, `/sys`, and host environment values are absent;
 - workspace symlinks to host paths outside the mount policy are inaccessible;
@@ -34,6 +37,9 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
   local `127.0.0.1` listen/connect pair;
 - abstract Unix sockets are reachable with `network:inherit` and isolated under
   `network:isolated_loopback`;
+- sandbox commands inherit only stdio plus the explicit FD3 credential;
+- a workspace FIFO can transfer an FD3 credential to the host under
+  `workspace:read_write`, confirming the declared trust-transfer channel;
 - shared PID namespace visibility does not turn
   `/proc/<same-uid-pid>/root` into a mount-policy escape;
 - `NoNewPrivs: 1` makes setuid privilege gain denial an observable guarantee;
@@ -326,6 +332,18 @@ The first implementation inspected the profile path literally and therefore
 missed a directory symlink hiding the same condition. The validator now
 canonicalizes each top-level protected path before recursively inspecting the
 target, while still refusing to follow nested symlinks during the scan.
+
+Path resolution was tightened further with
+`openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)`. Relative symlinks that remain
+inside the workspace are accepted; absolute protected-path symlinks fail
+closed. The remaining window between this local resolution and Bubblewrap
+accepting a source path is explicit residual same-UID host risk under ADR 0034,
+because Bubblewrap 0.5 has no FD-pinned bind option.
+
+Descriptor enumeration inside the sandbox shows only stdin, stdout, and stderr
+unless an FD3 credential was explicitly requested. A workspace FIFO with an
+exposed credential is confirmed as a host channel; it is treated as part of the
+writable-workspace/credential risk rather than a network-isolation failure.
 
 In the shared PID namespace, `/proc/<worker-pid>/root` remains inaccessible;
 process visibility alone therefore does not bypass the mount policy. Abstract

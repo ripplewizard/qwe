@@ -380,6 +380,8 @@ named seccomp values other than the exact profile name `strict`, a missing
 workspace, or a missing protected path fail closed.
 Protected paths containing multi-link files also fail closed because a
 writable hardlink alias can bypass path-scoped read-only mounts.
+Workspace-relative protected-path symlinks are accepted; absolute symlinks are
+rejected by `openat2(RESOLVE_BENEATH)`.
 Sandboxed PTY execution preserves terminal semantics and applies an internal
 `TIOCSTI`-denying seccomp filter; the profile's `seccomp:none` value does not
 disable that adapter hardening.
@@ -513,6 +515,9 @@ before worker dispatch with a one-shot `credential_socket` and
 secret is transferred as a Unix `SCM_RIGHTS` descriptor, mapped to child FD3,
 and exposed only through `QWE_CREDENTIAL_FD=3`. Missing, empty, oversized, or
 unreadable credentials fail closed.
+The launched command inherits standard descriptors and, when requested, the
+explicit FD3 credential only; qwed SQLite, control-socket, and worker
+descriptors remain close-on-exec.
 
 Output is redacted before event retention on each stdout/stderr or merged PTY
 stream. Matching is exact and streaming, including secrets split across chunks;
@@ -528,6 +533,10 @@ Sandboxed commands additionally expose `sandbox.risk` flags for
 `network_inherit`, `writable_workspace`, and `credential_exposed`, plus derived
 `credential_network_exfiltration` and `credential_workspace_persistence`.
 The base risk flags and capability audit metadata are durable in SQLite.
+An existing workspace FIFO or other host-visible IPC object is an intentional
+workspace trust-transfer channel. With `workspace:read_write` and an exposed
+FD3 credential, the sandbox can send the secret to a host reader even when
+network policy is `isolated_loopback`.
 The derived flags are capability-risk declarations, not guarantees that
 exfiltration or persistence succeeds in every runtime. Stage 10 confirms both
 channels with direct FD3 credential tests when the corresponding profile
@@ -560,9 +569,10 @@ environment values, credentials, output bytes, and replay events are not stored
 in SQLite. If the worker is confirmed absent, nonterminal commands become
 `lost`; temporary worker unreachability is returned as a transport error.
 Capability, revocation, credential/redaction, observer push, PTY output, and
-foreground shell idle are implemented. `shell_exec`, sandbox backends,
-cross-Pane orchestration, and environment mutation remain deferred and are
-tracked in [Agent Execution Model](agent-execution-model.md).
+foreground shell idle are implemented. `shell_exec`, cross-Pane orchestration,
+and environment mutation remain deferred. Sandboxed Pane and interactive Agent
+PTY are accepted for the next milestone by
+[ADR 0034](adr/0034-sandboxed-pane-and-pty.md).
 
 ### Channel Profiles
 

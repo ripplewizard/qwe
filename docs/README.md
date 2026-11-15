@@ -199,6 +199,8 @@ qwed, worker, `qwe-session-exec`, Bubblewrap, and the optional Landlock init.
 - [Experiment 0050](experiments/0050-agent-command-signal.md): AGENT-013
   whitelisted signal delivery to non-PTY, sandboxed, and PTY foreground process
   groups.
+- [`qwe-sandbox-init` Threat Model](sandbox-init-threat-model.md): trusted
+  computing base, failure invariants, and fuzz plan.
 
 ## Reading Order
 

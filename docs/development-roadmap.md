@@ -192,10 +192,11 @@ Bubblewrap `--json-status-fd`, internal `TIOCSTI` seccomp, and
 `--die-with-parent`. Sandboxed restart recovery and Pane-teardown qualification
 pass locally and on Ubuntu 22.04/Debian 12 real VMs. Ubuntu 24.04 currently
 fails closed by default; the packaged path-scoped AppArmor profile passes the
-complete matrix without disabling the global userns restriction. Session/Pane
-startup-program sandboxing, Landlock-only fallback, terminal/signal init shim
-responsibilities, additional platform qualification, additional named seccomp
-profiles, and stronger VM/OCI backends remain deferred.
+complete matrix without disabling the global userns restriction.
+[ADR 0034](adr/0034-sandboxed-pane-and-pty.md) accepts sandboxed Pane and
+interactive Agent PTY as the next implementation milestone. Landlock-only
+fallback, additional platform qualification, additional named seccomp profiles,
+and stronger VM/OCI backends remain deferred.
 
 The explicit userns-disabled matrix passes on Ubuntu 22.04, Ubuntu 24.04, and
 Debian 12 and verifies ordinary Panes remain usable. SELinux-enforcing

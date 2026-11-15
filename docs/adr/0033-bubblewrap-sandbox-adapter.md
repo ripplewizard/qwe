@@ -111,6 +111,8 @@ multi-link file: a writable hardlink alias elsewhere in the workspace would
 otherwise mutate the same inode despite the read-only path mount.
 The top-level protected path is canonicalized before this scan so a symlinked
 protected directory cannot hide the same hardlink condition.
+Workspace-relative symlinks are accepted; absolute protected-path symlinks are
+rejected by `openat2(RESOLVE_BENEATH)`.
 
 Bubblewrap's `--unshare-net` provides an isolated network namespace containing
 an UP loopback interface on the tested Bubblewrap 0.5, 0.6.1, 0.8, and 0.9
@@ -209,6 +211,8 @@ receives the credential under `network:inherit`, and a host-visible workspace
 file retains it after command exit under `workspace:read_write`. The derived
 risk flags are therefore auditable claims about capability composition, not
 guarantees that every attempted transfer succeeds.
+A workspace FIFO is likewise an intentional host IPC channel and can receive an
+exposed FD3 value even when networking is isolated.
 
 ### 7. Landlock defense in depth
 
@@ -296,10 +300,9 @@ Two follow-on routes are deliberately separate:
 
 1. **Sandboxed Pane startup**
 
-   This remains a product decision. The current recommended shape is default
-   unsandboxed Panes plus an explicit, capability-authorized sandboxed Pane
-   mode; `SESSION_CREATE.sandbox_profile` is not accepted as ambient selection.
-   Before acceptance, qualification must cover:
+   [ADR 0034](0034-sandboxed-pane-and-pty.md) accepts the next milestone:
+   default unsandboxed Panes plus explicit `sandboxed_pane` capability;
+   `SESSION_CREATE.sandbox_profile` remains invalid. Qualification must cover:
 
    - controlling-terminal, resize, SIGINT/SIGTSTP, and job control for a
      long-lived wrapped shell;
@@ -309,11 +312,9 @@ Two follow-on routes are deliberately separate:
      tighten, never broaden, the effective policy; and
    - an explicit capability boundary for the sandboxed Pane operation.
 
-   The current direct-Bubblewrap, no-terminal-shim conclusion applies only to
-   `AGENT_EXEC`. `qwe-sandbox-init` currently applies Landlock and immediately
-   execs; it does not establish a controlling terminal, forward signals, or
-   synchronize window size. Those responsibilities remain unresolved for an
-   interactive Pane shell.
+   The implemented `AGENT_EXEC` path currently applies Landlock and immediately
+   execs. ADR 0034 assigns controlling-terminal, signal forwarding, and
+   window-size responsibilities to the future sandboxed-Pane shim.
 
 2. **Backend hardening for `AGENT_EXEC`**
 
@@ -372,6 +373,11 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
   seccomp content hash in capability audit metadata.
 - Stage 10 rejects protected-path hardlink aliases and verifies abstract Unix
   socket namespace behavior for inherited and isolated networks.
+- Protected path and workspace cwd resolution use
+  `openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)`. Stage 10 verifies absolute
+  protected-path symlinks fail closed, sandbox commands inherit only expected
+  descriptors, and a workspace FIFO can carry an exposed credential to the
+  host.
 - `just landlock-poc` verifies Landlock ABI detection, RW/RO workspace write
   enforcement, denial outside allowed write roots, preservation of reads and
   private `/tmp`, and whichever ABI-specific rights the host kernel exposes.
@@ -393,8 +399,7 @@ Remaining qualification before production:
 - additional named seccomp profiles and wider runtime compatibility coverage;
 - broader network escape and filesystem escape probes;
 - credential/file-exfiltration cases;
-- interactive Agent PTY input/resize protocol, if that becomes a product
-  requirement.
+- sandboxed-Pane and interactive Agent PTY implementation under ADR 0034.
 
 Stage 10.1-10.4 evidence is recorded in
 [Experiment 0049](../experiments/0049-stage10-sandbox-integration.md).
