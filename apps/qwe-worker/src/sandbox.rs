@@ -28,6 +28,30 @@ pub struct BubblewrapProbeFailure {
     pub details: ProtocolErrorDetails,
 }
 
+const REQUIRED_BUBBLEWRAP_OPTIONS: &[&str] = &[
+    "--as-pid-1",
+    "--bind",
+    "--cap-drop",
+    "--chdir",
+    "--clearenv",
+    "--dev",
+    "--die-with-parent",
+    "--dir",
+    "--json-status-fd",
+    "--proc",
+    "--ro-bind",
+    "--ro-bind-try",
+    "--seccomp",
+    "--setenv",
+    "--symlink",
+    "--tmpfs",
+    "--unshare-ipc",
+    "--unshare-net",
+    "--unshare-pid",
+    "--unshare-user",
+    "--unshare-uts",
+];
+
 pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
     let mut evidence = ProbeEvidence::collect();
     let executable = bubblewrap_executable();
@@ -52,6 +76,39 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
         ));
     }
     evidence.backend_version = String::from_utf8_lossy(&version.stdout).trim().to_string();
+    let help = Command::new(&executable)
+        .arg("--help")
+        .output()
+        .map_err(|failure| {
+            evidence.stderr = sanitize_stderr(failure.to_string().as_bytes());
+            probe_failure(
+                "bwrap_version_incompatible",
+                format!("failed to inspect bubblewrap features: {failure}"),
+                &evidence,
+            )
+        })?;
+    if !help.status.success() {
+        evidence.stderr = sanitize_stderr(&help.stderr);
+        return Err(probe_failure(
+            "bwrap_version_incompatible",
+            "bubblewrap --help failed",
+            &evidence,
+        ));
+    }
+    let mut help_text = String::from_utf8_lossy(&help.stdout).into_owned();
+    help_text.push_str(&String::from_utf8_lossy(&help.stderr));
+    let missing = missing_bubblewrap_options(&help_text);
+    if !missing.is_empty() {
+        evidence.stderr = format!(
+            "bubblewrap is missing required option(s): {}",
+            missing.join(", ")
+        );
+        return Err(probe_failure(
+            "bwrap_version_incompatible",
+            "bubblewrap does not support the QWE sandbox contract",
+            &evidence,
+        ));
+    }
     let mut child = Command::new(&executable)
         .args([
             "--ro-bind",
@@ -133,6 +190,21 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
             }
         }
     }
+}
+
+fn missing_bubblewrap_options(help: &str) -> Vec<&'static str> {
+    REQUIRED_BUBBLEWRAP_OPTIONS
+        .iter()
+        .copied()
+        .filter(|option| {
+            !help.split_whitespace().any(|token| {
+                token == *option
+                    || token
+                        .strip_prefix(option)
+                        .is_some_and(|suffix| suffix.starts_with('='))
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -713,6 +785,23 @@ mod tests {
             apparmor_restrict_unprivileged_userns: Some("0".into()),
             container: false,
         }
+    }
+
+    #[test]
+    fn feature_probe_requires_every_production_bubblewrap_option() {
+        let complete = REQUIRED_BUBBLEWRAP_OPTIONS.join(" ");
+        assert!(missing_bubblewrap_options(&complete).is_empty());
+
+        let incomplete = REQUIRED_BUBBLEWRAP_OPTIONS
+            .iter()
+            .filter(|option| **option != "--json-status-fd")
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            missing_bubblewrap_options(&incomplete),
+            vec!["--json-status-fd"]
+        );
     }
 
     #[test]

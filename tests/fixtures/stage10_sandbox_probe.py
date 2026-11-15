@@ -748,6 +748,34 @@ def run_positive_probe(
         == b"NO_NEW_PRIVS_SETUID_DENIED"
     )
 
+    non_pty_tiocsti_script = (
+        "import ctypes,sys;"
+        "libc=ctypes.CDLL(None,use_errno=True);"
+        "value=ctypes.create_string_buffer(b'X');"
+        "result=libc.ioctl(0,0x5412,value);"
+        "error=ctypes.get_errno();"
+        "print(f'NON_PTY_TIOCSTI_RESULT={result}:{error}',flush=True);"
+        "sys.exit(0 if result == -1 and error == 1 else 97)"
+    )
+    non_pty_tiocsti = exec_command(
+        socket_path,
+        read_only_capability,
+        pane_id,
+        "/usr/bin/python3",
+        "-c",
+        non_pty_tiocsti_script,
+    )
+    assert_done(socket_path, read_only_capability, non_pty_tiocsti)
+    non_pty_tiocsti_events = events(
+        socket_path,
+        read_only_capability,
+        non_pty_tiocsti["command_id"],
+    )
+    assert (
+        decode_stream(non_pty_tiocsti_events, "stdout")
+        == b"NON_PTY_TIOCSTI_RESULT=-1:1\n"
+    )
+
     credential_script = (
         "import os,time;"
         "secret=os.read(3,16384);"
@@ -972,6 +1000,7 @@ def run_positive_probe(
         "network_isolation": "pass",
         "loopback": "pass",
         "setuid_no_new_privs": "pass",
+        "tiocsti_non_pty": "pass",
         "fd3_and_redaction": "pass",
         "cgroup": "pass",
         "pty_sandbox": "pass",
@@ -1289,6 +1318,69 @@ def run_backend_unavailable_probe(qwed, root):
         stop_qwed(process, socket_path)
 
 
+def run_backend_incompatible_probe(qwed, root):
+    socket_path = str(root / "qwed-incompatible-bwrap.sock")
+    log_path = root / "qwed-incompatible-bwrap.log"
+    fake_bwrap = root / "incompatible-bwrap"
+    fake_bwrap.write_text(
+        """#!/bin/sh
+if [ "${1:-}" = "--version" ]; then
+  printf 'bubblewrap 0.4.0\\n'
+  exit 0
+fi
+if [ "${1:-}" = "--help" ]; then
+  printf '%s\\n' \
+    '  --unshare-user' \
+    '  --ro-bind SRC DEST' \
+    '  --proc DEST' \
+    '  --dev DEST'
+  exit 0
+fi
+exit 1
+"""
+    )
+    fake_bwrap.chmod(0o700)
+    env = os.environ.copy()
+    env["QWE_BWRAP_PATH"] = str(fake_bwrap)
+    process = start_qwed(qwed, socket_path, log_path, env=env)
+    try:
+        management = Path(
+            f"{socket_path}.runtime/security.bootstrap"
+        ).read_text().strip()
+        principal_id = request_with_capability(
+            socket_path,
+            "SECURITY_BOOTSTRAP",
+            {},
+            management,
+        )["principal"]["principal_id"]
+        created = request(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": "stage10-incompatible-bwrap",
+                "program": "/bin/sh",
+                "args": ["-c", "exec /bin/sleep 120"],
+                "owner": OWNER,
+            },
+        )
+        result = issue_capability(
+            socket_path,
+            management,
+            principal_id,
+            created["pane_id"],
+            profile(root),
+        )
+        assert result.get("code") == "sandbox_backend_unavailable", result
+        assert (
+            result["details"]["reason"] == "bwrap_version_incompatible"
+        ), result
+        assert "missing required option" in result["details"]["diagnostics"][
+            "stderr"
+        ], result
+    finally:
+        stop_qwed(process, socket_path)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--qwed", required=True)
@@ -1301,7 +1393,7 @@ def main():
                 {
                     "case": (
                         "SANDBOX-004/SANDBOX-005/SANDBOX-006/"
-                        "SANDBOX-007/SANDBOX-008"
+                        "SANDBOX-007/SANDBOX-008/SANDBOX-009"
                     ),
                     "status": "skip",
                     "reason": "Linux and Bubblewrap are required",
@@ -1352,12 +1444,14 @@ def main():
         results["backend_probe_refresh"] = "pass"
         results["runtime_start_failure_details"] = "pass"
         results["diagnostics_visibility"] = "pass"
+        run_backend_incompatible_probe(args.qwed, root)
+        results["backend_feature_probe"] = "pass"
         print(
             json.dumps(
                 {
                     "case": (
                         "SANDBOX-004/SANDBOX-005/SANDBOX-006/"
-                        "SANDBOX-007/SANDBOX-008"
+                        "SANDBOX-007/SANDBOX-008/SANDBOX-009"
                     ),
                     "status": "pass",
                     **results,

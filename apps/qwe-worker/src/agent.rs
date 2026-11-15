@@ -2,8 +2,8 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use qwe_core::{
     AGENT_MAX_WAIT_MS, AGENT_OUTPUT_CHUNK_BYTES, AGENT_REPLAY_LIMIT_BYTES, AgentCommandId,
     AgentCommandState, AgentEvent, AgentEventKind, AgentOutputMode, AgentOutputStream, AgentSignal,
-    AgentWaitState, ProcessIdentity, SANDBOX_PROFILE_VERSION, SANDBOX_SECCOMP_STRICT_PROFILE,
-    SandboxNetworkMode, SandboxProfile, SandboxSeccompMode, SandboxWorkspaceMode,
+    AgentWaitState, ProcessIdentity, SANDBOX_PROFILE_VERSION, SandboxNetworkMode, SandboxProfile,
+    SandboxWorkspaceMode,
 };
 use qwe_protocol::ProtocolErrorBody;
 use qwe_runtime::process_identity;
@@ -1540,25 +1540,12 @@ fn spawn_sandboxed_process(
     }
     let program = resolve_program(program)?;
     let (status_read, status_write) = create_status_pipe()?;
-    let seccomp_fd = match &profile.seccomp {
-        SandboxSeccompMode::None => None,
-        SandboxSeccompMode::Named { profile: name } if name == SANDBOX_SECCOMP_STRICT_PROFILE => {
-            match crate::sandbox::create_seccomp_filter_fd(&profile.seccomp) {
-                Ok(descriptor) => Some(descriptor),
-                Err(failure) => {
-                    close_fd(status_read);
-                    close_fd(status_write);
-                    return Err(failure);
-                }
-            }
-        }
-        SandboxSeccompMode::Named { .. } => {
+    let seccomp_fd = match crate::sandbox::create_seccomp_filter_fd(&profile.seccomp) {
+        Ok(descriptor) => descriptor,
+        Err(failure) => {
             close_fd(status_read);
             close_fd(status_write);
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "only the named seccomp profile 'strict' is supported",
-            ));
+            return Err(failure);
         }
     };
     let invocation = match crate::sandbox::bubblewrap_invocation(
@@ -1568,7 +1555,7 @@ fn spawn_sandboxed_process(
         cwd,
         crate::sandbox::BubblewrapOptions {
             status_fd: status_write,
-            seccomp_fd,
+            seccomp_fd: Some(seccomp_fd),
             credential_present: credential_fd.is_some(),
             term: None,
         },
@@ -1577,9 +1564,7 @@ fn spawn_sandboxed_process(
         Err(failure) => {
             close_fd(status_read);
             close_fd(status_write);
-            if let Some(descriptor) = seccomp_fd {
-                close_fd(descriptor);
-            }
+            close_fd(seccomp_fd);
             return Err(failure);
         }
     };
@@ -1593,9 +1578,7 @@ fn spawn_sandboxed_process(
         Err(failure) => {
             close_fd(status_read);
             close_fd(status_write);
-            if let Some(descriptor) = seccomp_fd {
-                close_fd(descriptor);
-            }
+            close_fd(seccomp_fd);
             return Err(failure);
         }
     };
@@ -1604,9 +1587,7 @@ fn spawn_sandboxed_process(
         Err(failure) => {
             close_fd(status_read);
             close_fd(status_write);
-            if let Some(descriptor) = seccomp_fd {
-                close_fd(descriptor);
-            }
+            close_fd(seccomp_fd);
             return Err(failure);
         }
     };
@@ -1617,9 +1598,7 @@ fn spawn_sandboxed_process(
             close_fd(status_write);
             close_fd(release_read);
             close_fd(release_write);
-            if let Some(descriptor) = seccomp_fd {
-                close_fd(descriptor);
-            }
+            close_fd(seccomp_fd);
             return Err(failure);
         }
     };
@@ -1643,17 +1622,13 @@ fn spawn_sandboxed_process(
             close_fd(status_write);
             close_fd(release_read);
             close_fd(release_write);
-            if let Some(descriptor) = seccomp_fd {
-                close_fd(descriptor);
-            }
+            close_fd(seccomp_fd);
             return Err(failure);
         }
     };
     close_fd(release_read);
     close_fd(status_write);
-    if let Some(descriptor) = seccomp_fd {
-        close_fd(descriptor);
-    }
+    close_fd(seccomp_fd);
     if let Err(failure) = resources.attach_process(child.id()) {
         close_fd(status_read);
         close_fd(release_write);
