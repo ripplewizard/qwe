@@ -43,9 +43,9 @@ const ATTACH_WRITE_STALL: Duration = Duration::from_secs(5);
 #[command(version, about = "QWE durable Session worker")]
 struct Args {
     #[arg(long, hide = true)]
-    worker_socket: PathBuf,
+    worker_socket: Option<PathBuf>,
     #[arg(long, hide = true)]
-    worker_session_id: String,
+    worker_session_id: Option<String>,
     #[arg(long, hide = true)]
     worker_pane_id: Option<String>,
     #[arg(long, hide = true, default_value = "sh")]
@@ -66,6 +66,8 @@ struct Args {
     worker_tasks_max: Option<u64>,
     #[arg(long, hide = true)]
     worker_credential_fd: Option<i32>,
+    #[arg(long, hide = true)]
+    sandbox_probe_profile: Option<String>,
     #[arg(long, hide = true)]
     worker_systemd_scope: bool,
     #[arg(long, hide = true)]
@@ -1559,8 +1561,12 @@ fn serve_worker(stream: UnixStream, session: &Arc<WorkerSession>, session_id: &s
 }
 
 fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
-    let socket = args.worker_socket;
-    let session_id = args.worker_session_id;
+    let socket = args
+        .worker_socket
+        .ok_or("--worker-socket is required for worker mode")?;
+    let session_id = args
+        .worker_session_id
+        .ok_or("--worker-session-id is required for worker mode")?;
     let has_explicit_pane_id = args.worker_pane_id.is_some();
     let pane_id = args
         .worker_pane_id
@@ -1625,8 +1631,28 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn run_sandbox_probe_cli(profile_json: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let profile = serde_json::from_str::<qwe_core::SandboxProfile>(profile_json)
+        .map_err(|failure| format!("invalid sandbox probe profile: {failure}"))?;
+    let result = sandbox_probe(&json!({"sandbox_profile": profile}));
+    let response = ResponseEnvelope {
+        version: PROTOCOL_VERSION,
+        request_id: "sandbox-probe".into(),
+        result,
+    };
+    let mut stdout = std::io::stdout().lock();
+    serde_json::to_writer(&mut stdout, &response)?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    run_worker(Args::parse())
+    let args = Args::parse();
+    if let Some(profile) = args.sandbox_probe_profile.as_deref() {
+        return run_sandbox_probe_cli(profile);
+    }
+    run_worker(args)
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

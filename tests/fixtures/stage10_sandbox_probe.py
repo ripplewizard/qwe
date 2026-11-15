@@ -326,6 +326,25 @@ def run_positive_probe(
         assert audit.get("landlock_abi") is None, audit
     read_only_capability = read_only["token"]
 
+    sandboxed_pane = request_with_capability(
+        socket_path,
+        "SECURITY_CAPABILITY_ISSUE",
+        {
+            "principal_id": principal_id,
+            "operation": "sandboxed_pane",
+            "scope": {"kind": "session", "session_id": SESSION_ID},
+            "sandbox_profile": read_only_profile,
+            "ttl_ms": 60000,
+        },
+        management,
+    )
+    if audit["fd_bind"]:
+        assert sandboxed_pane.get("token"), sandboxed_pane
+        assert sandboxed_pane["sandbox_audit"]["fd_bind"] is True, sandboxed_pane
+    else:
+        assert sandboxed_pane.get("code") == "sandbox_backend_unavailable", sandboxed_pane
+        assert sandboxed_pane["details"]["reason"] == "fd_bind_unavailable", sandboxed_pane
+
     landlock_off_profile = profile(workspace, landlock={"mode": "off"})
     landlock_off = issue_capability(
         socket_path,
@@ -1445,6 +1464,7 @@ def run_positive_probe(
 
     return {
         "profile_authorization": "pass",
+        "sandboxed_pane_capability": "pass",
         "pane_input_trust_floor": "pass",
         "fd_bind_probe": "pass",
         "strict_seccomp": "pass",

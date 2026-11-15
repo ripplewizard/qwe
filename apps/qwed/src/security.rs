@@ -113,12 +113,21 @@ pub fn validate_sandbox_grant(
     sandbox_profile: Option<&SandboxProfile>,
 ) -> Result<(), ProtocolErrorBody> {
     let Some(profile) = sandbox_profile else {
+        if operation == CapabilityOperation::SandboxedPane {
+            return Err(error(
+                "invalid_request",
+                "sandboxed_pane capabilities require a sandbox_profile",
+            ));
+        }
         return Ok(());
     };
-    if operation != CapabilityOperation::AgentExec {
+    if !matches!(
+        operation,
+        CapabilityOperation::AgentExec | CapabilityOperation::SandboxedPane
+    ) {
         return Err(error(
             "invalid_request",
-            "sandbox_profile is only valid for agent_exec capabilities",
+            "sandbox_profile is only valid for agent_exec or sandboxed_pane capabilities",
         ));
     }
     if profile.version != SANDBOX_PROFILE_VERSION {
@@ -482,10 +491,14 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_profile_requires_agent_exec_capability() {
+    fn sandbox_profile_is_limited_to_sandbox_capabilities() {
         let failure =
             validate_sandbox_grant(CapabilityOperation::AgentCommandRead, Some(&profile()))
                 .unwrap_err();
+        assert_eq!(failure.code, "invalid_request");
+
+        validate_sandbox_grant(CapabilityOperation::SandboxedPane, Some(&profile())).unwrap();
+        let failure = validate_sandbox_grant(CapabilityOperation::SandboxedPane, None).unwrap_err();
         assert_eq!(failure.code, "invalid_request");
     }
 

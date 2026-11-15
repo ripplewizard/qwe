@@ -1128,6 +1128,7 @@ bubblewrap-poc:
 sandbox-pane-poc:
     cargo test -p qwe-worker --test bubblewrap_contract -- --nocapture
     cargo test -p qwe-worker --test sandbox_pane_init_contract -- --nocapture
+    cargo test -p qwe-worker --test sandbox_probe_cli_contract -- --nocapture
     cargo test -p qwe-worker --bin qwe-worker \
       strict_seccomp_nested_bubblewrap_gate -- --nocapture
     cargo test -p qwe-worker --bin qwe-worker \

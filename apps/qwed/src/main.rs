@@ -47,6 +47,7 @@ const WORKER_CALL_TIMEOUT: Duration = Duration::from_millis(500);
 const WORKER_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const WORKER_AGENT_WAIT_TIMEOUT: Duration = Duration::from_secs(32);
 const WORKER_MAINTENANCE_TIMEOUT: Duration = Duration::from_secs(5);
+const SANDBOX_PROBE_TIMEOUT: Duration = Duration::from_secs(6);
 const SAFETY_SCAN_INTERVAL: Duration = Duration::from_secs(2);
 const SECURITY_RECONCILE_INTERVAL: Duration = Duration::from_millis(250);
 const HISTORY_PRUNE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -3822,6 +3823,57 @@ fn probe_sandbox_worker(
         WORKER_REQUEST_TIMEOUT,
     )
     .map_err(map_sandbox_probe_failure)?;
+    sandbox_audit_from_probe(profile, &result)
+}
+
+fn probe_sandbox_profile(
+    context: &Context,
+    profile: &SandboxProfile,
+) -> Result<SandboxAuditRecord, ProtocolErrorBody> {
+    let probe_pane_id = PaneId::new();
+    let probe_session_id = format!("sandbox-probe-{probe_pane_id}");
+    let (handle, _) = spawn_worker(
+        context,
+        &probe_session_id,
+        &probe_pane_id,
+        "/usr/bin/true",
+        &[],
+        &ResourcePolicy::empty(),
+        None,
+    )?;
+    let result = handle
+        .client
+        .as_ref()
+        .ok_or_else(|| error("worker_unreachable", "sandbox probe worker is unreachable"))
+        .and_then(|client| {
+            client
+                .call(
+                    "SANDBOX_PROBE",
+                    json!({"sandbox_profile": profile}),
+                    SANDBOX_PROBE_TIMEOUT,
+                )
+                .map_err(map_sandbox_probe_failure)
+        });
+    if let Some(client) = &handle.client {
+        let _ = client.call(
+            "SESSION_CLOSE",
+            json!({"session_id": probe_session_id}),
+            WORKER_MAINTENANCE_TIMEOUT,
+        );
+    }
+    unsafe {
+        libc::kill(handle.worker_pid as libc::pid_t, libc::SIGTERM);
+    }
+    cleanup_worker_scope(&handle);
+    let _ = fs::remove_file(&handle.socket);
+    let _ = fs::remove_file(&handle.attach_socket);
+    sandbox_audit_from_probe(profile, &result?)
+}
+
+fn sandbox_audit_from_probe(
+    profile: &SandboxProfile,
+    result: &Value,
+) -> Result<SandboxAuditRecord, ProtocolErrorBody> {
     let backend_path = result
         .get("path")
         .and_then(Value::as_str)
@@ -3865,10 +3917,7 @@ fn map_sandbox_probe_failure(failure: ProtocolErrorBody) -> ProtocolErrorBody {
     } else {
         ProtocolErrorBody {
             code: "sandbox_backend_unavailable".into(),
-            message: format!(
-                "refusing sandboxed agent_exec capability: {}",
-                failure.message
-            ),
+            message: format!("refusing sandboxed capability: {}", failure.message),
             details: failure.details,
         }
     }
@@ -3949,19 +3998,40 @@ fn security_capability_issue(
         ));
     }
     let sandbox_grant = if let Some(profile) = &sandbox_profile {
-        let pane_id = match &scope {
-            CapabilityScope::Pane { pane_id } => pane_id,
-            _ => {
-                return Err(error(
-                    "invalid_request",
-                    "sandbox_profile requires a Pane-scoped agent_exec capability",
-                ));
+        let audit = match operation {
+            CapabilityOperation::AgentExec => {
+                let pane_id = match &scope {
+                    CapabilityScope::Pane { pane_id } => pane_id,
+                    _ => {
+                        return Err(error(
+                            "invalid_request",
+                            "agent_exec sandbox_profile requires a Pane scope",
+                        ));
+                    }
+                };
+                probe_sandbox_worker(context, pane_id, profile)
             }
+            CapabilityOperation::SandboxedPane => probe_sandbox_profile(context, profile),
+            _ => unreachable!("sandbox profile validation rejected other operations"),
         };
+        let audit = audit.map_err(|failure| redact_sandbox_error(failure, diagnostics_trusted))?;
+        if operation == CapabilityOperation::SandboxedPane && audit.fd_bind != Some(true) {
+            let failure = error(
+                "sandbox_backend_unavailable",
+                "sandboxed Pane requires Bubblewrap FD-binding support",
+            )
+            .with_details(
+                "fd_bind_unavailable",
+                json!({
+                    "required_feature": "--bind-fd/--ro-bind-fd",
+                    "backend_version": audit.backend_version
+                }),
+            );
+            return Err(redact_sandbox_error(failure, diagnostics_trusted));
+        }
         Some(security::SandboxCapabilityGrant {
             profile: profile.clone(),
-            audit: probe_sandbox_worker(context, pane_id, profile)
-                .map_err(|failure| redact_sandbox_error(failure, diagnostics_trusted))?,
+            audit,
         })
     } else {
         None
