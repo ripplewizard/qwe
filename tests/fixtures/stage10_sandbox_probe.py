@@ -30,6 +30,11 @@ COMMAND_SECRET = b"stage10-sandbox-credential-4d1e"
 HOST_ENV_SECRET = "stage10-host-environment-secret-28c9"
 
 
+def landlock_available():
+    lsm = Path("/sys/kernel/security/lsm")
+    return lsm.exists() and "landlock" in lsm.read_text().split(",")
+
+
 def issue_capability(socket_path, management, principal_id, pane_id, profile=None):
     payload = {
         "principal_id": principal_id,
@@ -239,8 +244,7 @@ def run_positive_probe(
     assert len(audit["profile_hash"]) == 64, audit
     assert audit["probe_time_ms"] > 0, audit
     assert len(audit["seccomp_profile_hash"]) == 64, audit
-    lsm = Path("/sys/kernel/security/lsm")
-    landlock_expected = lsm.exists() and "landlock" in lsm.read_text().split(",")
+    landlock_expected = landlock_available()
     if landlock_expected:
         assert audit.get("landlock_abi", 0) >= 1, audit
     else:
@@ -1421,6 +1425,7 @@ exit 1
                 "owner": OWNER,
             },
         )
+        assert created.get("running") is True, created
         result = issue_capability(
             socket_path,
             management,
@@ -1439,6 +1444,66 @@ exit 1
         stop_qwed(process, socket_path)
 
 
+def run_sandbox_init_missing_probe(qwed, root):
+    if not landlock_available():
+        return False
+    qwed = Path(qwed).resolve()
+    bin_dir = root / "init-bin"
+    bin_dir.mkdir()
+    for source in (
+        qwed,
+        qwed.with_name("qwe-worker"),
+        qwed.with_name("qwe-session-exec"),
+    ):
+        shutil.copy2(source, bin_dir / source.name)
+    assert not (bin_dir / "qwe-sandbox-init").exists()
+
+    socket_path = str(root / "init.sock")
+    log_path = root / "init.log"
+    env = os.environ.copy()
+    env["QWE_BWRAP_PATH"] = shutil.which("bwrap")
+    process = start_qwed(bin_dir / "qwed", socket_path, log_path, env=env)
+    try:
+        management = Path(
+            f"{socket_path}.runtime/security.bootstrap"
+        ).read_text().strip()
+        principal_id = request_with_capability(
+            socket_path,
+            "SECURITY_BOOTSTRAP",
+            {},
+            management,
+        )["principal"]["principal_id"]
+        created = request(
+            socket_path,
+            "SESSION_CREATE",
+            {
+                "session_id": "stage10-missing-sandbox-init",
+                "program": "/bin/sh",
+                "args": ["-c", "exec /bin/sleep 120"],
+                "owner": OWNER,
+            },
+        )
+        assert created.get("running") is True, created
+        result = issue_capability(
+            socket_path,
+            management,
+            principal_id,
+            created["pane_id"],
+            profile(root),
+        )
+        assert result.get("code") == "sandbox_backend_unavailable", result
+        assert (
+            result["details"]["reason"] == "sandbox_init_unavailable"
+        ), result
+        assert (
+            result["details"]["diagnostics"]["failed_stage"]
+            == "landlock_init"
+        ), result
+    finally:
+        stop_qwed(process, socket_path)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--qwed", required=True)
@@ -1452,7 +1517,7 @@ def main():
                     "case": (
                         "SANDBOX-004/SANDBOX-005/SANDBOX-006/"
                         "SANDBOX-007/SANDBOX-008/SANDBOX-009/"
-                        "SANDBOX-010/SANDBOX-011"
+                        "SANDBOX-010/SANDBOX-011/SANDBOX-012"
                     ),
                     "status": "skip",
                     "reason": "Linux and Bubblewrap are required",
@@ -1505,13 +1570,18 @@ def main():
         results["diagnostics_visibility"] = "pass"
         run_backend_incompatible_probe(args.qwed, root)
         results["backend_feature_probe"] = "pass"
+        results["sandbox_init_fail_closed"] = (
+            "pass"
+            if run_sandbox_init_missing_probe(args.qwed, root)
+            else "unavailable"
+        )
         print(
             json.dumps(
                 {
                     "case": (
                         "SANDBOX-004/SANDBOX-005/SANDBOX-006/"
                         "SANDBOX-007/SANDBOX-008/SANDBOX-009/"
-                        "SANDBOX-010/SANDBOX-011"
+                        "SANDBOX-010/SANDBOX-011/SANDBOX-012"
                     ),
                     "status": "pass",
                     **results,

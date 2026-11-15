@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io;
 use std::io::{Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -110,6 +110,31 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
             &evidence,
         ));
     }
+    let landlock_abi = match qwe_runtime::landlock_abi_version() {
+        Ok(version) => Some(version),
+        Err(qwe_runtime::LandlockError::Unsupported)
+        | Err(qwe_runtime::LandlockError::UnsupportedArchitecture) => None,
+        Err(failure) => {
+            evidence.stderr = sanitize_stderr(failure.to_string().as_bytes());
+            evidence.landlock_abi = None;
+            return Err(probe_failure(
+                "landlock_probe_failed",
+                "failed to probe Landlock defense in depth",
+                &evidence,
+            ));
+        }
+    };
+    evidence.landlock_abi = landlock_abi;
+    if landlock_abi.is_some()
+        && let Err(failure) = sandbox_init_for_landlock()
+    {
+        evidence.stderr = sanitize_stderr(failure.to_string().as_bytes());
+        return Err(probe_failure(
+            "sandbox_init_unavailable",
+            "Landlock is available but qwe-sandbox-init is not usable",
+            &evidence,
+        ));
+    }
     let mut child = Command::new(&executable)
         .args([
             "--ro-bind",
@@ -155,7 +180,7 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
                     version: evidence.backend_version,
                     path: executable,
                     probe_time_ms: evidence.probe_time_ms,
-                    landlock_abi: qwe_runtime::landlock_abi_version().ok(),
+                    landlock_abi,
                 });
             }
             Ok(Some(status)) => {
@@ -194,6 +219,36 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
     }
 }
 
+pub fn sandbox_init_for_landlock() -> io::Result<Option<PathBuf>> {
+    match qwe_runtime::landlock_abi_version() {
+        Ok(_) => {
+            let init = std::env::current_exe()?.with_file_name("qwe-sandbox-init");
+            let metadata = fs::metadata(&init).map_err(|failure| {
+                io::Error::new(
+                    failure.kind(),
+                    format!(
+                        "required Landlock helper '{}' is unavailable: {failure}",
+                        init.display()
+                    ),
+                )
+            })?;
+            if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "required Landlock helper '{}' is not executable",
+                        init.display()
+                    ),
+                ));
+            }
+            Ok(Some(init))
+        }
+        Err(qwe_runtime::LandlockError::Unsupported)
+        | Err(qwe_runtime::LandlockError::UnsupportedArchitecture) => Ok(None),
+        Err(failure) => Err(io::Error::other(failure)),
+    }
+}
+
 fn missing_bubblewrap_options(help: &str) -> Vec<&'static str> {
     REQUIRED_BUBBLEWRAP_OPTIONS
         .iter()
@@ -218,6 +273,7 @@ struct ProbeEvidence {
     max_user_namespaces: Option<String>,
     unprivileged_userns_clone: Option<String>,
     apparmor_restrict_unprivileged_userns: Option<String>,
+    landlock_abi: Option<u32>,
     container: bool,
 }
 
@@ -235,6 +291,7 @@ impl ProbeEvidence {
             apparmor_restrict_unprivileged_userns: read_sysctl(
                 "/proc/sys/kernel/apparmor_restrict_unprivileged_userns",
             ),
+            landlock_abi: None,
             container: Path::new("/.dockerenv").exists()
                 || Path::new("/run/.containerenv").exists(),
         }
@@ -249,6 +306,7 @@ fn probe_failure(
     let failed_stage = match reason {
         "bwrap_missing" => "resolve",
         "bwrap_version_incompatible" => "version",
+        "landlock_probe_failed" | "sandbox_init_unavailable" => "landlock_init",
         "uid_map_denied" => "uid_map",
         "mount_denied" => "mount",
         "userns_disabled" | "userns_create_denied" => "userns",
@@ -266,6 +324,7 @@ fn probe_failure(
                 "environment": if evidence.container { "container" } else { "host" },
                 "failed_stage": failed_stage,
                 "target": mount_target(&evidence.stderr),
+                "landlock_abi": evidence.landlock_abi,
                 "sysctls": {
                     "max_user_namespaces": evidence.max_user_namespaces,
                     "unprivileged_userns_clone": evidence.unprivileged_userns_clone,
@@ -812,6 +871,7 @@ mod tests {
             max_user_namespaces: Some("1000".into()),
             unprivileged_userns_clone: Some("1".into()),
             apparmor_restrict_unprivileged_userns: Some("0".into()),
+            landlock_abi: Some(1),
             container: false,
         }
     }
@@ -859,6 +919,18 @@ mod tests {
         assert_eq!(classify_probe_failure(&evidence), "mount_denied");
         let failure = probe_failure("mount_denied", "mount failed", &evidence);
         assert_eq!(failure.details.diagnostics["target"], "/proc");
+    }
+
+    #[test]
+    fn landlock_init_failure_reports_the_init_stage() {
+        let failure = probe_failure(
+            "sandbox_init_unavailable",
+            "Landlock helper is missing",
+            &evidence("required Landlock helper is unavailable"),
+        );
+        assert_eq!(failure.details.reason, "sandbox_init_unavailable");
+        assert_eq!(failure.details.diagnostics["failed_stage"], "landlock_init");
+        assert_eq!(failure.details.diagnostics["landlock_abi"], 1);
     }
 
     #[test]
