@@ -1,16 +1,20 @@
 mod capabilities;
 mod credentials;
+mod security;
 mod worker_client;
 
 use capabilities::{matrix as capability_matrix, merge_resource_policy, resolve_resource_policy};
 use clap::Parser;
 use credentials::CredentialProvider;
 use qwe_core::{
+    AGENT_MAX_WAIT_MS, AgentCommandId, AgentCommandRecord, AgentCommandState, AgentOutputMode,
     AttachmentAuthority, AttachmentAuthorityState, AttachmentOperation, AuthorityCredentials,
-    DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_LEASE_TTL_MS, PaneId, PaneKind, PaneRecord,
-    PaneSpec, PaneWorkerRecord, ProcessIdentity, ReclaimTokenHash, ReconciliationDisposition,
-    ResourcePolicy, ResourceProfile, ResourceScopeId, SessionRecord, TaskId, TaskRecord, TaskState,
-    WorkerHealth, tile_pane_specs,
+    CapabilityOperation, CapabilityScope, DEFAULT_CAPABILITY_TTL_MS, DEFAULT_FREEZE_GRACE_MS,
+    DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_FREEZE_GRACE_MS, MAX_LEASE_TTL_MS, PaneId, PaneKind,
+    PaneRecord, PaneSpec, PaneWorkerRecord, PrincipalId, ProcessIdentity, ReclaimTokenHash,
+    ReconciliationDisposition, ResourcePolicy, ResourceProfile, ResourceScopeId,
+    RevocationSeverity, SandboxProfile, SessionRecord, TaskId, TaskRecord, TaskState, WorkerHealth,
+    tile_pane_specs,
 };
 use qwe_protocol::{
     ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope,
@@ -41,8 +45,10 @@ use zeroize::Zeroizing;
 
 const WORKER_CALL_TIMEOUT: Duration = Duration::from_millis(500);
 const WORKER_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const WORKER_AGENT_WAIT_TIMEOUT: Duration = Duration::from_secs(32);
 const WORKER_MAINTENANCE_TIMEOUT: Duration = Duration::from_secs(5);
 const SAFETY_SCAN_INTERVAL: Duration = Duration::from_secs(2);
+const SECURITY_RECONCILE_INTERVAL: Duration = Duration::from_millis(250);
 const HISTORY_PRUNE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const WORKER_START_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_CONTROL_INPUT_BYTES: usize = 1024 * 1024;
@@ -77,6 +83,7 @@ struct Context {
     creation_lock: Mutex<()>,
     idempotency_lock: Mutex<()>,
     attachment_lock: Mutex<()>,
+    security_lock: Mutex<()>,
     credentials: CredentialProvider,
     _runtime_lock: File,
 }
@@ -488,6 +495,326 @@ fn call_pane_worker(
     }
 }
 
+fn agent_command_state(value: &Value) -> Result<AgentCommandState, ProtocolErrorBody> {
+    match value.as_str() {
+        Some("starting") => Ok(AgentCommandState::Starting),
+        Some("running") => Ok(AgentCommandState::Running),
+        Some("idle") => Ok(AgentCommandState::Idle),
+        Some("done") => Ok(AgentCommandState::Done),
+        Some("failed") => Ok(AgentCommandState::Failed),
+        Some("lost") => Ok(AgentCommandState::Lost),
+        _ => Err(error(
+            "worker_contract",
+            "agent command status has an invalid state",
+        )),
+    }
+}
+
+fn agent_command_record(
+    pane: &PaneRecord,
+    status: &Value,
+) -> Result<AgentCommandRecord, ProtocolErrorBody> {
+    if status.get("session_id").and_then(Value::as_str) != Some(pane.session_id.as_str()) {
+        return Err(error(
+            "worker_contract",
+            "agent command reported the wrong SessionId",
+        ));
+    }
+    let pane_id = pane.id.to_string();
+    if status.get("pane_id").and_then(Value::as_str) != Some(pane_id.as_str()) {
+        return Err(error(
+            "worker_contract",
+            "agent command reported the wrong PaneId",
+        ));
+    }
+    let id = status
+        .get("command_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("worker_contract", "agent command has no command_id"))?
+        .parse()
+        .map_err(|failure: uuid::Error| error("worker_contract", failure.to_string()))?;
+    let owner = status
+        .get("owner")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("worker_contract", "agent command has no owner"))?
+        .to_string();
+    let worker_identity = serde_json::from_value(
+        status
+            .get("worker_identity")
+            .cloned()
+            .ok_or_else(|| error("worker_contract", "agent command has no worker identity"))?,
+    )
+    .map_err(|failure| error("worker_contract", failure.to_string()))?;
+    let process_identity = status
+        .get("process_identity")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|failure| error("worker_contract", failure.to_string()))?;
+    let output_mode = match status.get("output_mode").and_then(Value::as_str) {
+        Some("pty_merged") => AgentOutputMode::PtyMerged,
+        Some("pipe_split") => AgentOutputMode::PipeSplit,
+        _ => {
+            return Err(error(
+                "worker_contract",
+                "agent command has an invalid output mode",
+            ));
+        }
+    };
+    Ok(AgentCommandRecord {
+        id,
+        session_id: pane.session_id.clone(),
+        pane_id: pane.id.clone(),
+        owner,
+        principal_id: qwe_core::PrincipalId::local_root(),
+        creator_capability_id: None,
+        worker_identity,
+        process_identity,
+        state: agent_command_state(
+            status
+                .get("state")
+                .ok_or_else(|| error("worker_contract", "agent command has no state"))?,
+        )?,
+        output_mode,
+        created_at_ms: status
+            .get("created_at_ms")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| error("worker_contract", "agent command has no created_at_ms"))?,
+        updated_at_ms: status
+            .get("updated_at_ms")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| error("worker_contract", "agent command has no updated_at_ms"))?,
+        exit_code: status
+            .get("exit_code")
+            .and_then(Value::as_i64)
+            .and_then(|value| i32::try_from(value).ok()),
+        exit_signal: status
+            .get("exit_signal")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    })
+}
+
+fn persist_agent_status(
+    context: &Context,
+    pane: &PaneRecord,
+    status: &Value,
+) -> Result<AgentCommandRecord, ProtocolErrorBody> {
+    let mut record = agent_command_record(pane, status)?;
+    let store = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(existing) = store
+        .find_agent_command(&record.id)
+        .map_err(storage_error)?
+    {
+        record.principal_id = existing.principal_id;
+        record.creator_capability_id = existing.creator_capability_id;
+        drop(store);
+        context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .update_agent_command_status(&record)
+            .map_err(storage_error)?;
+    } else {
+        drop(store);
+        context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .upsert_agent_command(&record)
+            .map_err(storage_error)?;
+    }
+    Ok(record)
+}
+
+fn persist_agent_exec_status(
+    context: &Context,
+    pane: &PaneRecord,
+    status: &Value,
+    grant: &security::SecurityGrant,
+) -> Result<AgentCommandRecord, ProtocolErrorBody> {
+    let mut record = agent_command_record(pane, status)?;
+    record.principal_id = grant.principal.id.clone();
+    record.creator_capability_id = Some(grant.capability.id.clone());
+    context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .upsert_agent_command(&record)
+        .map_err(storage_error)?;
+    Ok(record)
+}
+
+fn find_agent_command(
+    context: &Context,
+    command_id: &AgentCommandId,
+) -> Result<AgentCommandRecord, ProtocolErrorBody> {
+    context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .find_agent_command(command_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("not_found", "agent command was not found"))
+}
+
+fn mark_agent_command_lost(
+    context: &Context,
+    command: &AgentCommandRecord,
+) -> Result<AgentCommandRecord, ProtocolErrorBody> {
+    let mut lost = command.clone();
+    lost.state = AgentCommandState::Lost;
+    lost.updated_at_ms = now_ms();
+    context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .upsert_agent_command(&lost)
+        .map_err(storage_error)?;
+    Ok(lost)
+}
+
+fn sandbox_json_for_command(
+    context: &Context,
+    command: &AgentCommandRecord,
+) -> Result<Option<Value>, ProtocolErrorBody> {
+    let Some(capability_id) = command.creator_capability_id.as_ref() else {
+        return Ok(None);
+    };
+    let store = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let profile = store
+        .find_capability(capability_id)
+        .map_err(storage_error)?
+        .and_then(|capability| capability.sandbox_profile);
+    Ok(profile.map(|profile| {
+        json!({
+            "enforced": true,
+            "profile": profile,
+            "wrapper_pid": command.process_identity.as_ref().map(|identity| identity.pid),
+            "child_pid": null
+        })
+    }))
+}
+
+fn agent_record_json(command: &AgentCommandRecord, sandbox: Option<&Value>) -> Value {
+    json!({
+        "command_id": command.id,
+        "session_id": command.session_id,
+        "pane_id": command.pane_id,
+        "owner": command.owner,
+        "worker_identity": command.worker_identity,
+        "process_identity": command.process_identity,
+        "state": command.state.as_str(),
+        "output_mode": command.output_mode.as_str(),
+        "created_at_ms": command.created_at_ms,
+        "updated_at_ms": command.updated_at_ms,
+        "exit_code": command.exit_code,
+        "exit_signal": command.exit_signal,
+        "sandbox": sandbox
+    })
+}
+
+fn agent_command_operation(
+    context: &Context,
+    operation: &str,
+    payload: &Value,
+    auth_context: Option<&qwe_protocol::AuthContext>,
+) -> Result<Value, ProtocolErrorBody> {
+    let command_id: AgentCommandId = payload
+        .get("command_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("invalid_request", "missing command_id"))?
+        .parse()
+        .map_err(|failure: uuid::Error| error("invalid_request", failure.to_string()))?;
+    let command = find_agent_command(context, &command_id)?;
+    {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if operation == "AGENT_COMMAND_TERMINATE" {
+            security::require_command_terminate(&store, auth_context, &command, now_ms())?;
+        } else {
+            security::require_command_read(&store, auth_context, &command, now_ms())?;
+        }
+    }
+    let pane_key = command.pane_id.to_string();
+    let timeout = if operation == "AGENT_COMMAND_WAIT_IDLE" {
+        WORKER_AGENT_WAIT_TIMEOUT
+    } else {
+        WORKER_REQUEST_TIMEOUT
+    };
+    let mut worker_payload = payload.clone();
+    if operation == "AGENT_COMMAND_WAIT_IDLE" {
+        let timeout_ms = payload
+            .get("timeout_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(AGENT_MAX_WAIT_MS)
+            .min(AGENT_MAX_WAIT_MS);
+        worker_payload["timeout_ms"] = json!(timeout_ms);
+    }
+    let result = call_pane_worker(context, &pane_key, operation, worker_payload, timeout);
+    let value = match result {
+        Ok(value) => value,
+        Err(failure) if matches!(failure.code.as_str(), "not_found" | "terminal_lost") => {
+            let lost = mark_agent_command_lost(context, &command)?;
+            let sandbox = sandbox_json_for_command(context, &lost)?;
+            return Ok(match operation {
+                "AGENT_COMMAND_STATUS" | "AGENT_COMMAND_TERMINATE" => {
+                    agent_record_json(&lost, sandbox.as_ref())
+                }
+                "AGENT_COMMAND_WAIT_IDLE" => json!({
+                    "command_id": lost.id,
+                    "state": "lost",
+                    "wait_state": "lost",
+                    "exit_code": lost.exit_code,
+                    "exit_signal": lost.exit_signal,
+                    "timed_out": false,
+                    "sandbox": sandbox
+                }),
+                "AGENT_COMMAND_EVENTS" => json!({
+                    "command_id": lost.id,
+                    "state": "lost",
+                    "cursor": payload.get("cursor").and_then(Value::as_u64).unwrap_or(0),
+                    "next_cursor": payload.get("cursor").and_then(Value::as_u64).unwrap_or(0),
+                    "replay_from": null,
+                    "replay_gap": {"reason": "command_state_lost"},
+                    "events": [],
+                    "sandbox": sandbox
+                }),
+                _ => agent_record_json(&lost, sandbox.as_ref()),
+            });
+        }
+        Err(failure) => return Err(failure),
+    };
+    let pane = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .find_pane(&command.pane_id)
+        .map_err(storage_error)?
+        .ok_or_else(|| error("not_found", "Pane not found"))?;
+    if operation == "AGENT_COMMAND_STATUS" || operation == "AGENT_COMMAND_TERMINATE" {
+        persist_agent_status(context, &pane, &value)?;
+    } else if let Ok(status) = call_pane_worker(
+        context,
+        &pane_key,
+        "AGENT_COMMAND_STATUS",
+        json!({"command_id": command.id}),
+        WORKER_REQUEST_TIMEOUT,
+    ) {
+        persist_agent_status(context, &pane, &status)?;
+    }
+    Ok(value)
+}
+
 fn connect_existing_worker(
     context: &Context,
     session_id: &str,
@@ -532,7 +859,25 @@ fn spawn_worker(
     let _ = fs::remove_file(&attach_socket);
     let executable =
         worker_executable().map_err(|failure| error("internal", failure.to_string()))?;
-    let mut command = Command::new(executable);
+    let mut command = if context.resource_support.hard_scope_available() {
+        let mut command = Command::new("/usr/bin/systemd-run");
+        command.args([
+            "--user",
+            "--scope",
+            "--quiet",
+            "--collect",
+            "--unit",
+            &qwe_runtime::pane_scope_unit(&pane_key),
+            "--property=MemoryAccounting=yes",
+            "--property=TasksAccounting=yes",
+            "--property=CPUAccounting=yes",
+            "--property=Delegate=yes",
+        ]);
+        command.arg("--").arg(executable);
+        command
+    } else {
+        Command::new(executable)
+    };
     command
         .arg("--worker-socket")
         .arg(&socket)
@@ -544,12 +889,12 @@ fn spawn_worker(
         .arg(program)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     for argument in arguments {
         command.arg("--worker-arg").arg(argument);
     }
     if context.resource_support.hard_scope_available() {
-        command.arg("--worker-systemd-scope");
+        command.arg("--worker-existing-scope");
     }
     if let Some(seconds) = resource_policy.cpu_seconds {
         command.arg("--worker-cpu-seconds").arg(seconds.to_string());
@@ -647,6 +992,81 @@ fn credential_pipe(secret: &[u8]) -> std::io::Result<OwnedFd> {
     }
     drop(writer);
     Ok(unsafe { OwnedFd::from_raw_fd(descriptors[0]) })
+}
+
+fn start_command_credential_broker(runtime_dir: &Path, secret: &[u8]) -> std::io::Result<PathBuf> {
+    let credential_fd = credential_pipe(secret)?;
+    let mut random = [0_u8; 8];
+    getrandom::fill(&mut random)
+        .map_err(|failure| std::io::Error::other(format!("random source failed: {failure}")))?;
+    let path = runtime_dir.join(format!(
+        "cmd-cred-{}-{}.sock",
+        std::process::id(),
+        hex_encode(&random)
+    ));
+    let _ = fs::remove_file(&path);
+    let listener = UnixListener::bind(&path)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    listener.set_nonblocking(true)?;
+    let cleanup_path = path.clone();
+    thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let _ = send_descriptor(&stream, credential_fd.as_raw_fd());
+                    break;
+                }
+                Err(failure) if failure.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = fs::remove_file(cleanup_path);
+    });
+    Ok(path)
+}
+
+fn send_descriptor(
+    stream: &UnixStream,
+    descriptor: std::os::unix::io::RawFd,
+) -> std::io::Result<()> {
+    let byte = *b"C";
+    let mut iovec = libc::iovec {
+        iov_base: byte.as_ptr().cast_mut().cast(),
+        iov_len: byte.len(),
+    };
+    let control_len =
+        unsafe { libc::CMSG_SPACE(std::mem::size_of::<libc::c_int>() as u32) } as usize;
+    let mut control = vec![0_u8; control_len];
+    let mut message = unsafe { std::mem::zeroed::<libc::msghdr>() };
+    message.msg_iov = &mut iovec;
+    message.msg_iovlen = 1;
+    message.msg_control = control.as_mut_ptr().cast();
+    message.msg_controllen = control.len() as _;
+    let header = unsafe { libc::CMSG_FIRSTHDR(&message) };
+    if header.is_null() {
+        return Err(std::io::Error::other(
+            "failed to build descriptor control message",
+        ));
+    }
+    unsafe {
+        (*header).cmsg_level = libc::SOL_SOCKET;
+        (*header).cmsg_type = libc::SCM_RIGHTS;
+        (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<libc::c_int>() as u32) as _;
+        std::ptr::write(
+            libc::CMSG_DATA(header).cast::<libc::c_int>(),
+            descriptor as libc::c_int,
+        );
+        message.msg_controllen = (*header).cmsg_len;
+    }
+    let sent = unsafe { libc::sendmsg(stream.as_raw_fd(), &message, 0) };
+    if sent < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 fn storage_error(failure: StorageError) -> ProtocolErrorBody {
@@ -2473,6 +2893,7 @@ fn graceful_shutdown(context: &Context, socket: &str) {
     }
     let _ = fs::remove_file(socket);
     let _ = fs::remove_file(public_attach_socket(socket));
+    let _ = fs::remove_file(context.runtime_dir.join("security.bootstrap"));
 }
 
 fn lease_operation(
@@ -2635,6 +3056,7 @@ fn mark_pane_lost(context: &Context, pane_id: &str) -> Result<(), StorageError> 
             store.update_task(&task.id, TaskState::Lost, None, None, Some(now))?;
         }
     }
+    store.mark_agent_commands_lost_for_pane(&pane_id_value, now)?;
     let session_panes = store
         .list_panes_for_session(&pane.session_id)?
         .into_iter()
@@ -3141,8 +3563,11 @@ fn control_status(context: &Context) -> Result<Value, ProtocolErrorBody> {
     let panes = store.list_panes().map_err(storage_error)?;
     let tasks = store.list_tasks().map_err(storage_error)?;
     let pane_workers = store.list_pane_workers().map_err(storage_error)?;
+    let agent_commands = store
+        .list_nonterminal_agent_commands()
+        .map_err(storage_error)?;
     let resource_scopes = store.list_resource_scopes().map_err(storage_error)?;
-    let root_principal = store.local_root_principal().map_err(storage_error)?;
+    let principals = store.list_principals().map_err(storage_error)?;
     let workers = context
         .workers
         .lock()
@@ -3208,7 +3633,8 @@ fn control_status(context: &Context) -> Result<Value, ProtocolErrorBody> {
         "workers": workers,
         "pane_workers": pane_workers,
         "resource_scopes": resource_scopes,
-        "principals": [root_principal],
+        "agent_commands": agent_commands,
+        "principals": principals,
         "panes": panes,
         "sessions": sessions,
         "tasks": tasks
@@ -3235,6 +3661,423 @@ fn prune_history(context: &Context) {
     }
 }
 
+fn principal_json(principal: &qwe_core::PrincipalRecord) -> Value {
+    json!({
+        "principal_id": principal.id,
+        "parent_id": principal.parent_id,
+        "epoch": principal.epoch,
+        "high_trust": principal.high_trust,
+        "created_at_ms": principal.created_at_ms,
+        "revoked_at_ms": principal.revoked_at_ms,
+        "revocation": principal.revocation_severity.map(|severity| json!({
+            "severity": severity.as_str(),
+            "deadline_ms": principal.revocation_deadline_ms,
+            "hold": principal.revocation_hold
+        }))
+    })
+}
+
+fn security_bootstrap(
+    context: &Context,
+    request: &RequestEnvelope,
+) -> Result<Value, ProtocolErrorBody> {
+    let grant = {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        security::require_management(&store, request.auth_context.as_ref(), now_ms())?
+    };
+    Ok(json!({
+        "principal": principal_json(&grant.principal),
+        "capability": {
+            "capability_id": grant.capability.id,
+            "operation": grant.capability.operation.as_str(),
+            "scope": grant.capability.scope,
+            "expires_at_ms": grant.capability.expires_at_ms
+        }
+    }))
+}
+
+fn security_principal_create(
+    context: &Context,
+    request: &RequestEnvelope,
+) -> Result<Value, ProtocolErrorBody> {
+    let parent_id = request
+        .payload
+        .get("parent_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("invalid_request", "missing parent_id"))?
+        .parse::<PrincipalId>()
+        .map_err(|failure| error("invalid_request", failure.to_string()))?;
+    let high_trust = request
+        .payload
+        .get("high_trust")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let principal = {
+        let mut store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let grant = security::require_management(&store, request.auth_context.as_ref(), now_ms())?;
+        if high_trust && !grant.principal.high_trust {
+            return Err(error(
+                "insufficient_trust",
+                "only a high-trust Principal may create a high-trust descendant",
+            ));
+        }
+        if store
+            .find_principal(&parent_id)
+            .map_err(storage_error)?
+            .is_some_and(|principal| principal.revoked_at_ms.is_some())
+        {
+            return Err(error(
+                "principal_revoked",
+                "cannot create a descendant below a revoked Principal",
+            ));
+        }
+        let principal_id = PrincipalId::new();
+        store
+            .insert_principal(&principal_id, &parent_id, high_trust, now_ms())
+            .map_err(storage_error)?;
+        store
+            .find_principal(&principal_id)
+            .map_err(storage_error)?
+            .ok_or_else(|| error("persistence_failure", "created Principal is missing"))?
+    };
+    Ok(principal_json(&principal))
+}
+
+fn probe_sandbox_worker(
+    context: &Context,
+    pane_id: &PaneId,
+    profile: &SandboxProfile,
+) -> Result<(), ProtocolErrorBody> {
+    call_pane_worker(
+        context,
+        &pane_id.to_string(),
+        "SANDBOX_PROBE",
+        json!({"sandbox_profile": profile}),
+        WORKER_REQUEST_TIMEOUT,
+    )
+    .map(|_| ())
+    .map_err(map_sandbox_probe_failure)
+}
+
+fn map_sandbox_probe_failure(failure: ProtocolErrorBody) -> ProtocolErrorBody {
+    if matches!(
+        failure.code.as_str(),
+        "sandbox_profile_unsupported" | "unsupported_platform"
+    ) {
+        failure
+    } else {
+        error(
+            "sandbox_backend_unavailable",
+            format!(
+                "refusing sandboxed agent_exec capability: {}",
+                failure.message
+            ),
+        )
+    }
+}
+
+fn security_capability_issue(
+    context: &Context,
+    request: &RequestEnvelope,
+) -> Result<Value, ProtocolErrorBody> {
+    let _security_guard = context
+        .security_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let principal_id = request
+        .payload
+        .get("principal_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("invalid_request", "missing principal_id"))?
+        .parse::<PrincipalId>()
+        .map_err(|failure| error("invalid_request", failure.to_string()))?;
+    let operation = request
+        .payload
+        .get("operation")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("invalid_request", "missing capability operation"))?
+        .parse::<CapabilityOperation>()
+        .map_err(|failure| error("invalid_request", failure))?;
+    let scope = serde_json::from_value::<CapabilityScope>(
+        request
+            .payload
+            .get("scope")
+            .cloned()
+            .ok_or_else(|| error("invalid_request", "missing capability scope"))?,
+    )
+    .map_err(|failure| error("invalid_request", failure.to_string()))?;
+    let sandbox_profile = request
+        .payload
+        .get("sandbox_profile")
+        .cloned()
+        .map(serde_json::from_value::<SandboxProfile>)
+        .transpose()
+        .map_err(|failure| error("invalid_request", failure.to_string()))?;
+    security::validate_sandbox_grant(operation, sandbox_profile.as_ref())?;
+    if let Some(profile) = &sandbox_profile {
+        let pane_id = match &scope {
+            CapabilityScope::Pane { pane_id } => pane_id,
+            _ => {
+                return Err(error(
+                    "invalid_request",
+                    "sandbox_profile requires a Pane-scoped agent_exec capability",
+                ));
+            }
+        };
+        probe_sandbox_worker(context, pane_id, profile)?;
+    }
+    let ttl_ms = request
+        .payload
+        .get("ttl_ms")
+        .and_then(Value::as_i64)
+        .unwrap_or(DEFAULT_CAPABILITY_TTL_MS);
+    let issued = {
+        let mut store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        security::require_management(&store, request.auth_context.as_ref(), now_ms())?;
+        match &scope {
+            CapabilityScope::Pane { pane_id } => {
+                if store.find_pane(pane_id).map_err(storage_error)?.is_none() {
+                    return Err(error("not_found", "capability target Pane was not found"));
+                }
+            }
+            CapabilityScope::Command {
+                pane_id,
+                command_id,
+            } => {
+                let command = store
+                    .find_agent_command(command_id)
+                    .map_err(storage_error)?
+                    .ok_or_else(|| error("not_found", "capability target command was not found"))?;
+                if &command.pane_id != pane_id {
+                    return Err(error(
+                        "invalid_request",
+                        "capability command does not belong to the requested Pane",
+                    ));
+                }
+            }
+            CapabilityScope::Global | CapabilityScope::Session { .. } => {}
+        }
+        security::issue_capability(
+            &mut store,
+            &principal_id,
+            operation,
+            scope,
+            sandbox_profile,
+            ttl_ms,
+            now_ms(),
+        )?
+    };
+    Ok(security::capability_json(&issued))
+}
+
+fn security_principal_revoke(
+    context: &Context,
+    request: &RequestEnvelope,
+) -> Result<Value, ProtocolErrorBody> {
+    let principal_id = request
+        .payload
+        .get("principal_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("invalid_request", "missing principal_id"))?
+        .parse::<PrincipalId>()
+        .map_err(|failure| error("invalid_request", failure.to_string()))?;
+    if principal_id == PrincipalId::local_root() {
+        return Err(error(
+            "invalid_request",
+            "local-root Principal cannot be revoked from the local control API",
+        ));
+    }
+    let severity = request
+        .payload
+        .get("severity")
+        .and_then(Value::as_str)
+        .map(str::parse::<RevocationSeverity>)
+        .transpose()
+        .map_err(|failure| error("invalid_request", failure))?
+        .unwrap_or_default();
+    let hold = request
+        .payload
+        .get("hold")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let grace_ms = request
+        .payload
+        .get("grace_ms")
+        .and_then(Value::as_i64)
+        .unwrap_or(DEFAULT_FREEZE_GRACE_MS);
+    if grace_ms <= 0 || grace_ms > MAX_FREEZE_GRACE_MS {
+        return Err(error(
+            "invalid_request",
+            format!("grace_ms must be between 1 and {MAX_FREEZE_GRACE_MS}"),
+        ));
+    }
+    let revoked = {
+        let mut store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let grant = security::require_management(&store, request.auth_context.as_ref(), now_ms())?;
+        if (severity == RevocationSeverity::Administrative || hold) && !grant.principal.high_trust {
+            return Err(error(
+                "insufficient_trust",
+                "administrative revocation and security holds require a high-trust Principal",
+            ));
+        }
+        if store
+            .find_principal(&principal_id)
+            .map_err(storage_error)?
+            .is_some_and(|principal| principal.high_trust && !grant.principal.high_trust)
+        {
+            return Err(error(
+                "insufficient_trust",
+                "only a high-trust Principal may revoke another high-trust Principal",
+            ));
+        }
+        let deadline_ms =
+            (severity == RevocationSeverity::Freeze).then_some(now_ms().saturating_add(grace_ms));
+        store
+            .revoke_principal(&principal_id, severity, deadline_ms, hold, now_ms())
+            .map_err(storage_error)?
+    };
+    let affected_commands = apply_revocation_to_commands(
+        context,
+        &principal_id,
+        severity,
+        revoked.revocation_deadline_ms,
+    )?;
+    Ok(json!({
+        "principal": principal_json(&revoked),
+        "affected_commands": affected_commands
+    }))
+}
+
+fn apply_revocation_to_commands(
+    context: &Context,
+    principal_id: &PrincipalId,
+    severity: RevocationSeverity,
+    deadline_ms: Option<i64>,
+) -> Result<usize, ProtocolErrorBody> {
+    if severity == RevocationSeverity::Administrative {
+        return Ok(0);
+    }
+    let commands = {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let principals = store.list_principals().map_err(storage_error)?;
+        let affected = principals
+            .into_iter()
+            .filter_map(|principal| {
+                store
+                    .principal_chain(&principal.id)
+                    .ok()
+                    .filter(|chain| chain.iter().any(|ancestor| &ancestor.id == principal_id))
+                    .map(|_| principal.id)
+            })
+            .collect::<Vec<_>>();
+        let mut commands = Vec::new();
+        for affected_principal in affected {
+            commands.extend(
+                store
+                    .list_agent_commands_for_principal(&affected_principal)
+                    .map_err(storage_error)?
+                    .into_iter()
+                    .filter(|command| !command.state.is_terminal()),
+            );
+        }
+        commands
+    };
+    let mut affected = 0;
+    for command in commands {
+        let operation = if severity == RevocationSeverity::Freeze {
+            "AGENT_COMMAND_FREEZE"
+        } else {
+            "AGENT_COMMAND_TERMINATE"
+        };
+        let payload = json!({
+            "command_id": command.id,
+            "reason": "principal_revocation",
+            "severity": severity.as_str(),
+            "deadline_ms": deadline_ms
+        });
+        match call_pane_worker(
+            context,
+            &command.pane_id.to_string(),
+            operation,
+            payload,
+            WORKER_REQUEST_TIMEOUT,
+        ) {
+            Ok(status) => {
+                let pane = context
+                    .store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .find_pane(&command.pane_id)
+                    .map_err(storage_error)?;
+                if let Some(pane) = pane {
+                    persist_agent_status(context, &pane, &status)?;
+                }
+                affected += 1;
+            }
+            Err(failure) if matches!(failure.code.as_str(), "not_found" | "terminal_lost") => {
+                mark_agent_command_lost(context, &command)?;
+                affected += 1;
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(affected)
+}
+
+fn reconcile_expired_freeze_revocations(context: &Context) {
+    let _security_guard = context
+        .security_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let expired = {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        store
+            .expired_freeze_principals(now_ms())
+            .unwrap_or_default()
+    };
+    for principal in expired {
+        let escalated = {
+            let mut store = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            store
+                .escalate_principal_revocation(&principal.id, now_ms())
+                .ok()
+        };
+        if let Some(escalated) = escalated {
+            let _ = apply_revocation_to_commands(
+                context,
+                &escalated.id,
+                RevocationSeverity::Terminate,
+                None,
+            );
+            eprintln!(
+                "security freeze expired; escalated Principal {} to termination",
+                escalated.id
+            );
+        }
+    }
+}
+
 fn client_operation(
     context: &Context,
     request: &RequestEnvelope,
@@ -3242,6 +4085,82 @@ fn client_operation(
     match request.operation.as_str() {
         "PING" => Ok(json!({"daemon": "ok", "protocol": PROTOCOL_VERSION})),
         "CONTROL_STATUS" => control_status(context),
+        "SECURITY_BOOTSTRAP" => security_bootstrap(context, request),
+        "SECURITY_PRINCIPAL_CREATE" => security_principal_create(context, request),
+        "SECURITY_CAPABILITY_ISSUE" => security_capability_issue(context, request),
+        "SECURITY_PRINCIPAL_REVOKE" => security_principal_revoke(context, request),
+        "AGENT_EXEC" => {
+            if request.payload.get("sandbox_profile").is_some() {
+                return Err(error(
+                    "sandbox_profile_not_client_selectable",
+                    "sandbox profiles are selected only by capability issuance",
+                ));
+            }
+            let pane_id = required_pane_id(&request.payload)?;
+            let (pane, grant) = {
+                let store = context
+                    .store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let grant = security::require_agent_exec(
+                    &store,
+                    request.auth_context.as_ref(),
+                    &pane_id,
+                    now_ms(),
+                )?;
+                let pane = store
+                    .find_pane(&pane_id)
+                    .map_err(storage_error)?
+                    .ok_or_else(|| error("not_found", "Pane not found"))?;
+                (pane, grant)
+            };
+            let mut payload = request.payload.clone();
+            let sandbox_profile = grant.capability.sandbox_profile.clone();
+            let credential_name = match request.payload.get("credential") {
+                Some(value) => Some(
+                    value
+                        .as_str()
+                        .ok_or_else(|| error("invalid_request", "credential must be a string"))?,
+                ),
+                None => None,
+            };
+            if let Some(name) = credential_name {
+                let secret = context
+                    .credentials
+                    .read(name)
+                    .map_err(|failure| error("credential_unavailable", failure.to_string()))?;
+                let broker = start_command_credential_broker(&context.runtime_dir, &secret)
+                    .map_err(|failure| error("credential_injection_failed", failure.to_string()))?;
+                payload["credential_socket"] = json!(broker);
+                payload["redaction_policy"] = json!("credential_exact");
+            }
+            if let Some(object) = payload.as_object_mut() {
+                object.remove("credential");
+            }
+            if let Some(profile) = sandbox_profile {
+                payload["sandbox_profile"] = json!(profile);
+            }
+            payload["session_id"] = json!(pane.session_id);
+            payload["pane_id"] = json!(pane.id);
+            let status = call_pane_worker(
+                context,
+                &pane.id.to_string(),
+                "AGENT_EXEC",
+                payload,
+                WORKER_REQUEST_TIMEOUT,
+            )?;
+            persist_agent_exec_status(context, &pane, &status, &grant)?;
+            Ok(status)
+        }
+        "AGENT_COMMAND_STATUS"
+        | "AGENT_COMMAND_EVENTS"
+        | "AGENT_COMMAND_WAIT_IDLE"
+        | "AGENT_COMMAND_TERMINATE" => agent_command_operation(
+            context,
+            &request.operation,
+            &request.payload,
+            request.auth_context.as_ref(),
+        ),
         "SESSION_CREATE" => create_session(context, request.payload.clone()),
         "PANE_CREATE" => create_pane(context, request.payload.clone()),
         "PANE_FOCUS" => pane_focus(context, &request.payload),
@@ -3387,7 +4306,11 @@ fn client_operation(
 fn requires_idempotency(operation: &str) -> bool {
     matches!(
         operation,
-        "SESSION_CREATE"
+        "SECURITY_PRINCIPAL_CREATE"
+            | "SECURITY_PRINCIPAL_REVOKE"
+            | "AGENT_EXEC"
+            | "AGENT_COMMAND_TERMINATE"
+            | "SESSION_CREATE"
             | "PANE_CREATE"
             | "PANE_FOCUS"
             | "PANE_REORDER"
@@ -3412,8 +4335,16 @@ fn requires_idempotency(operation: &str) -> bool {
 }
 
 fn request_fingerprint(request: &RequestEnvelope) -> Result<String, ProtocolErrorBody> {
-    let encoded = serde_json::to_vec(&(&request.operation, &request.payload))
-        .map_err(|failure| error("invalid_request", failure.to_string()))?;
+    let capability_hash = request
+        .auth_context
+        .as_ref()
+        .map(|context| ReclaimTokenHash::from_token(&context.capability));
+    let encoded = serde_json::to_vec(&(
+        &request.operation,
+        &request.payload,
+        capability_hash.as_ref().map(ReclaimTokenHash::as_str),
+    ))
+    .map_err(|failure| error("invalid_request", failure.to_string()))?;
     let digest = Sha256::digest(encoded);
     let mut fingerprint = String::with_capacity(digest.len() * 2);
     for byte in digest {
@@ -3508,6 +4439,26 @@ fn execute_request(
     context: &Context,
     request: &RequestEnvelope,
 ) -> Result<Value, ProtocolErrorBody> {
+    let security_protected = matches!(
+        request.operation.as_str(),
+        "AGENT_EXEC"
+            | "AGENT_COMMAND_TERMINATE"
+            | "SECURITY_PRINCIPAL_CREATE"
+            | "SECURITY_PRINCIPAL_REVOKE"
+    );
+    let _security_guard = security_protected.then(|| {
+        context
+            .security_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    });
+    if security_protected {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        security::require_live_token(&store, request.auth_context.as_ref(), now_ms())?;
+    }
     if !requires_idempotency(&request.operation) {
         return client_operation(context, request);
     }
@@ -3631,12 +4582,184 @@ fn proxy_control(
     let request: RequestEnvelope = read_frame(&mut client)?;
     validate_version(request.version)
         .map_err(|failure| std::io::Error::other(format!("incompatible_version: {failure}")))?;
+    if request.operation == "AGENT_COMMAND_OBSERVE" {
+        return proxy_agent_observe(client, context, request);
+    }
     let response = ResponseEnvelope {
         version: PROTOCOL_VERSION,
         request_id: request.request_id.clone(),
         result: execute_request(context, &request),
     };
     write_frame(&mut client, &response)?;
+    Ok(())
+}
+
+fn proxy_agent_observe(
+    client: UnixStream,
+    context: &Context,
+    request: RequestEnvelope,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let command_id: AgentCommandId = request
+        .payload
+        .get("command_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("missing command_id"))?
+        .parse()
+        .map_err(|failure: uuid::Error| std::io::Error::other(failure.to_string()))?;
+    let command = find_agent_command(context, &command_id).map_err(|failure| {
+        std::io::Error::other(format!("{}: {}", failure.code, failure.message))
+    })?;
+    {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        security::require_command_read(&store, request.auth_context.as_ref(), &command, now_ms())
+            .map_err(|failure| {
+            std::io::Error::other(format!("{}: {}", failure.code, failure.message))
+        })?;
+    }
+    let mut cursor = request
+        .payload
+        .get("cursor")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let timeout_ms = request
+        .payload
+        .get("timeout_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(AGENT_MAX_WAIT_MS)
+        .min(AGENT_MAX_WAIT_MS);
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let mut writer = client.try_clone()?;
+    writer.set_write_timeout(Some(Duration::from_millis(250)))?;
+    let (sender, receiver) = mpsc::sync_channel::<ResponseEnvelope>(32);
+    let request_id = request.request_id.clone();
+    let writer_thread = thread::spawn(move || {
+        for response in receiver {
+            write_frame(&mut writer, &response)?;
+        }
+        Ok::<(), qwe_protocol::IoFrameError>(())
+    });
+    let mut sent_initial = false;
+    let mut final_message = None;
+    loop {
+        {
+            let store = context
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            security::require_command_read(
+                &store,
+                request.auth_context.as_ref(),
+                &command,
+                now_ms(),
+            )
+            .map_err(|failure| {
+                std::io::Error::other(format!("{}: {}", failure.code, failure.message))
+            })?;
+        }
+        let events = match call_pane_worker(
+            context,
+            &command.pane_id.to_string(),
+            "AGENT_COMMAND_EVENTS",
+            json!({"command_id": command.id, "cursor": cursor, "limit": 512}),
+            WORKER_REQUEST_TIMEOUT,
+        ) {
+            Ok(events) => events,
+            Err(failure) if matches!(failure.code.as_str(), "not_found" | "terminal_lost") => {
+                let lost = mark_agent_command_lost(context, &command).map_err(|failure| {
+                    std::io::Error::other(format!("{}: {}", failure.code, failure.message))
+                })?;
+                final_message = Some(json!({
+                    "type": "end",
+                    "state": "lost",
+                    "command_id": lost.id
+                }));
+                break;
+            }
+            Err(failure) => {
+                return Err(std::io::Error::other(format!(
+                    "{}: {}",
+                    failure.code, failure.message
+                ))
+                .into());
+            }
+        };
+        cursor = events
+            .get("next_cursor")
+            .and_then(Value::as_u64)
+            .unwrap_or(cursor);
+        let state = events
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let event_values = events
+            .get("events")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let should_send = !sent_initial
+            || !event_values.is_empty()
+            || matches!(state.as_str(), "done" | "failed" | "lost");
+        let batch = json!({
+            "type": "batch",
+            "projection": "read_only",
+            "command_id": command.id,
+            "state": state,
+            "cursor": cursor,
+            "events": event_values,
+            "replay_gap": events.get("replay_gap").cloned().unwrap_or(Value::Null)
+        });
+        if should_send {
+            sent_initial = true;
+            let response = ResponseEnvelope {
+                version: PROTOCOL_VERSION,
+                request_id: request_id.clone(),
+                result: Ok(batch),
+            };
+            match sender.try_send(response) {
+                Ok(()) => {}
+                Err(mpsc::TrySendError::Full(_)) => {
+                    final_message = Some(json!({
+                        "type": "error",
+                        "code": "observer_backpressure",
+                        "message": "observer did not drain its bounded queue"
+                    }));
+                    break;
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => break,
+            }
+        }
+        if matches!(state.as_str(), "done" | "failed" | "lost") {
+            final_message = Some(json!({
+                "type": "end",
+                "state": state,
+                "command_id": command.id
+            }));
+            break;
+        }
+        if Instant::now() >= deadline {
+            final_message = Some(json!({
+                "type": "end",
+                "state": state,
+                "command_id": command.id,
+                "timed_out": true
+            }));
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    if let Some(message) = final_message {
+        let _ = sender.try_send(ResponseEnvelope {
+            version: PROTOCOL_VERSION,
+            request_id,
+            result: Ok(message),
+        });
+    }
+    drop(sender);
+    let _ = writer_thread.join();
     Ok(())
 }
 
@@ -4615,6 +5738,13 @@ fn start_monitor_threads(
             prune_history(&history_context);
         }
     });
+    let security_context = Arc::clone(context);
+    thread::spawn(move || {
+        loop {
+            thread::sleep(SECURITY_RECONCILE_INTERVAL);
+            reconcile_expired_freeze_revocations(&security_context);
+        }
+    });
     Ok(())
 }
 
@@ -4637,8 +5767,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store_path = args
         .store
         .unwrap_or_else(|| format!("{}.sqlite", args.socket));
-    let store = Store::open(&store_path)
+    let mut store = Store::open(&store_path)
         .map_err(|failure| startup_context("opening durable storage", failure))?;
+    security::initialize_bootstrap(&mut store, &runtime_dir, now_ms())
+        .map_err(|failure| startup_context("initializing security capabilities", failure))?;
     let credentials_dir = args
         .credentials_dir
         .or_else(|| std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from));
@@ -4672,6 +5804,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         creation_lock: Mutex::new(()),
         idempotency_lock: Mutex::new(()),
         attachment_lock: Mutex::new(()),
+        security_lock: Mutex::new(()),
         credentials: CredentialProvider::new(credentials_dir, keychain_prefix, keychain_path),
         _runtime_lock: runtime_lock,
     });
@@ -4790,5 +5923,20 @@ mod startup_tests {
             Some(TaskState::Running)
         ));
         assert!(pane_requires_loss_update(None, None));
+    }
+
+    #[test]
+    fn sandbox_probe_preserves_permanent_platform_failures() {
+        let unsupported = map_sandbox_probe_failure(error(
+            "unsupported_platform",
+            "Bubblewrap sandboxing is supported only on Linux",
+        ));
+        assert_eq!(unsupported.code, "unsupported_platform");
+
+        let temporary = map_sandbox_probe_failure(error(
+            "sandbox_backend_unavailable",
+            "bubblewrap is unavailable",
+        ));
+        assert_eq!(temporary.code, "sandbox_backend_unavailable");
     }
 }

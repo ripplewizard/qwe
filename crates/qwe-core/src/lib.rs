@@ -3,9 +3,17 @@ use std::fmt;
 use std::str::FromStr;
 use uuid::Uuid;
 
+mod agent;
 mod authority;
 mod layout;
+mod sandbox;
+mod security;
 
+pub use agent::{
+    AGENT_MAX_WAIT_MS, AGENT_OUTPUT_CHUNK_BYTES, AGENT_REPLAY_LIMIT_BYTES, AgentCommandId,
+    AgentCommandRecord, AgentCommandState, AgentEvent, AgentEventKind, AgentOutputMode,
+    AgentOutputStream, AgentWaitState,
+};
 pub use authority::{
     AttachmentAuthority, AttachmentOperation, AuthorityCredentials, AuthorityError,
     DEFAULT_DETACHED_HOLD_TTL_MS, DEFAULT_LEASE_TTL_MS, DEFAULT_RECLAIM_GRACE_MS, MAX_LEASE_TTL_MS,
@@ -14,6 +22,15 @@ pub use authority::{
 pub use layout::{
     LayoutError, LayoutRect, MAX_LAYOUT_PANES, PaneKind, PaneLayout, PaneSpec, tile_pane_specs,
     tile_panes,
+};
+pub use sandbox::{
+    SANDBOX_PROFILE_VERSION, SandboxHomeMode, SandboxNetworkMode, SandboxProcessMode,
+    SandboxProfile, SandboxSeccompMode, SandboxWorkspaceMode,
+};
+pub use security::{
+    CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
+    DEFAULT_CAPABILITY_TTL_MS, DEFAULT_FREEZE_GRACE_MS, MAX_CAPABILITY_TTL_MS, MAX_FREEZE_GRACE_MS,
+    PrincipalEpoch, RevocationSeverity,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -671,6 +688,10 @@ pub struct PrincipalRecord {
     pub epoch: u64,
     pub created_at_ms: i64,
     pub revoked_at_ms: Option<i64>,
+    pub high_trust: bool,
+    pub revocation_severity: Option<RevocationSeverity>,
+    pub revocation_deadline_ms: Option<i64>,
+    pub revocation_hold: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -791,6 +812,12 @@ mod tests {
             AttachmentAuthorityState::as_str,
             AttachmentAuthorityState::can_transition_to,
         );
+        assert_transition_drift(
+            &machines["agent_command"],
+            &AgentCommandState::ALL,
+            AgentCommandState::as_str,
+            AgentCommandState::can_transition_to,
+        );
         assert_eq!(
             schema_strings(&machines["worker_health"]),
             WorkerHealth::ALL
@@ -807,6 +834,22 @@ mod tests {
                 .map(ReconciliationDisposition::as_str)
                 .collect::<Vec<_>>()
         );
+        assert_eq!(
+            schema_strings(&machines["capability_operation"]),
+            CapabilityOperation::ALL
+                .iter()
+                .copied()
+                .map(CapabilityOperation::as_str)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            schema_strings(&machines["revocation_severity"]),
+            RevocationSeverity::ALL
+                .iter()
+                .copied()
+                .map(RevocationSeverity::as_str)
+                .collect::<Vec<_>>()
+        );
         for state in SessionState::ALL {
             assert_eq!(serde_json::to_value(state).unwrap(), state.as_str());
         }
@@ -816,8 +859,17 @@ mod tests {
         for state in AttachmentAuthorityState::ALL {
             assert_eq!(serde_json::to_value(state).unwrap(), state.as_str());
         }
+        for state in AgentCommandState::ALL {
+            assert_eq!(serde_json::to_value(state).unwrap(), state.as_str());
+        }
         for health in WorkerHealth::ALL {
             assert_eq!(serde_json::to_value(health).unwrap(), health.as_str());
+        }
+        for operation in CapabilityOperation::ALL {
+            assert_eq!(serde_json::to_value(operation).unwrap(), operation.as_str());
+        }
+        for severity in RevocationSeverity::ALL {
+            assert_eq!(serde_json::to_value(severity).unwrap(), severity.as_str());
         }
         for disposition in ReconciliationDisposition::ALL {
             assert_eq!(

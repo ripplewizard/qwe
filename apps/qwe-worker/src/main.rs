@@ -1,4 +1,7 @@
+mod agent;
 mod resources;
+#[cfg(target_os = "linux")]
+mod sandbox;
 
 use clap::Parser;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -65,6 +68,20 @@ struct Args {
     worker_credential_fd: Option<i32>,
     #[arg(long, hide = true)]
     worker_systemd_scope: bool,
+    #[arg(long, hide = true)]
+    worker_existing_scope: bool,
+}
+
+struct WorkerCreateOptions<'a> {
+    session_id: &'a str,
+    pane_id: &'a str,
+    program: &'a str,
+    arguments: &'a [String],
+    resource_policy: ResourcePolicy,
+    credential_fd: Option<i32>,
+    runtime_dir: &'a Path,
+    use_systemd_scope: bool,
+    use_existing_scope: bool,
 }
 
 struct WorkerSession {
@@ -81,6 +98,7 @@ struct WorkerSession {
     running: AtomicBool,
     exit_code: Mutex<Option<i32>>,
     exit_signal: Mutex<Option<String>>,
+    agents: agent::AgentManager,
 }
 
 struct TerminalStream {
@@ -129,6 +147,33 @@ fn error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
         code: code.into(),
         message: message.into(),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn sandbox_probe(payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    let profile = serde_json::from_value::<qwe_core::SandboxProfile>(
+        payload
+            .get("sandbox_profile")
+            .cloned()
+            .ok_or_else(|| error("invalid_request", "missing sandbox_profile"))?,
+    )
+    .map_err(|failure| error("invalid_request", failure.to_string()))?;
+    agent::validate_sandbox_profile(&profile)?;
+    let support = crate::sandbox::probe_bubblewrap()
+        .map_err(|failure| error("sandbox_backend_unavailable", failure))?;
+    Ok(json!({
+        "available": true,
+        "version": support.version,
+        "fresh": true
+    }))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn sandbox_probe(_payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    Err(error(
+        "unsupported_platform",
+        "Bubblewrap sandboxing is supported only on Linux",
+    ))
 }
 
 fn reclaim_token() -> Result<String, std::io::Error> {
@@ -414,15 +459,18 @@ fn start_topology_listener(
 }
 
 impl WorkerSession {
-    fn create(
-        pane_id: &str,
-        program: &str,
-        arguments: &[String],
-        resource_policy: ResourcePolicy,
-        credential_fd: Option<i32>,
-        runtime_dir: &Path,
-        use_systemd_scope: bool,
-    ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
+    fn create(options: WorkerCreateOptions<'_>) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
+        let WorkerCreateOptions {
+            session_id,
+            pane_id,
+            program,
+            arguments,
+            resource_policy,
+            credential_fd,
+            runtime_dir,
+            use_systemd_scope,
+            use_existing_scope,
+        } = options;
         let pair = native_pty_system().openpty(PtySize {
             rows: 24,
             cols: 80,
@@ -433,13 +481,16 @@ impl WorkerSession {
         let credential_socket = credential
             .map(|secret| start_credential_broker(runtime_dir, secret))
             .transpose()?;
-        let topology = if use_systemd_scope {
+        let topology = if use_systemd_scope || use_existing_scope {
             Some(start_topology_listener(runtime_dir)?)
         } else {
             None
         };
         let executable = std::env::current_exe()?.with_file_name("qwe-session-exec");
-        let mut command = if let Some((topology_socket, _)) = &topology {
+        let mut command = if use_systemd_scope {
+            let (topology_socket, _) = topology
+                .as_ref()
+                .expect("nested systemd scope has a topology listener");
             let unit = qwe_runtime::pane_scope_unit(pane_id);
             let mut command = CommandBuilder::new("/usr/bin/systemd-run");
             command.args(["--user", "--scope", "--quiet", "--unit", &unit]);
@@ -447,6 +498,7 @@ impl WorkerSession {
                 "--property=MemoryAccounting=yes",
                 "--property=TasksAccounting=yes",
                 "--property=CPUAccounting=yes",
+                "--property=Delegate=yes",
             ]);
             if let Some(bytes) = resource_policy.memory_high_bytes {
                 command.arg(format!("--property=MemoryHigh={bytes}"));
@@ -478,8 +530,12 @@ impl WorkerSession {
             command.arg(program);
             command.args(arguments.iter());
             command
-        } else if credential_socket.is_some() {
+        } else if use_existing_scope || credential_socket.is_some() {
             let mut command = CommandBuilder::new(executable);
+            if let Some((socket, _)) = &topology {
+                command.arg("--topology-socket");
+                command.arg(socket);
+            }
             if let Some(socket) = &credential_socket {
                 command.arg("--credential-socket");
                 command.arg(socket);
@@ -523,7 +579,19 @@ impl WorkerSession {
         let mut reader = pair.master.try_clone_reader()?;
         let master = pair.master;
         let initial_policy = resource_policy.clone();
-        let resources = resources::ResourceController::new(resource_policy, cgroup_dir);
+        let resources = match resources::ResourceController::new(
+            resource_policy,
+            cgroup_dir,
+            use_systemd_scope,
+            std::process::id(),
+            pid,
+        ) {
+            Ok(resources) => resources,
+            Err(failure) => {
+                let _ = child.kill();
+                return Err(format!("failed to isolate Pane workload: {failure}").into());
+            }
+        };
         if let Err(failure) = resources.start_event_watcher() {
             let _ = child.kill();
             resources.cleanup_cgroup();
@@ -541,11 +609,19 @@ impl WorkerSession {
                 return Err(format!("Session topology acknowledgement failed: {failure}").into());
             }
         }
+        let worker_identity = process_identity(std::process::id())?;
+        let agents = agent::AgentManager::new(
+            session_id,
+            pane_id,
+            worker_identity.clone(),
+            runtime_dir.to_path_buf(),
+            resources.clone(),
+        );
         let session = Arc::new(Self {
             pane_id: pane_id.to_string(),
             pid,
             identity,
-            worker_identity: process_identity(std::process::id())?,
+            worker_identity,
             resources,
             writer: Mutex::new(writer),
             master: Mutex::new(master),
@@ -555,6 +631,7 @@ impl WorkerSession {
             running: AtomicBool::new(true),
             exit_code: Mutex::new(None),
             exit_signal: Mutex::new(None),
+            agents,
         });
         session.resources.start_monitor(pid, pgid);
         let reader_session = Arc::clone(&session);
@@ -949,6 +1026,7 @@ impl WorkerSession {
     }
 
     fn stop_task(&self, session_id: &str) -> Result<Value, ProtocolErrorBody> {
+        self.agents.terminate_all();
         if self.process_group_exists() {
             self.signal_process_group(libc::SIGTERM)?;
             if !self.wait_for_process_group_exit(TASK_STOP_GRACE) {
@@ -984,6 +1062,7 @@ impl WorkerSession {
     }
 
     fn kill(&self, session_id: &str) -> Result<Value, ProtocolErrorBody> {
+        self.agents.terminate_all();
         if self.process_group_exists() {
             self.signal_process_group(libc::SIGKILL)?;
             if !self.wait_for_process_group_exit(TASK_STOP_WAIT) {
@@ -1340,8 +1419,67 @@ fn worker_handle(
         "TASK_STOP" => session.stop_task(session_id),
         "SESSION_CLOSE" => session.close(session_id),
         "TASK_KILL" | "SESSION_KILL" => session.kill(session_id),
+        "AGENT_EXEC" => session.agents.exec(payload),
+        "SANDBOX_PROBE" => sandbox_probe(payload),
+        "AGENT_COMMAND_STATUS" => {
+            let command_id = required_agent_command_id(payload)?;
+            session.agents.status(&command_id)
+        }
+        "AGENT_COMMAND_EVENTS" => {
+            let command_id = required_agent_command_id(payload)?;
+            let cursor = payload.get("cursor").and_then(Value::as_u64).unwrap_or(0);
+            let limit = payload
+                .get("limit")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(256);
+            session.agents.events(&command_id, cursor, limit)
+        }
+        "AGENT_COMMAND_WAIT_IDLE" => {
+            let command_id = required_agent_command_id(payload)?;
+            let timeout_ms = payload
+                .get("timeout_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or(qwe_core::AGENT_MAX_WAIT_MS);
+            session.agents.wait_idle(&command_id, timeout_ms)
+        }
+        "AGENT_COMMAND_TERMINATE" => {
+            let command_id = required_agent_command_id(payload)?;
+            let severity = payload
+                .get("severity")
+                .and_then(Value::as_str)
+                .unwrap_or("terminate");
+            let reason = payload
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("agent_command_terminate");
+            let deadline_ms = payload.get("deadline_ms").and_then(Value::as_i64);
+            session
+                .agents
+                .terminate_with_context(&command_id, severity, deadline_ms, reason)
+        }
+        "AGENT_COMMAND_FREEZE" => {
+            let command_id = required_agent_command_id(payload)?;
+            let reason = payload
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("principal_revocation");
+            let deadline_ms = payload.get("deadline_ms").and_then(Value::as_i64);
+            session.agents.freeze(&command_id, deadline_ms, reason)
+        }
         _ => Err(error("unsupported_operation", operation)),
     }
+}
+
+fn required_agent_command_id(
+    payload: &Value,
+) -> Result<qwe_core::AgentCommandId, ProtocolErrorBody> {
+    payload
+        .get("command_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("invalid_request", "missing command_id"))?
+        .parse()
+        .map_err(|failure| error("invalid_request", format!("invalid command_id: {failure}")))
 }
 
 fn serve_worker(stream: UnixStream, session: &Arc<WorkerSession>, session_id: &str) {
@@ -1422,11 +1560,12 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     let listener = UnixListener::bind(&socket)?;
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
-    let session = WorkerSession::create(
-        &pane_id,
-        &args.worker_program,
-        &args.worker_args,
-        ResourcePolicy {
+    let session = WorkerSession::create(WorkerCreateOptions {
+        session_id: &session_id,
+        pane_id: &pane_id,
+        program: &args.worker_program,
+        arguments: &args.worker_args,
+        resource_policy: ResourcePolicy {
             memory_high_bytes: args.worker_memory_high_bytes,
             memory_max_bytes: args.worker_memory_bytes,
             memory_swap_max_bytes: args.worker_memory_swap_max_bytes,
@@ -1434,10 +1573,11 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             cpu_quota_percent: args.worker_cpu_quota_percent,
             cpu_seconds: args.worker_cpu_seconds,
         },
-        args.worker_credential_fd,
+        credential_fd: args.worker_credential_fd,
         runtime_dir,
-        args.worker_systemd_scope,
-    )?;
+        use_systemd_scope: args.worker_systemd_scope,
+        use_existing_scope: args.worker_existing_scope,
+    })?;
     let control_session = Arc::clone(&session);
     thread::spawn(move || {
         for stream in listener.incoming() {

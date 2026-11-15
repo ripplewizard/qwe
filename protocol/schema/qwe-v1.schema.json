@@ -553,6 +553,29 @@
         ["held", "held"]
       ]
     },
+    "agent_command": {
+      "states": [
+        "starting",
+        "running",
+        "idle",
+        "done",
+        "failed",
+        "lost"
+      ],
+      "transitions": [
+        ["starting", "running"],
+        ["starting", "failed"],
+        ["starting", "lost"],
+        ["running", "idle"],
+        ["running", "done"],
+        ["running", "failed"],
+        ["running", "lost"],
+        ["idle", "running"],
+        ["idle", "done"],
+        ["idle", "failed"],
+        ["idle", "lost"]
+      ]
+    },
     "worker_health": [
       "healthy",
       "unreachable",
@@ -562,6 +585,17 @@
       "matched",
       "orphaned",
       "conflict"
+    ],
+    "capability_operation": [
+      "manage_principals",
+      "agent_exec",
+      "agent_command_read",
+      "agent_command_terminate"
+    ],
+    "revocation_severity": [
+      "administrative",
+      "freeze",
+      "terminate"
     ]
   },
   "x-qwe-test-case-ids": [
@@ -649,6 +683,25 @@
     "LAYOUT-015",
     "LAYOUT-016",
     "LAYOUT-017",
+    "AGENT-001",
+    "AGENT-002",
+    "AGENT-003",
+    "AGENT-004",
+    "AGENT-005",
+    "AGENT-006",
+    "AGENT-007",
+    "AGENT-008",
+    "AGENT-009",
+    "AGENT-010",
+    "AGENT-011",
+    "AGENT-012",
+    "SANDBOX-001",
+    "SANDBOX-002",
+    "SANDBOX-003",
+    "SANDBOX-004",
+    "SANDBOX-005",
+    "SANDBOX-006",
+    "SANDBOX-007",
     "ATTACH-001",
     "ATTACH-002",
     "ATTACH-003",

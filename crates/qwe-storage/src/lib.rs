@@ -1,15 +1,17 @@
 use qwe_core::{
-    AttachmentAuthority, AttachmentAuthorityState, LeaseRecord, PaneId, PaneRecord,
-    PaneWorkerRecord, PrincipalId, PrincipalRecord, ProcessIdentity, ResourceBackend,
-    ResourcePolicy, ResourceScopeId, ResourceScopeRecord, ResourceScopeState,
-    ResourceScopeTargetKind, SessionRecord, TaskId, TaskRecord, TaskState,
+    AgentCommandId, AgentCommandRecord, AgentCommandState, AgentOutputMode, AttachmentAuthority,
+    AttachmentAuthorityState, CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
+    LeaseRecord, PaneId, PaneRecord, PaneWorkerRecord, PrincipalEpoch, PrincipalId,
+    PrincipalRecord, ProcessIdentity, ResourceBackend, ResourcePolicy, ResourceScopeId,
+    ResourceScopeRecord, ResourceScopeState, ResourceScopeTargetKind, RevocationSeverity,
+    SessionRecord, TaskId, TaskRecord, TaskState,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::json;
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 13;
+pub const SCHEMA_VERSION: i64 = 16;
 pub const IDEMPOTENCY_RETENTION_MS: i64 = 24 * 60 * 60 * 1_000;
 pub const HISTORY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 pub const HISTORY_MAX_TERMINAL_SESSIONS: i64 = 10_000;
@@ -133,6 +135,83 @@ pub struct HistoryPruneReport {
     pub resource_scopes: u64,
     pub leases: u64,
     pub attachment_authorities: u64,
+}
+
+#[derive(Debug)]
+struct AgentCommandRow {
+    id: String,
+    session_id: String,
+    pane_id: String,
+    owner: String,
+    principal_id: String,
+    creator_capability_id: Option<String>,
+    worker_pid: u32,
+    worker_pgid: u32,
+    worker_start_token: String,
+    process_pid: Option<u32>,
+    process_pgid: Option<u32>,
+    process_start_token: Option<String>,
+    state: String,
+    output_mode: String,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+    exit_code: Option<i32>,
+    exit_signal: Option<String>,
+}
+
+impl TryFrom<AgentCommandRow> for AgentCommandRecord {
+    type Error = StorageError;
+
+    fn try_from(row: AgentCommandRow) -> Result<Self, Self::Error> {
+        let process_identity = match (row.process_pid, row.process_pgid, row.process_start_token) {
+            (Some(pid), Some(pgid), Some(start_token)) => Some(ProcessIdentity {
+                pid,
+                pgid,
+                start_token,
+            }),
+            (None, None, None) => None,
+            _ => {
+                return Err(StorageError::Invariant(
+                    "agent command has a partial process identity".into(),
+                ));
+            }
+        };
+        Ok(Self {
+            id: row
+                .id
+                .parse()
+                .map_err(|failure: uuid::Error| StorageError::Invariant(failure.to_string()))?,
+            session_id: row.session_id,
+            pane_id: row
+                .pane_id
+                .parse()
+                .map_err(|failure: uuid::Error| StorageError::Invariant(failure.to_string()))?,
+            owner: row.owner,
+            principal_id: row.principal_id.parse().map_err(
+                |failure: std::convert::Infallible| StorageError::Invariant(failure.to_string()),
+            )?,
+            creator_capability_id: row
+                .creator_capability_id
+                .map(|value| {
+                    value.parse().map_err(|failure: uuid::Error| {
+                        StorageError::Invariant(failure.to_string())
+                    })
+                })
+                .transpose()?,
+            worker_identity: ProcessIdentity {
+                pid: row.worker_pid,
+                pgid: row.worker_pgid,
+                start_token: row.worker_start_token,
+            },
+            process_identity,
+            state: AgentCommandState::from_db(&row.state),
+            output_mode: AgentOutputMode::from_db(&row.output_mode),
+            created_at_ms: row.created_at_ms,
+            updated_at_ms: row.updated_at_ms,
+            exit_code: row.exit_code,
+            exit_signal: row.exit_signal,
+        })
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -448,6 +527,18 @@ impl Store {
         }
         if current == 12 {
             self.migrate_v12_to_v13()?;
+            current = 13;
+        }
+        if current == 13 {
+            self.migrate_v13_to_v14()?;
+            current = 14;
+        }
+        if current == 14 {
+            self.migrate_v14_to_v15()?;
+            current = 15;
+        }
+        if current == 15 {
+            self.migrate_v15_to_v16()?;
         }
         Ok(())
     }
@@ -462,6 +553,18 @@ impl Store {
 
     fn migrate_v12_to_v13(&mut self) -> Result<(), StorageError> {
         migrate_v12_to_v13(self)
+    }
+
+    fn migrate_v13_to_v14(&mut self) -> Result<(), StorageError> {
+        migrate_v13_to_v14(self)
+    }
+
+    fn migrate_v14_to_v15(&mut self) -> Result<(), StorageError> {
+        migrate_v14_to_v15(self)
+    }
+
+    fn migrate_v15_to_v16(&mut self) -> Result<(), StorageError> {
+        migrate_v15_to_v16(self)
     }
 
     #[must_use]
@@ -1515,6 +1618,162 @@ impl Store {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn upsert_agent_command(
+        &mut self,
+        command: &AgentCommandRecord,
+    ) -> Result<(), StorageError> {
+        let process = command.process_identity.as_ref();
+        self.connection.execute(
+            "INSERT INTO agent_commands (
+                id, session_id, pane_id, owner, principal_id, creator_capability_id,
+                worker_pid, worker_pgid, worker_start_token, process_pid, process_pgid,
+                process_start_token, state, output_mode, created_at_ms, updated_at_ms,
+                exit_code, exit_signal
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                ?15, ?16, ?17, ?18
+             )
+             ON CONFLICT(id) DO UPDATE SET
+                principal_id = excluded.principal_id,
+                creator_capability_id = excluded.creator_capability_id,
+                process_pid = excluded.process_pid,
+                process_pgid = excluded.process_pgid,
+                process_start_token = excluded.process_start_token,
+                state = excluded.state,
+                updated_at_ms = excluded.updated_at_ms,
+                exit_code = excluded.exit_code,
+                exit_signal = excluded.exit_signal",
+            params![
+                command.id.to_string(),
+                command.session_id,
+                command.pane_id.to_string(),
+                command.owner,
+                command.principal_id.to_string(),
+                command
+                    .creator_capability_id
+                    .as_ref()
+                    .map(ToString::to_string),
+                command.worker_identity.pid,
+                command.worker_identity.pgid,
+                command.worker_identity.start_token,
+                process.map(|identity| identity.pid),
+                process.map(|identity| identity.pgid),
+                process.map(|identity| identity.start_token.as_str()),
+                command.state.as_str(),
+                command.output_mode.as_str(),
+                command.created_at_ms,
+                command.updated_at_ms,
+                command.exit_code,
+                command.exit_signal,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn find_agent_command(
+        &self,
+        command_id: &AgentCommandId,
+    ) -> Result<Option<AgentCommandRecord>, StorageError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT id, session_id, pane_id, owner, principal_id, creator_capability_id,
+                        worker_pid, worker_pgid, worker_start_token, process_pid,
+                        process_pgid, process_start_token, state, output_mode,
+                        created_at_ms, updated_at_ms, exit_code, exit_signal
+                 FROM agent_commands WHERE id = ?1",
+                [command_id.to_string()],
+                agent_command_row,
+            )
+            .optional()?;
+        row.map(AgentCommandRecord::try_from).transpose()
+    }
+
+    pub fn list_nonterminal_agent_commands(&self) -> Result<Vec<AgentCommandRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, session_id, pane_id, owner, principal_id, creator_capability_id,
+                    worker_pid, worker_pgid, worker_start_token, process_pid,
+                    process_pgid, process_start_token, state, output_mode,
+                    created_at_ms, updated_at_ms, exit_code, exit_signal
+             FROM agent_commands
+             WHERE state IN ('starting', 'running', 'idle')
+             ORDER BY created_at_ms, id",
+        )?;
+        let rows = statement.query_map([], agent_command_row)?;
+        rows.map(|row| {
+            row.map_err(StorageError::from)
+                .and_then(AgentCommandRecord::try_from)
+        })
+        .collect()
+    }
+
+    pub fn list_agent_commands_for_principal(
+        &self,
+        principal_id: &PrincipalId,
+    ) -> Result<Vec<AgentCommandRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, session_id, pane_id, owner, principal_id, creator_capability_id,
+                    worker_pid, worker_pgid, worker_start_token, process_pid,
+                    process_pgid, process_start_token, state, output_mode,
+                    created_at_ms, updated_at_ms, exit_code, exit_signal
+             FROM agent_commands
+             WHERE principal_id = ?1
+             ORDER BY created_at_ms, id",
+        )?;
+        let rows = statement.query_map([principal_id.to_string()], agent_command_row)?;
+        rows.map(|row| {
+            row.map_err(StorageError::from)
+                .and_then(AgentCommandRecord::try_from)
+        })
+        .collect()
+    }
+
+    pub fn update_agent_command_status(
+        &mut self,
+        command: &AgentCommandRecord,
+    ) -> Result<(), StorageError> {
+        let process = command.process_identity.as_ref();
+        let changed = self.connection.execute(
+            "UPDATE agent_commands
+             SET process_pid = ?2, process_pgid = ?3, process_start_token = ?4,
+                 state = ?5, updated_at_ms = ?6, exit_code = ?7, exit_signal = ?8
+             WHERE id = ?1",
+            params![
+                command.id.to_string(),
+                process.map(|identity| identity.pid),
+                process.map(|identity| identity.pgid),
+                process.map(|identity| identity.start_token.as_str()),
+                command.state.as_str(),
+                command.updated_at_ms,
+                command.exit_code,
+                command.exit_signal,
+            ],
+        )?;
+        if changed == 0 {
+            return Err(StorageError::Invariant(format!(
+                "agent command '{}' does not exist",
+                command.id
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn mark_agent_commands_lost_for_pane(
+        &mut self,
+        pane_id: &PaneId,
+        updated_at_ms: i64,
+    ) -> Result<usize, StorageError> {
+        self.connection
+            .execute(
+                "UPDATE agent_commands
+                 SET state = 'lost', updated_at_ms = ?2
+                 WHERE pane_id = ?1
+                   AND state IN ('starting', 'running', 'idle')",
+                params![pane_id.to_string(), updated_at_ms],
+            )
+            .map_err(StorageError::from)
+    }
+
     pub fn list_resource_scopes(&self) -> Result<Vec<ResourceScopeRecord>, StorageError> {
         let mut statement = self.connection.prepare(
             "SELECT id, session_id, target_kind, target_id, parent_scope_id, backend,
@@ -1586,22 +1845,272 @@ impl Store {
     pub fn local_root_principal(&self) -> Result<PrincipalRecord, StorageError> {
         self.connection
             .query_row(
-                "SELECT id, parent_id, epoch, created_at_ms, revoked_at_ms
+                "SELECT id, parent_id, epoch, created_at_ms, revoked_at_ms,
+                        high_trust, revocation_severity, revocation_deadline_ms,
+                        revocation_hold
                  FROM principals WHERE id = ?1",
                 [PrincipalId::local_root().to_string()],
-                |row| {
-                    Ok(PrincipalRecord {
-                        id: PrincipalId::from_str(&row.get::<_, String>(0)?).unwrap(),
-                        parent_id: row
-                            .get::<_, Option<String>>(1)?
-                            .map(|value| PrincipalId::from_str(&value).unwrap()),
-                        epoch: row.get::<_, i64>(2)? as u64,
-                        created_at_ms: row.get(3)?,
-                        revoked_at_ms: row.get(4)?,
-                    })
-                },
+                principal_from_row,
             )
             .map_err(StorageError::from)
+    }
+
+    pub fn find_principal(
+        &self,
+        principal_id: &PrincipalId,
+    ) -> Result<Option<PrincipalRecord>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT id, parent_id, epoch, created_at_ms, revoked_at_ms,
+                        high_trust, revocation_severity, revocation_deadline_ms,
+                        revocation_hold
+                 FROM principals WHERE id = ?1",
+                [principal_id.to_string()],
+                principal_from_row,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    pub fn list_principals(&self) -> Result<Vec<PrincipalRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, parent_id, epoch, created_at_ms, revoked_at_ms,
+                    high_trust, revocation_severity, revocation_deadline_ms,
+                    revocation_hold
+             FROM principals ORDER BY created_at_ms, id",
+        )?;
+        let rows = statement.query_map([], principal_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn insert_principal(
+        &mut self,
+        id: &PrincipalId,
+        parent_id: &PrincipalId,
+        high_trust: bool,
+        created_at_ms: i64,
+    ) -> Result<(), StorageError> {
+        if self.find_principal(parent_id)?.is_none() {
+            return Err(StorageError::Invariant(format!(
+                "parent Principal '{parent_id}' does not exist"
+            )));
+        }
+        self.connection.execute(
+            "INSERT INTO principals (
+                id, parent_id, epoch, created_at_ms, revoked_at_ms,
+                high_trust, revocation_severity, revocation_deadline_ms,
+                revocation_hold
+             ) VALUES (?1, ?2, 1, ?3, NULL, ?4, NULL, NULL, 0)",
+            params![
+                id.to_string(),
+                parent_id.to_string(),
+                created_at_ms,
+                high_trust
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn principal_chain(
+        &self,
+        principal_id: &PrincipalId,
+    ) -> Result<Vec<PrincipalRecord>, StorageError> {
+        let mut chain = Vec::new();
+        let mut current = Some(principal_id.clone());
+        let mut seen = std::collections::HashSet::new();
+        while let Some(id) = current {
+            if !seen.insert(id.clone()) {
+                return Err(StorageError::Invariant(
+                    "Principal ancestry contains a cycle".into(),
+                ));
+            }
+            let principal = self.find_principal(&id)?.ok_or_else(|| {
+                StorageError::Invariant(format!("Principal '{id}' does not exist"))
+            })?;
+            current = principal.parent_id.clone();
+            chain.push(principal);
+        }
+        Ok(chain)
+    }
+
+    pub fn install_capability(
+        &mut self,
+        capability: &CapabilityRecord,
+    ) -> Result<(), StorageError> {
+        let principal_epochs = serde_json::to_string(&capability.principal_epochs)
+            .map_err(|failure| StorageError::Invariant(failure.to_string()))?;
+        let sandbox_profile_json = capability
+            .sandbox_profile
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|failure| StorageError::Invariant(failure.to_string()))?;
+        self.connection.execute(
+            "INSERT INTO agent_capabilities (
+                id, token_hash, principal_id, principal_epochs_json, operation,
+                scope_kind, session_id, pane_id, command_id, created_at_ms,
+                expires_at_ms, revoked_at_ms, sandbox_profile_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT(id) DO UPDATE SET
+                token_hash = excluded.token_hash,
+                principal_id = excluded.principal_id,
+                principal_epochs_json = excluded.principal_epochs_json,
+                operation = excluded.operation,
+                scope_kind = excluded.scope_kind,
+                session_id = excluded.session_id,
+                pane_id = excluded.pane_id,
+                command_id = excluded.command_id,
+                created_at_ms = excluded.created_at_ms,
+                expires_at_ms = excluded.expires_at_ms,
+                revoked_at_ms = excluded.revoked_at_ms,
+                sandbox_profile_json = excluded.sandbox_profile_json",
+            params![
+                capability.id.to_string(),
+                capability.token_hash.as_str(),
+                capability.principal_id.to_string(),
+                principal_epochs,
+                capability.operation.as_str(),
+                capability.scope.kind(),
+                capability.scope.session_id(),
+                capability.scope.pane_id().map(ToString::to_string),
+                capability.scope.command_id().map(ToString::to_string),
+                capability.created_at_ms,
+                capability.expires_at_ms,
+                capability.revoked_at_ms,
+                sandbox_profile_json,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn find_capability_by_hash(
+        &self,
+        token_hash: &qwe_core::ReclaimTokenHash,
+    ) -> Result<Option<CapabilityRecord>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT id, token_hash, principal_id, principal_epochs_json,
+                        operation, scope_kind, session_id, pane_id, command_id,
+                        created_at_ms, expires_at_ms, revoked_at_ms, sandbox_profile_json
+                 FROM agent_capabilities WHERE token_hash = ?1",
+                [token_hash.as_str()],
+                capability_from_row,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    pub fn find_capability(
+        &self,
+        capability_id: &CapabilityId,
+    ) -> Result<Option<CapabilityRecord>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT id, token_hash, principal_id, principal_epochs_json,
+                        operation, scope_kind, session_id, pane_id, command_id,
+                        created_at_ms, expires_at_ms, revoked_at_ms, sandbox_profile_json
+                 FROM agent_capabilities WHERE id = ?1",
+                [capability_id.to_string()],
+                capability_from_row,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    pub fn revoke_capability(
+        &mut self,
+        capability_id: &CapabilityId,
+        revoked_at_ms: i64,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "UPDATE agent_capabilities SET revoked_at_ms = ?2 WHERE id = ?1",
+            params![capability_id.to_string(), revoked_at_ms],
+        )?;
+        Ok(())
+    }
+
+    pub fn revoke_principal(
+        &mut self,
+        principal_id: &PrincipalId,
+        severity: RevocationSeverity,
+        deadline_ms: Option<i64>,
+        hold: bool,
+        revoked_at_ms: i64,
+    ) -> Result<PrincipalRecord, StorageError> {
+        let changed = self.connection.execute(
+            "UPDATE principals
+             SET epoch = epoch + 1,
+                 revoked_at_ms = ?2,
+                 revocation_severity = ?3,
+                 revocation_deadline_ms = ?4,
+                 revocation_hold = ?5
+             WHERE id = ?1",
+            params![
+                principal_id.to_string(),
+                revoked_at_ms,
+                severity.as_str(),
+                deadline_ms,
+                hold
+            ],
+        )?;
+        if changed == 0 {
+            return Err(StorageError::Invariant(format!(
+                "Principal '{principal_id}' does not exist"
+            )));
+        }
+        self.connection.execute(
+            "UPDATE agent_capabilities
+             SET revoked_at_ms = ?2
+             WHERE principal_id = ?1",
+            params![principal_id.to_string(), revoked_at_ms],
+        )?;
+        self.find_principal(principal_id)?.ok_or_else(|| {
+            StorageError::Invariant(format!("Principal '{principal_id}' disappeared"))
+        })
+    }
+
+    pub fn expired_freeze_principals(
+        &self,
+        now_ms: i64,
+    ) -> Result<Vec<PrincipalRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, parent_id, epoch, created_at_ms, revoked_at_ms,
+                    high_trust, revocation_severity, revocation_deadline_ms,
+                    revocation_hold
+             FROM principals
+             WHERE revoked_at_ms IS NOT NULL
+               AND revocation_severity = 'freeze'
+               AND revocation_deadline_ms IS NOT NULL
+               AND revocation_deadline_ms <= ?1
+             ORDER BY revocation_deadline_ms, id",
+        )?;
+        let rows = statement.query_map([now_ms], principal_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn escalate_principal_revocation(
+        &mut self,
+        principal_id: &PrincipalId,
+        escalated_at_ms: i64,
+    ) -> Result<PrincipalRecord, StorageError> {
+        let changed = self.connection.execute(
+            "UPDATE principals
+             SET epoch = epoch + 1,
+                 revocation_severity = 'terminate',
+                 revocation_deadline_ms = NULL,
+                 revocation_hold = 0,
+                 revoked_at_ms = ?2
+             WHERE id = ?1",
+            params![principal_id.to_string(), escalated_at_ms],
+        )?;
+        if changed == 0 {
+            return Err(StorageError::Invariant(format!(
+                "Principal '{principal_id}' does not exist"
+            )));
+        }
+        self.find_principal(principal_id)?.ok_or_else(|| {
+            StorageError::Invariant(format!("Principal '{principal_id}' disappeared"))
+        })
     }
 
     pub fn mark_sessions_missing(
@@ -2572,6 +3081,121 @@ fn migrate_v12_to_v13(store: &mut Store) -> Result<(), StorageError> {
     Ok(())
 }
 
+fn migrate_v13_to_v14(store: &mut Store) -> Result<(), StorageError> {
+    let transaction = store.connection.transaction()?;
+    transaction.execute_batch(
+        "
+        CREATE TABLE agent_commands (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL
+                REFERENCES sessions(id) ON DELETE CASCADE,
+            pane_id TEXT NOT NULL
+                REFERENCES panes(id) ON DELETE CASCADE,
+            owner TEXT NOT NULL,
+            worker_pid INTEGER NOT NULL,
+            worker_pgid INTEGER NOT NULL,
+            worker_start_token TEXT NOT NULL,
+            process_pid INTEGER,
+            process_pgid INTEGER,
+            process_start_token TEXT,
+            state TEXT NOT NULL,
+            output_mode TEXT NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            exit_code INTEGER,
+            exit_signal TEXT,
+            CHECK (
+                (process_pid IS NULL AND process_pgid IS NULL AND process_start_token IS NULL)
+                OR
+                (process_pid IS NOT NULL AND process_pgid IS NOT NULL
+                 AND process_start_token IS NOT NULL)
+            )
+        );
+        CREATE INDEX agent_commands_by_pane
+            ON agent_commands(pane_id, created_at_ms);
+        CREATE INDEX agent_commands_by_state
+            ON agent_commands(state, updated_at_ms);
+        PRAGMA user_version = 14;
+        ",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v14_to_v15(store: &mut Store) -> Result<(), StorageError> {
+    let transaction = store.connection.transaction()?;
+    transaction.execute_batch(
+        "
+        ALTER TABLE principals
+            ADD COLUMN high_trust INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE principals
+            ADD COLUMN revocation_severity TEXT;
+        ALTER TABLE principals
+            ADD COLUMN revocation_deadline_ms INTEGER;
+        ALTER TABLE principals
+            ADD COLUMN revocation_hold INTEGER NOT NULL DEFAULT 0;
+        UPDATE principals SET high_trust = 1
+            WHERE id = 'local-root';
+
+        ALTER TABLE agent_commands
+            ADD COLUMN principal_id TEXT NOT NULL DEFAULT 'local-root';
+        ALTER TABLE agent_commands
+            ADD COLUMN creator_capability_id TEXT;
+
+        CREATE TABLE agent_capabilities (
+            id TEXT PRIMARY KEY,
+            token_hash TEXT NOT NULL UNIQUE,
+            principal_id TEXT NOT NULL
+                REFERENCES principals(id) ON DELETE RESTRICT,
+            principal_epochs_json TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            scope_kind TEXT NOT NULL,
+            session_id TEXT,
+            pane_id TEXT,
+            command_id TEXT,
+            created_at_ms INTEGER NOT NULL,
+            expires_at_ms INTEGER NOT NULL,
+            revoked_at_ms INTEGER,
+            CHECK (
+                (scope_kind = 'global'
+                 AND session_id IS NULL AND pane_id IS NULL AND command_id IS NULL)
+                OR
+                (scope_kind = 'session'
+                 AND session_id IS NOT NULL AND pane_id IS NULL AND command_id IS NULL)
+                OR
+                (scope_kind = 'pane'
+                 AND session_id IS NULL AND pane_id IS NOT NULL AND command_id IS NULL)
+                OR
+                (scope_kind = 'command'
+                 AND session_id IS NULL AND pane_id IS NOT NULL
+                 AND command_id IS NOT NULL)
+            )
+        );
+        CREATE INDEX agent_capabilities_by_principal
+            ON agent_capabilities(principal_id, expires_at_ms);
+        CREATE INDEX agent_capabilities_by_scope
+            ON agent_capabilities(scope_kind, pane_id, command_id);
+
+        PRAGMA user_version = 15;
+        ",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v15_to_v16(store: &mut Store) -> Result<(), StorageError> {
+    let transaction = store.connection.transaction()?;
+    transaction.execute_batch(
+        "
+        ALTER TABLE agent_capabilities
+            ADD COLUMN sandbox_profile_json TEXT;
+        PRAGMA user_version = 16;
+        ",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn unix_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -2642,6 +3266,153 @@ fn write_attachment_authority(
         ],
     )?;
     Ok(())
+}
+
+fn agent_command_row(row: &Row<'_>) -> rusqlite::Result<AgentCommandRow> {
+    Ok(AgentCommandRow {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        pane_id: row.get(2)?,
+        owner: row.get(3)?,
+        principal_id: row.get(4)?,
+        creator_capability_id: row.get(5)?,
+        worker_pid: row.get(6)?,
+        worker_pgid: row.get(7)?,
+        worker_start_token: row.get(8)?,
+        process_pid: row.get(9)?,
+        process_pgid: row.get(10)?,
+        process_start_token: row.get(11)?,
+        state: row.get(12)?,
+        output_mode: row.get(13)?,
+        created_at_ms: row.get(14)?,
+        updated_at_ms: row.get(15)?,
+        exit_code: row.get(16)?,
+        exit_signal: row.get(17)?,
+    })
+}
+
+fn principal_from_row(row: &Row<'_>) -> rusqlite::Result<PrincipalRecord> {
+    let severity = row
+        .get::<_, Option<String>>(6)?
+        .map(|value| RevocationSeverity::from_db(&value));
+    Ok(PrincipalRecord {
+        id: PrincipalId::from_str(&row.get::<_, String>(0)?).unwrap(),
+        parent_id: row
+            .get::<_, Option<String>>(1)?
+            .map(|value| PrincipalId::from_str(&value).unwrap()),
+        epoch: row.get::<_, i64>(2)? as u64,
+        created_at_ms: row.get(3)?,
+        revoked_at_ms: row.get(4)?,
+        high_trust: row.get::<_, i64>(5)? != 0,
+        revocation_severity: severity,
+        revocation_deadline_ms: row.get(7)?,
+        revocation_hold: row.get::<_, i64>(8)? != 0,
+    })
+}
+
+fn capability_from_row(row: &Row<'_>) -> rusqlite::Result<CapabilityRecord> {
+    let id = row.get::<_, String>(0)?;
+    let token_hash = row.get::<_, String>(1)?;
+    let principal_id = row.get::<_, String>(2)?;
+    let principal_epochs_json = row.get::<_, String>(3)?;
+    let operation = row.get::<_, String>(4)?;
+    let scope_kind = row.get::<_, String>(5)?;
+    let session_id = row.get::<_, Option<String>>(6)?;
+    let pane_id = row.get::<_, Option<String>>(7)?;
+    let command_id = row.get::<_, Option<String>>(8)?;
+    let sandbox_profile_json = row.get::<_, Option<String>>(12)?;
+    let scope = match scope_kind.as_str() {
+        "global" => CapabilityScope::Global,
+        "session" => CapabilityScope::Session {
+            session_id: session_id.ok_or_else(|| {
+                rusqlite::Error::InvalidColumnType(
+                    6,
+                    "session_id".into(),
+                    rusqlite::types::Type::Null,
+                )
+            })?,
+        },
+        "pane" => CapabilityScope::Pane {
+            pane_id: PaneId::from_str(&pane_id.ok_or_else(|| {
+                rusqlite::Error::InvalidColumnType(7, "pane_id".into(), rusqlite::types::Type::Null)
+            })?)
+            .map_err(|failure| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    7,
+                    rusqlite::types::Type::Text,
+                    Box::new(failure),
+                )
+            })?,
+        },
+        "command" => CapabilityScope::Command {
+            pane_id: PaneId::from_str(&pane_id.ok_or_else(|| {
+                rusqlite::Error::InvalidColumnType(7, "pane_id".into(), rusqlite::types::Type::Null)
+            })?)
+            .map_err(|failure| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    7,
+                    rusqlite::types::Type::Text,
+                    Box::new(failure),
+                )
+            })?,
+            command_id: AgentCommandId::from_str(&command_id.ok_or_else(|| {
+                rusqlite::Error::InvalidColumnType(
+                    8,
+                    "command_id".into(),
+                    rusqlite::types::Type::Null,
+                )
+            })?)
+            .map_err(|failure| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    8,
+                    rusqlite::types::Type::Text,
+                    Box::new(failure),
+                )
+            })?,
+        },
+        _ => {
+            return Err(rusqlite::Error::InvalidColumnType(
+                5,
+                "scope_kind".into(),
+                rusqlite::types::Type::Text,
+            ));
+        }
+    };
+    Ok(CapabilityRecord {
+        id: CapabilityId::from_str(&id).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        token_hash: qwe_core::ReclaimTokenHash::from_persisted(token_hash),
+        principal_id: PrincipalId::from_str(&principal_id).unwrap(),
+        principal_epochs: serde_json::from_str::<Vec<PrincipalEpoch>>(&principal_epochs_json)
+            .map_err(|failure| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    Box::new(failure),
+                )
+            })?,
+        operation: CapabilityOperation::from_db(&operation),
+        scope,
+        created_at_ms: row.get(9)?,
+        expires_at_ms: row.get(10)?,
+        revoked_at_ms: row.get(11)?,
+        sandbox_profile: sandbox_profile_json
+            .map(|value| {
+                serde_json::from_str::<qwe_core::SandboxProfile>(&value).map_err(|failure| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        12,
+                        rusqlite::types::Type::Text,
+                        Box::new(failure),
+                    )
+                })
+            })
+            .transpose()?,
+    })
 }
 
 fn pane_worker_from_row(row: &Row<'_>) -> rusqlite::Result<PaneWorkerRecord> {
@@ -2916,6 +3687,173 @@ mod tests {
         let stored = store.find_task(&id).unwrap().unwrap();
         assert_eq!(stored.state, TaskState::Exited);
         assert_eq!(stored.exit_code, Some(7));
+    }
+
+    #[test]
+    fn persists_agent_command_identity_and_marks_worker_loss_lost() {
+        let mut store = Store::open_in_memory().unwrap();
+        let pane = create_running_session(&mut store, "agent-session");
+        let record = AgentCommandRecord {
+            id: AgentCommandId::new(),
+            session_id: "agent-session".into(),
+            pane_id: pane.id.clone(),
+            owner: "agent".into(),
+            principal_id: PrincipalId::local_root(),
+            creator_capability_id: Some(CapabilityId::new()),
+            worker_identity: ProcessIdentity {
+                pid: 900,
+                pgid: 900,
+                start_token: "worker:900".into(),
+            },
+            process_identity: None,
+            state: AgentCommandState::Starting,
+            output_mode: AgentOutputMode::PipeSplit,
+            created_at_ms: 20,
+            updated_at_ms: 20,
+            exit_code: None,
+            exit_signal: None,
+        };
+        store.upsert_agent_command(&record).unwrap();
+        assert_eq!(
+            store.find_agent_command(&record.id).unwrap(),
+            Some(record.clone())
+        );
+
+        let mut running = record.clone();
+        running.state = AgentCommandState::Running;
+        running.process_identity = Some(ProcessIdentity {
+            pid: 901,
+            pgid: 901,
+            start_token: "command:901".into(),
+        });
+        running.updated_at_ms = 21;
+        store.upsert_agent_command(&running).unwrap();
+        assert_eq!(
+            store.list_nonterminal_agent_commands().unwrap(),
+            vec![running]
+        );
+
+        assert_eq!(
+            store
+                .mark_agent_commands_lost_for_pane(&pane.id, 22)
+                .unwrap(),
+            1
+        );
+        let lost = store.find_agent_command(&record.id).unwrap().unwrap();
+        assert_eq!(lost.state, AgentCommandState::Lost);
+        assert_eq!(lost.updated_at_ms, 22);
+        assert!(store.list_nonterminal_agent_commands().unwrap().is_empty());
+    }
+
+    #[test]
+    fn agent_status_updates_preserve_creator_capability() {
+        let mut store = Store::open_in_memory().unwrap();
+        let pane = create_running_session(&mut store, "agent-status");
+        let creator = CapabilityId::new();
+        let record = AgentCommandRecord {
+            id: AgentCommandId::new(),
+            session_id: "agent-status".into(),
+            pane_id: pane.id.clone(),
+            owner: "agent".into(),
+            principal_id: PrincipalId::new(),
+            creator_capability_id: Some(creator.clone()),
+            worker_identity: ProcessIdentity {
+                pid: 900,
+                pgid: 900,
+                start_token: "worker:900".into(),
+            },
+            process_identity: None,
+            state: AgentCommandState::Starting,
+            output_mode: AgentOutputMode::PipeSplit,
+            created_at_ms: 20,
+            updated_at_ms: 20,
+            exit_code: None,
+            exit_signal: None,
+        };
+        store.upsert_agent_command(&record).unwrap();
+        let mut update = record.clone();
+        update.principal_id = PrincipalId::local_root();
+        update.creator_capability_id = None;
+        update.state = AgentCommandState::Running;
+        update.process_identity = Some(ProcessIdentity {
+            pid: 901,
+            pgid: 901,
+            start_token: "command:901".into(),
+        });
+        store.update_agent_command_status(&update).unwrap();
+        let stored = store.find_agent_command(&record.id).unwrap().unwrap();
+        assert_eq!(stored.principal_id, record.principal_id);
+        assert_eq!(stored.creator_capability_id, Some(creator));
+        assert_eq!(stored.state, AgentCommandState::Running);
+    }
+
+    #[test]
+    fn persists_capability_epochs_and_freeze_escalation() {
+        let mut store = Store::open_in_memory().unwrap();
+        let root = store.local_root_principal().unwrap();
+        assert!(root.high_trust);
+        let parent = PrincipalId::new();
+        let child = PrincipalId::new();
+        store
+            .insert_principal(&parent, &root.id, false, 20)
+            .unwrap();
+        store.insert_principal(&child, &parent, false, 21).unwrap();
+        let chain = store.principal_chain(&child).unwrap();
+        let capability = CapabilityRecord {
+            id: CapabilityId::new(),
+            token_hash: qwe_core::ReclaimTokenHash::from_token("capability-token"),
+            principal_id: child.clone(),
+            principal_epochs: chain
+                .iter()
+                .map(|principal| PrincipalEpoch {
+                    principal_id: principal.id.clone(),
+                    epoch: principal.epoch,
+                })
+                .collect(),
+            operation: CapabilityOperation::AgentExec,
+            scope: CapabilityScope::Pane {
+                pane_id: PaneId::new(),
+            },
+            created_at_ms: 22,
+            expires_at_ms: 100,
+            revoked_at_ms: None,
+            sandbox_profile: Some(qwe_core::SandboxProfile::new("/tmp/agent-workspace".into())),
+        };
+        store.install_capability(&capability).unwrap();
+        assert_eq!(
+            store.find_capability(&capability.id).unwrap().unwrap(),
+            capability
+        );
+        assert_eq!(
+            store
+                .find_capability_by_hash(&capability.token_hash)
+                .unwrap()
+                .unwrap(),
+            capability
+        );
+
+        let revoked = store
+            .revoke_principal(&parent, RevocationSeverity::Freeze, Some(50), true, 30)
+            .unwrap();
+        assert_eq!(revoked.epoch, 2);
+        assert_eq!(
+            revoked.revocation_severity,
+            Some(RevocationSeverity::Freeze)
+        );
+        assert!(
+            store
+                .principal_chain(&child)
+                .unwrap()
+                .iter()
+                .any(|principal| principal.id == parent && principal.revoked_at_ms.is_some())
+        );
+        assert_eq!(store.expired_freeze_principals(50).unwrap()[0].id, parent);
+        let escalated = store.escalate_principal_revocation(&parent, 51).unwrap();
+        assert_eq!(
+            escalated.revocation_severity,
+            Some(RevocationSeverity::Terminate)
+        );
+        assert!(store.expired_freeze_principals(100).unwrap().is_empty());
     }
 
     #[test]
@@ -3440,7 +4378,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_populated_v10_database_to_v13_with_backup() {
+    fn migrates_populated_v10_database_to_current_with_backup() {
         let path = std::env::temp_dir().join(format!(
             "qwe-storage-v10-{}-{}.sqlite",
             std::process::id(),
@@ -3573,7 +4511,7 @@ mod tests {
         }
 
         let store = Store::open(path.to_str().unwrap()).unwrap();
-        assert_eq!(store.schema_version(), 13);
+        assert_eq!(store.schema_version(), SCHEMA_VERSION);
         let session = store.find_session("legacy").unwrap().unwrap();
         assert_eq!(session.identity.unwrap().pid, 100);
         assert_eq!(session.worker_identity.unwrap().pid, 90);
@@ -3611,7 +4549,7 @@ mod tests {
         assert_eq!(store.list_resource_scopes().unwrap().len(), 2);
         assert_eq!(store.local_root_principal().unwrap().epoch, 1);
 
-        let backup_prefix = format!("{}.pre-v13-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v16-", path.file_name().unwrap().to_string_lossy());
         let backup = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
             .flatten()
@@ -3621,7 +4559,7 @@ mod tests {
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().starts_with(&backup_prefix))
             })
-            .expect("v13 migration must leave a verified v10 backup");
+            .expect("current migration must leave a verified v10 backup");
         let backup = Connection::open(&backup).unwrap();
         let backup_version: i64 = backup
             .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -3630,7 +4568,7 @@ mod tests {
         drop(backup);
         drop(store);
 
-        let backup_prefix = format!("{}.pre-v13-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v16-", path.file_name().unwrap().to_string_lossy());
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry
                 .file_name()
@@ -3711,7 +4649,7 @@ mod tests {
         }
 
         let store = Store::open(path.to_str().unwrap()).unwrap();
-        assert_eq!(store.schema_version(), 13);
+        assert_eq!(store.schema_version(), SCHEMA_VERSION);
         let panes = store.list_panes_for_session("layout").unwrap();
         assert_eq!(panes.len(), 2);
         let mut expected = [first.clone(), second.clone()];
@@ -3737,12 +4675,86 @@ mod tests {
         let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry.file_name().to_string_lossy().starts_with(&format!(
-                "{}.pre-v13-",
+                "{}.pre-v16-",
                 path.file_name().unwrap().to_string_lossy()
             )) {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
+    }
+
+    #[test]
+    fn migrates_v15_capability_without_sandbox_profile_to_v16() {
+        let path = std::env::temp_dir().join(format!(
+            "qwe-storage-v15-capability-{}-{}.sqlite",
+            std::process::id(),
+            TaskId::new()
+        ));
+        let pane_id = PaneId::new();
+        let token_hash = qwe_core::ReclaimTokenHash::from_token("v15-capability");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection.execute_batch(V11_SCHEMA_SQL).unwrap();
+            connection
+                .execute_batch("PRAGMA user_version = 11;")
+                .unwrap();
+            let mut store = Store { connection };
+            store.migrate_v11_to_v12().unwrap();
+            store.migrate_v12_to_v13().unwrap();
+            store.migrate_v13_to_v14().unwrap();
+            store.migrate_v14_to_v15().unwrap();
+            store
+                .connection
+                .execute(
+                    "INSERT INTO principals (
+                        id, parent_id, epoch, created_at_ms, revoked_at_ms,
+                        high_trust, revocation_severity, revocation_deadline_ms,
+                        revocation_hold
+                     ) VALUES (?1, NULL, 1, 10, NULL, 1, NULL, NULL, 0)",
+                    [PrincipalId::local_root().to_string()],
+                )
+                .unwrap();
+            store
+                .connection
+                .execute(
+                    "INSERT INTO agent_capabilities (
+                        id, token_hash, principal_id, principal_epochs_json,
+                        operation, scope_kind, session_id, pane_id, command_id,
+                        created_at_ms, expires_at_ms, revoked_at_ms
+                     ) VALUES (?1, ?2, ?3, ?4, 'agent_exec', 'pane', NULL, ?5,
+                               NULL, 20, 1000, NULL)",
+                    params![
+                        CapabilityId::new().to_string(),
+                        token_hash.as_str(),
+                        PrincipalId::local_root().to_string(),
+                        json!([{
+                            "principal_id": PrincipalId::local_root(),
+                            "epoch": 1
+                        }])
+                        .to_string(),
+                        pane_id.to_string(),
+                    ],
+                )
+                .unwrap();
+        }
+
+        let store = Store::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(store.schema_version(), SCHEMA_VERSION);
+        let capability = store.find_capability_by_hash(&token_hash).unwrap().unwrap();
+        assert_eq!(capability.sandbox_profile, None);
+        drop(store);
+
+        for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
+            if entry.file_name().to_string_lossy().starts_with(&format!(
+                "{}.pre-v16-",
+                path.file_name().unwrap().to_string_lossy()
+            )) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
     }
 
     #[test]

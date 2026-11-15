@@ -443,6 +443,20 @@ pub mod attach {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct AuthContext {
+    pub capability: String,
+}
+
+impl std::fmt::Debug for AuthContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthContext")
+            .field("capability", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestEnvelope {
     pub version: u16,
@@ -450,6 +464,8 @@ pub struct RequestEnvelope {
     pub idempotency_key: Option<String>,
     pub operation: String,
     pub payload: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_context: Option<AuthContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -622,11 +638,15 @@ mod tests {
             idempotency_key: Some("key-1".into()),
             operation: "session.create".into(),
             payload: serde_json::json!({"name": "demo"}),
+            auth_context: Some(AuthContext {
+                capability: "test-capability".into(),
+            }),
         };
         let frame = encode_frame(&request).unwrap();
         let length = u32::from_be_bytes(frame[..4].try_into().unwrap());
         let decoded: RequestEnvelope = decode_body(length, &frame[4..]).unwrap();
         assert_eq!(decoded.request_id, "req-1");
+        assert_eq!(decoded.auth_context.unwrap().capability, "test-capability");
     }
 
     #[test]
@@ -635,6 +655,16 @@ mod tests {
             validate_version(99),
             Err(FramingError::IncompatibleVersion { .. })
         ));
+    }
+
+    #[test]
+    fn auth_context_debug_redacts_capability() {
+        let context = AuthContext {
+            capability: "secret-capability".into(),
+        };
+        let debug = format!("{context:?}");
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("secret-capability"));
     }
 
     #[test]
