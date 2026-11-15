@@ -44,7 +44,8 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   harmless probe; never infer from a version string. Cache the result. Missing
   features fail `sandbox_backend_unavailable` with the missing feature named.
   P1 found upstream 0.10.0 as the first observed release with FD binding.
-  Runtime qualification still uses feature probing.
+  Runtime qualification uses a help check plus a harmless FD mount; the result
+  is stored as `sandbox_audit.fd_bind`.
 - **D2 adopted:** see capability model below.
 - **D3 adopted:** restricted terminal output uses a whitelist, not an OSC 52
   blacklist. Filtering occurs before every Attach client and is defined in
@@ -90,14 +91,15 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 
 ### C. Profile and nesting
 
-- **D13 adopted:** profile fields are classified as stackable or fixed.
+- **D13 adopted; schema implemented:** profile fields are classified as
+  stackable or fixed.
   - Stackable: filesystem visibility/write scope, syscall set, network socket
     creation, Landlock rules.
   - Fixed: mount layout, PID/IPC namespace, private `/tmp`, hidden HOME, and the
     protected-path set.
-- **D14 adopted:** stackable fields may only tighten. Fixed fields must equal the
-  parent. This is enforced during typed profile construction, not only at
-  command dispatch.
+- **D14 adopted; core type implemented:** stackable fields may only tighten.
+  Fixed fields must equal the parent. `RefinedSandboxProfile` performs
+  construction-time validation, not only command-dispatch checks.
 - **D15 adopted after P2:** strict seccomp alone permits nested Bubblewrap, but
   once Landlock is applied the inner Bubblewrap cannot initialize its uid map.
   Refinement therefore uses shim-stacked Landlock, seccomp, and

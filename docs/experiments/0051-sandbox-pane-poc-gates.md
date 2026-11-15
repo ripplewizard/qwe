@@ -56,6 +56,10 @@ Bubblewrap check and must not replace it with path-only assumptions.
 - A backend missing FD binding returns `sandbox_backend_unavailable` with the
   missing feature named.
 
+The worker now performs the harmless FD mount during `SANDBOX_PROBE`, reports
+`fd_bind`, and qwed persists it in capability sandbox audit metadata. The
+current `AGENT_EXEC` path does not require the feature; sandboxed Pane will.
+
 ## P2: Nested Sandbox
 
 Status: pass.

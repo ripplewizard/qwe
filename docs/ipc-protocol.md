@@ -408,6 +408,9 @@ A sandboxed capability also returns `sandbox_audit` with `profile_hash`,
 exact cBPF bytes passed to Bubblewrap. `landlock_abi` is present only when the
 kernel supports and the selected Landlock mode applies it. These values are
 stored with the capability and included in live and recovered sandbox status.
+`fd_bind` reports the harmless probe result for
+`--bind-fd`/`--ro-bind-fd`; `AGENT_EXEC` does not require it, while sandboxed
+Pane does.
 
 `SECURITY_PRINCIPAL_REVOKE.severity` is `administrative`, `freeze`, or
 `terminate`; omission defaults to `freeze`. Freeze grace defaults to 60000 ms
