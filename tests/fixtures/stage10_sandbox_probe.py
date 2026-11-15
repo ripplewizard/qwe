@@ -459,6 +459,35 @@ def run_positive_probe(
     assert_done(socket_path, rw_capability, rw_command)
     assert rw_target.read_text() == "RW_OK"
 
+    persisted_credential = workspace / "credential-workspace-persistence.bin"
+    credential_persistence_command = exec_command(
+        socket_path,
+        rw_capability,
+        pane_id,
+        "/usr/bin/python3",
+        "-c",
+        (
+            "import os,pathlib;"
+            "pathlib.Path('credential-workspace-persistence.bin')"
+            ".write_bytes(os.read(3,16384))"
+        ),
+        credential="CMD_KEY",
+    )
+    credential_persistence_status = started_sandbox(
+        socket_path,
+        rw_capability,
+        credential_persistence_command["command_id"],
+    )
+    persistence_risk = credential_persistence_status["sandbox"]["risk"]
+    assert persistence_risk["writable_workspace"] is True, persistence_risk
+    assert persistence_risk["credential_exposed"] is True, persistence_risk
+    assert (
+        persistence_risk["credential_workspace_persistence"] is True
+    ), persistence_risk
+    assert_done(socket_path, rw_capability, credential_persistence_command)
+    assert persisted_credential.read_bytes() == COMMAND_SECRET
+    persisted_credential.unlink()
+
     protected_git = workspace / ".git"
     protected_target = protected_git / "sandbox-blocked"
     protected_profile = profile(
@@ -985,6 +1014,7 @@ def run_positive_probe(
         "request_cannot_enable": "pass",
         "request_cannot_downgrade": "pass",
         "workspace_ro_rw": "pass",
+        "credential_workspace_persistence_confirmed": "pass",
         "protected_path": "pass",
         "symlink_protection": "pass",
         "home_read_only": "pass",
@@ -1393,7 +1423,7 @@ def main():
                 {
                     "case": (
                         "SANDBOX-004/SANDBOX-005/SANDBOX-006/"
-                        "SANDBOX-007/SANDBOX-008/SANDBOX-009"
+                        "SANDBOX-007/SANDBOX-008/SANDBOX-009/SANDBOX-010"
                     ),
                     "status": "skip",
                     "reason": "Linux and Bubblewrap are required",
@@ -1451,7 +1481,7 @@ def main():
                 {
                     "case": (
                         "SANDBOX-004/SANDBOX-005/SANDBOX-006/"
-                        "SANDBOX-007/SANDBOX-008/SANDBOX-009"
+                        "SANDBOX-007/SANDBOX-008/SANDBOX-009/SANDBOX-010"
                     ),
                     "status": "pass",
                     **results,
