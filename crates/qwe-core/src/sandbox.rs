@@ -104,7 +104,8 @@ impl SandboxProfile {
 
 pub fn find_hardlinked_protected_path(protected_paths: &[PathBuf]) -> io::Result<Option<PathBuf>> {
     for path in protected_paths {
-        if let Some(path) = find_hardlink(path)? {
+        let target = fs::canonicalize(path)?;
+        if let Some(path) = find_hardlink(&target)? {
             return Ok(Some(path));
         }
     }

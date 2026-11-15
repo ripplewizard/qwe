@@ -566,11 +566,29 @@ def run_positive_probe(
 
     protected_link = workspace / "protected-link"
     protected_link.symlink_to(protected_git)
+    symlink_hardlink_source = protected_git / "symlink-hardlink-source"
+    symlink_hardlink_source.write_text("ORIGINAL")
+    symlink_hardlink_alias = workspace / "symlink-hardlink-alias"
+    os.link(symlink_hardlink_source, symlink_hardlink_alias)
     linked_profile = profile(
         workspace,
         workspace_mode="read_write",
         protected_paths=[protected_link],
     )
+    linked_hardlink_issue = issue_capability(
+        socket_path,
+        management,
+        principal_id,
+        pane_id,
+        linked_profile,
+    )
+    assert (
+        linked_hardlink_issue.get("code") == "sandbox_profile_unsupported"
+    ), linked_hardlink_issue
+    assert "hardlinked file" in linked_hardlink_issue["message"], linked_hardlink_issue
+    symlink_hardlink_alias.unlink()
+    symlink_hardlink_source.unlink()
+
     linked_capability = issue_capability(
         socket_path,
         management,
@@ -1133,6 +1151,7 @@ def run_positive_probe(
         "credential_workspace_persistence_confirmed": "pass",
         "protected_path": "pass",
         "protected_hardlink": "pass",
+        "symlink_protected_hardlink": "pass",
         "symlink_protection": "pass",
         "home_read_only": "pass",
         "process_namespace_shared": "pass",
