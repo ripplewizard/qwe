@@ -6,7 +6,7 @@ use qwe_core::{
     SandboxNetworkMode, SandboxProfile, SandboxWorkspaceMode,
 };
 use qwe_protocol::ProtocolErrorBody;
-use qwe_runtime::{process_identity, resolve_beneath};
+use qwe_runtime::{RestrictedTerminalFilter, process_identity, resolve_beneath};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
@@ -62,6 +62,7 @@ struct AgentCommand {
     sandbox_risk: Option<SandboxRisk>,
     created_at_ms: i64,
     pty_master: Mutex<Option<Box<dyn MasterPty + Send>>>,
+    output_filters: Mutex<[RestrictedTerminalFilter; 3]>,
     inner: Mutex<AgentCommandInner>,
     changed: Condvar,
 }
@@ -212,6 +213,7 @@ impl AgentCommand {
             sandbox_risk,
             created_at_ms,
             pty_master: Mutex::new(None),
+            output_filters: Mutex::new(std::array::from_fn(|_| RestrictedTerminalFilter::new())),
             inner: Mutex::new(AgentCommandInner {
                 state: AgentCommandState::Starting,
                 process_identity: None,
@@ -303,6 +305,19 @@ impl AgentCommand {
         if data.is_empty() {
             return;
         }
+        let filter_index = match stream {
+            AgentOutputStream::Stdout => 0,
+            AgentOutputStream::Stderr => 1,
+            AgentOutputStream::Pty => 2,
+        };
+        let filtered = self
+            .output_filters
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())[filter_index]
+            .push(data);
+        if filtered.is_empty() {
+            return;
+        }
         self.with_inner(|inner| {
             if inner.state.is_terminal() {
                 return;
@@ -313,13 +328,13 @@ impl AgentCommand {
                 AgentOutputStream::Pty => &mut inner.pty_cursor,
             };
             let start = *cursor;
-            *cursor = cursor.saturating_add(data.len() as u64);
+            *cursor = cursor.saturating_add(filtered.len() as u64);
             inner.events.append(
                 self.id.clone(),
                 AgentEventKind::Output {
                     stream,
                     cursor: start,
-                    data_hex: hex_encode(data),
+                    data_hex: hex_encode(&filtered),
                 },
             );
         });
@@ -2420,6 +2435,17 @@ impl ExitCodeChecked for std::process::ExitStatus {
 mod tests {
     use super::*;
 
+    fn hex_decode_for_test(value: &str) -> Vec<u8> {
+        value
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let digits = std::str::from_utf8(pair).unwrap();
+                u8::from_str_radix(digits, 16).unwrap()
+            })
+            .collect()
+    }
+
     #[test]
     fn event_replay_is_bounded_without_renumbering() {
         let command_id = AgentCommandId::new();
@@ -2441,6 +2467,66 @@ mod tests {
             log.events.back().map(|event| event.sequence),
             Some(log.next_sequence - 1)
         );
+    }
+
+    #[test]
+    fn agent_output_events_are_filtered_before_retention() {
+        let split = AgentCommand::new(
+            AgentCommandId::new(),
+            "local".into(),
+            AgentOutputMode::PipeSplit,
+            false,
+            None,
+            false,
+        );
+        split.push_output(AgentOutputStream::Stdout, b"out\x1b]0,TITLE");
+        split.push_output(AgentOutputStream::Stdout, b"\x07\x1b[31mred");
+        split.push_output(AgentOutputStream::Stderr, b"err\x1b]52;c;Q0xJUA==\x07");
+        let split_output = split.with_inner(|inner| {
+            inner
+                .events
+                .events
+                .iter()
+                .filter_map(|event| match &event.kind {
+                    AgentEventKind::Output {
+                        stream, data_hex, ..
+                    } => Some((*stream, hex_decode_for_test(data_hex))),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            split_output,
+            vec![
+                (AgentOutputStream::Stdout, b"out".to_vec()),
+                (AgentOutputStream::Stdout, b"\x1b[31mred".to_vec()),
+                (AgentOutputStream::Stderr, b"err".to_vec()),
+            ]
+        );
+
+        let pty = AgentCommand::new(
+            AgentCommandId::new(),
+            "local".into(),
+            AgentOutputMode::PtyMerged,
+            false,
+            None,
+            false,
+        );
+        pty.push_output(AgentOutputStream::Pty, b"pty\x1b]52;c;Q0xJUA==\x07");
+        let pty_output = pty.with_inner(|inner| {
+            inner
+                .events
+                .events
+                .iter()
+                .filter_map(|event| match &event.kind {
+                    AgentEventKind::Output {
+                        stream, data_hex, ..
+                    } => Some((*stream, hex_decode_for_test(data_hex))),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(pty_output, vec![(AgentOutputStream::Pty, b"pty".to_vec())]);
     }
 
     #[test]
