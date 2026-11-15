@@ -1376,7 +1376,7 @@ sandbox-landlock-vm host="ubuntu2404":
     set -euo pipefail
     root="{{ justfile_directory() }}"
     lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
-    ssh_config="$lab/ssh_config"
+    ssh_config="${QWE_LANDLOCK_SSH_CONFIG:-$lab/ssh_config}"
     target="qwe-{{ host }}"
     remote_dir="/home/qwe/bianca/qwe-landlock-vm"
     [ -r "$ssh_config" ] || {

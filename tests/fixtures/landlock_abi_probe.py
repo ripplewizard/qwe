@@ -113,10 +113,61 @@ def main():
             assert truncate_target.read_text() == ""
             truncate_result = "not_supported"
 
+        ioctl_allowed = "not_supported"
+        ioctl_denied = "not_supported"
+        if abi >= 5:
+            allowed_ioctl = run_init(
+                init,
+                workspace,
+                (
+                    "python3 -c 'import errno,fcntl,os,sys,termios;"
+                    "fd=os.open(\"/dev/null\",os.O_RDONLY);"
+                    "\ntry: fcntl.ioctl(fd,termios.TIOCGWINSZ,bytearray(8))"
+                    "\nexcept OSError as error: sys.exit(0 if error.errno == errno.ENOTTY else 91)'"
+                ),
+            )
+            assert allowed_ioctl.returncode == 0, allowed_ioctl.stderr
+            ioctl_allowed = "pass"
+
+            outside_device = outside / "dev-null"
+            subprocess.run(
+                ["sudo", "mknod", outside_device, "c", "1", "3"],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            subprocess.run(
+                ["sudo", "chmod", "0666", outside_device],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            denied_ioctl = run_init(
+                init,
+                workspace,
+                (
+                    "python3 -c 'import errno,fcntl,os,sys,termios;"
+                    "fd=os.open(sys.argv[1],os.O_RDONLY);"
+                    "\ntry: fcntl.ioctl(fd,termios.TIOCGWINSZ,bytearray(8))"
+                    "\nexcept OSError as error: sys.exit(0 if error.errno in "
+                    "(errno.EACCES,errno.EPERM) else 92)"
+                    "\nsys.exit(93)' \"$1\""
+                ),
+                outside_device,
+            )
+            assert denied_ioctl.returncode == 0, denied_ioctl.stderr
+            ioctl_denied = "enforced"
+
         print(
             json.dumps(
                 {
-                    "case": "SANDBOX-014",
+                    "case": (
+                        "SANDBOX-014/SANDBOX-020"
+                        if abi >= 5
+                        else "SANDBOX-014"
+                    ),
                     "status": "pass",
                     "abi": abi,
                     "workspace_write": "pass",
@@ -124,9 +175,8 @@ def main():
                     "private_tmp_write": "pass",
                     "refer": refer,
                     "truncate": truncate_result,
-                    "ioctl_dev": (
-                        "handled" if abi >= 5 else "not_supported"
-                    ),
+                    "ioctl_dev_allowed": ioctl_allowed,
+                    "ioctl_dev_outside_denied": ioctl_denied,
                 },
                 separators=(",", ":"),
             )
