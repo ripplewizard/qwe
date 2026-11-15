@@ -12,7 +12,7 @@ use serde_json::json;
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 19;
+pub const SCHEMA_VERSION: i64 = 20;
 pub const IDEMPOTENCY_RETENTION_MS: i64 = 24 * 60 * 60 * 1_000;
 pub const HISTORY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 pub const HISTORY_MAX_TERMINAL_SESSIONS: i64 = 10_000;
@@ -560,6 +560,10 @@ impl Store {
         }
         if current == 18 {
             self.migrate_v18_to_v19()?;
+            current = 19;
+        }
+        if current == 19 {
+            self.migrate_v19_to_v20()?;
         }
         Ok(())
     }
@@ -598,6 +602,10 @@ impl Store {
 
     fn migrate_v18_to_v19(&mut self) -> Result<(), StorageError> {
         migrate_v18_to_v19(self)
+    }
+
+    fn migrate_v19_to_v20(&mut self) -> Result<(), StorageError> {
+        migrate_v19_to_v20(self)
     }
 
     #[must_use]
@@ -1231,33 +1239,73 @@ impl Store {
         let row = self
             .connection
             .query_row(
-                "SELECT profile_json, audit_json, capability_id, created_at_ms
+                "SELECT pane_id, profile_json, audit_json, capability_id, created_at_ms
                  FROM pane_sandboxes WHERE pane_id = ?1",
                 [pane_id.to_string()],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)?,
-                    ))
-                },
+                pane_sandbox_from_row,
             )
             .optional()?;
-        row.map(|(profile_json, audit_json, capability_id, created_at_ms)| {
-            Ok(PaneSandboxRecord {
-                pane_id: pane_id.clone(),
-                profile: serde_json::from_str(&profile_json)
-                    .map_err(|failure| StorageError::Invariant(failure.to_string()))?,
-                audit: serde_json::from_str(&audit_json)
-                    .map_err(|failure| StorageError::Invariant(failure.to_string()))?,
-                capability_id: capability_id
-                    .parse()
-                    .map_err(|failure: uuid::Error| StorageError::Invariant(failure.to_string()))?,
-                created_at_ms,
-            })
-        })
-        .transpose()
+        row.map(Ok).transpose()
+    }
+
+    pub fn list_pane_sandboxes(&self) -> Result<Vec<PaneSandboxRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT pane_id, profile_json, audit_json, capability_id, created_at_ms
+             FROM pane_sandboxes ORDER BY created_at_ms, pane_id",
+        )?;
+        let rows = statement.query_map([], pane_sandbox_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn mark_pane_orphan_if_absent(
+        &mut self,
+        pane_id: &PaneId,
+        orphan_since_ms: i64,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO pane_orphan_states (pane_id, orphan_since_ms)
+             VALUES (?1, ?2)
+             ON CONFLICT(pane_id) DO NOTHING",
+            params![pane_id.to_string(), orphan_since_ms],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_pane_orphan(&mut self, pane_id: &PaneId) -> Result<(), StorageError> {
+        self.connection.execute(
+            "DELETE FROM pane_orphan_states WHERE pane_id = ?1",
+            [pane_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_pane_orphan_states(&self) -> Result<Vec<(PaneId, i64)>, StorageError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT pane_id, orphan_since_ms FROM pane_orphan_states")?;
+        let rows = statement.query_map([], |row| {
+            let pane_id: String = row.get(0)?;
+            Ok((
+                pane_id.parse().map_err(|failure: uuid::Error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(failure),
+                    )
+                })?,
+                row.get(1)?,
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn count_pane_orphans(&self) -> Result<usize, StorageError> {
+        let count: i64 =
+            self.connection
+                .query_row("SELECT COUNT(*) FROM pane_orphan_states", [], |row| {
+                    row.get(0)
+                })?;
+        usize::try_from(count).map_err(|failure| StorageError::Invariant(failure.to_string()))
     }
 
     pub fn record_pane_input_audit(
@@ -2204,6 +2252,18 @@ impl Store {
             )
             .optional()
             .map_err(StorageError::from)
+    }
+
+    pub fn list_capabilities(&self) -> Result<Vec<CapabilityRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, token_hash, principal_id, principal_epochs_json,
+                    operation, scope_kind, session_id, pane_id, command_id,
+                    created_at_ms, expires_at_ms, revoked_at_ms, sandbox_profile_json,
+                    sandbox_audit_json
+             FROM agent_capabilities",
+        )?;
+        let rows = statement.query_map([], capability_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn revoke_capability(
@@ -3448,6 +3508,22 @@ fn migrate_v18_to_v19(store: &mut Store) -> Result<(), StorageError> {
     Ok(())
 }
 
+fn migrate_v19_to_v20(store: &mut Store) -> Result<(), StorageError> {
+    let transaction = store.connection.transaction()?;
+    transaction.execute_batch(
+        "
+        CREATE TABLE pane_orphan_states (
+            pane_id TEXT PRIMARY KEY
+                REFERENCES panes(id) ON DELETE CASCADE,
+            orphan_since_ms INTEGER NOT NULL
+        );
+        PRAGMA user_version = 20;
+        ",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn unix_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -3886,6 +3962,44 @@ fn insert_pane_sandbox(
     Ok(())
 }
 
+fn pane_sandbox_from_row(row: &Row<'_>) -> rusqlite::Result<PaneSandboxRecord> {
+    let pane_id: String = row.get(0)?;
+    let profile_json: String = row.get(1)?;
+    let audit_json: String = row.get(2)?;
+    let capability_id: String = row.get(3)?;
+    Ok(PaneSandboxRecord {
+        pane_id: pane_id.parse().map_err(|failure: uuid::Error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        profile: serde_json::from_str(&profile_json).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        audit: serde_json::from_str(&audit_json).map_err(|failure| {
+            rusqlite::Error::FromSqlConversionFailure(
+                2,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        capability_id: capability_id.parse().map_err(|failure: uuid::Error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                3,
+                rusqlite::types::Type::Text,
+                Box::new(failure),
+            )
+        })?,
+        created_at_ms: row.get(4)?,
+    })
+}
+
 fn pane_input_audit_from_row(row: &Row<'_>) -> rusqlite::Result<PaneInputAuditRecord> {
     let sequence: i64 = row.get(0)?;
     let pane_id: String = row.get(1)?;
@@ -4054,6 +4168,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(pane_sandbox_exists, 1);
+        let orphan_table_exists: i64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'pane_orphan_states'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphan_table_exists, 1);
         let capability_columns = store
             .connection
             .prepare("PRAGMA table_info(agent_capabilities)")
@@ -4251,6 +4375,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(store.find_pane_sandbox(&pane.id).unwrap(), Some(sandbox));
+        store.mark_pane_orphan_if_absent(&pane.id, 20).unwrap();
+        store.mark_pane_orphan_if_absent(&pane.id, 30).unwrap();
+        assert_eq!(
+            store.list_pane_orphan_states().unwrap(),
+            vec![(pane.id.clone(), 20)]
+        );
+        assert_eq!(store.count_pane_orphans().unwrap(), 1);
+        store.clear_pane_orphan(&pane.id).unwrap();
+        assert_eq!(store.count_pane_orphans().unwrap(), 0);
         let audit = store
             .record_pane_input_audit(PaneInputAuditRecord {
                 sequence: 0,
@@ -5091,7 +5224,7 @@ mod tests {
         assert_eq!(store.list_resource_scopes().unwrap().len(), 2);
         assert_eq!(store.local_root_principal().unwrap().epoch, 1);
 
-        let backup_prefix = format!("{}.pre-v19-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v20-", path.file_name().unwrap().to_string_lossy());
         let backup = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
             .flatten()
@@ -5110,7 +5243,7 @@ mod tests {
         drop(backup);
         drop(store);
 
-        let backup_prefix = format!("{}.pre-v19-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v20-", path.file_name().unwrap().to_string_lossy());
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry
                 .file_name()
@@ -5217,7 +5350,7 @@ mod tests {
         let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry.file_name().to_string_lossy().starts_with(&format!(
-                "{}.pre-v19-",
+                "{}.pre-v20-",
                 path.file_name().unwrap().to_string_lossy()
             )) {
                 let _ = std::fs::remove_file(entry.path());
@@ -5289,7 +5422,7 @@ mod tests {
 
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry.file_name().to_string_lossy().starts_with(&format!(
-                "{}.pre-v19-",
+                "{}.pre-v20-",
                 path.file_name().unwrap().to_string_lossy()
             )) {
                 let _ = std::fs::remove_file(entry.path());
