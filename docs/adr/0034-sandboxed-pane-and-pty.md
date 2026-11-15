@@ -168,8 +168,8 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 
 - **D26 adopted:** restricted output permits display-oriented sequences and
   drops other sequences by default. Policy is shared by all human Attach
-  clients. Until the filter is implemented, qwed rejects sandboxed Pane Attach
-  and PTY input with `sandbox_terminal_filter_unavailable`.
+  clients. The restricted filter now runs before journal, VT, and attachment
+  retention. PTY input remains fail closed until bounded input audit exists.
 - **D27 adopted:** terminal query responses are disabled by default. CSI 6n,
   CSI 21t, DECRQSS, and OSC 10/11 are covered as output-to-input injection
   risks; any enabled response has type and length bounds.

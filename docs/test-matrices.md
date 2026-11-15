@@ -160,7 +160,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 Rows 001-034 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown. Rows
-035-041 pass local real-PTY/PID-namespace shim, control-channel, standalone
+035-042 pass local real-PTY/PID-namespace shim, control-channel, standalone
 probe, long-lived sandboxed worker, and qwed creation/lifecycle contracts; the
 new runtime rows are not yet part of the remote distribution matrix. Ubuntu
 22.04 and Debian 12 real VMs pass the complete `AGENT_EXEC` matrix. Default
@@ -213,8 +213,9 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-037 | Probe a `sandboxed_pane` profile through the standalone worker before a Session exists, returning backend and seccomp audit evidence without requiring a live Pane |
 | SANDBOX-038 | Start a long-lived QWE sandboxed Pane through the worker with FD-pinned workspace mounts, Bubblewrap PID namespace, `--pane-init`, a private control channel, terminal output, workspace writes, and forced teardown |
 | SANDBOX-039 | Require a matching `sandboxed_pane` capability for `SESSION_CREATE` / `PANE_CREATE`, reject client profiles and long-lived credentials, persist profile/audit metadata atomically, and recover it through Pane status |
-| SANDBOX-040 | Fail closed on sandboxed Pane Attach and PTY input with `sandbox_terminal_filter_unavailable` until the restricted output policy is enabled |
+| SANDBOX-040 | Apply the restricted terminal-output state machine before journal/VT/attachment retention; preserve fragmented display sequences and drop OSC title/clipboard, terminal queries, unknown CSI, and malformed escapes |
 | SANDBOX-041 | Grade `pane_input` capability issuance by persisted target metadata: ordinary management delegation for a sandboxed Pane, high-trust issuer for an unsandboxed Pane |
+| SANDBOX-042 | Permit filtered read-only sandboxed Pane observation while rejecting PTY input with `sandbox_input_audit_unavailable` and worker-level `sandbox_input_disabled` until bounded input audit exists |
 
 ## Core Object Model
 

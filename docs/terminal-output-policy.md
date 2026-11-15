@@ -1,8 +1,9 @@
 # Terminal Output Policy
 
 Date: 2026-11-15
-Status: Design accepted by ADR 0034; implementation pending. Sandboxed Pane
-Attach and PTY input are currently rejected rather than bypassing this policy.
+Status: Restricted output filtering is implemented before journal, VT, and
+Attach retention. Sandboxed Pane PTY input remains fail closed until bounded
+input audit is implemented.
 
 ## Scope
 
@@ -23,6 +24,11 @@ because every client could implement a different policy.
   not apply automatically to sandboxed output.
 
 Both modes retain the existing control-frame ordering with terminal output.
+
+The implementation is a streaming state machine in
+`qwe-runtime::RestrictedTerminalFilter`. It validates UTF-8 across chunks,
+drops stray 8-bit C1 bytes, buffers incomplete 7-bit escape sequences up to a
+bounded size, and classifies the complete sequence once.
 
 ## Restricted Allowlist
 

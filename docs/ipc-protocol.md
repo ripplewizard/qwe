@@ -131,10 +131,10 @@ FD3 authority. Supplying a `sandboxed_pane` capability without
 capability cannot be downgraded into ordinary Pane creation. Responses and
 persisted Pane status expose `sandbox.enforced`, `profile`, `audit`, and
 `capability_id`.
-Until the restricted terminal-output filter is enabled, `PANE_ATTACH` /
-`SESSION_ATTACH` and PTY `SESSION_INPUT` against a sandboxed Pane fail with
-`sandbox_terminal_filter_unavailable`. Status and lifecycle operations remain
-available.
+Sandboxed Pane output is filtered before journal retention and Attach delivery.
+Read-only observation is available, but PTY `SESSION_INPUT` still fails with
+`sandbox_input_audit_unavailable`; the worker also rejects direct Attach input
+with `sandbox_input_disabled` until bounded input audit is implemented.
 
 `CONTROL_STATUS` computes reconciliation from current durable and worker state.
 It returns `sessions`, `panes`, `tasks`, `workers`, and a `reconciliation`

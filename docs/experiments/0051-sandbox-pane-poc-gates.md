@@ -159,7 +159,11 @@ through qwed. The observed path is:
   namespace, internal seccomp, `--pane-init`, and private control channel;
 - atomic Pane sandbox metadata persistence and post-restart status recovery;
 - capability-downgrade rejection, target-graded `pane_input`, and temporary
-  fail-closed Attach/input until terminal filtering lands.
+  filtered read-only observation;
+- restricted output filtering before journal/VT/Attach retention, with OSC
+  title/clipboard and terminal-query sequences removed; and
+- worker-level rejection of sandboxed Attach input until bounded input audit
+  lands.
 
 ## P5: Landlock ABI Distribution
 
