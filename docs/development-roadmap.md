@@ -199,7 +199,9 @@ profiles, and stronger VM/OCI backends remain deferred.
 
 The explicit userns-disabled matrix passes on Ubuntu 22.04, Ubuntu 24.04, and
 Debian 12 and verifies ordinary Panes remain usable. SELinux-enforcing
-distribution coverage remains open.
+Fedora 44 coverage passes with SELinux `Enforcing`. Bubblewrap 0.5.0 passes the
+complete matrix on all three Ubuntu/Debian VMs. Additional SELinux distributions
+remain open.
 
 Capability issue now checks the backend's required-option help contract in
 addition to namespace viability. A backend with an insufficient feature set is

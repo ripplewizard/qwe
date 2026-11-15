@@ -295,6 +295,12 @@ the complete Stage 10 probe.
 `just sandbox-landlock-vm ubuntu2404` runs the init directly against Landlock
 ABI 4 and verifies `REFER` rename denial and `TRUNCATE` denial outside allowed
 write roots.
+`just sandbox-selinux-vm` runs the complete probe on Fedora 44 and requires
+SELinux to remain `Enforcing`; the externally managed VM target and SSH config
+are supplied with `QWE_SELINUX_SSH_TARGET` and `QWE_SELINUX_SSH_CONFIG`.
+`just sandbox-bubblewrap-oldest-vm-matrix`
+builds the pinned Bubblewrap 0.5.0 source and runs the complete probe on
+Ubuntu 22.04, Ubuntu 24.04 with AppArmor, and Debian 12.
 `just sandbox-userns-disabled-vm-matrix` temporarily disables userns on Ubuntu
 22.04, Ubuntu 24.04, and Debian 12, requires classified `userns_disabled`,
 restores sysctls afterward, and verifies an ordinary Pane command still

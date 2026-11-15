@@ -233,6 +233,10 @@ keeps that restriction enabled while passing the complete Stage 10 probe.
 The explicit userns-disabled matrix passes on Ubuntu 22.04, Ubuntu 24.04, and
 Debian 12, with the sandbox issue rejected and an ordinary Pane command still
 completing in each environment.
+Fedora 44 passes the complete Stage 10 probe while SELinux remains
+`Enforcing`. Bubblewrap 0.5.0, built from the pinned source archive, also passes
+the full probe on all three Ubuntu/Debian VMs, including Ubuntu 24.04 under the
+packaged AppArmor profile.
 
 The optional `strict` named seccomp profile passes pipe-split and PTY execution
 and records the SHA-256 of the exact cBPF program in capability audit metadata.
@@ -241,8 +245,8 @@ Unknown named profiles fail closed.
 Capability issue also verifies that `bwrap --help` contains every
 production-required option. A backend that starts simple namespaces but lacks
 the QWE contract fails with `bwrap_version_incompatible` before token issuance.
-This runtime check does not replace the still-open oldest-version behavior
-matrix.
+The oldest supported Bubblewrap behavior matrix is now covered by the full
+Stage 10 probe.
 
 Credential boundary tests now confirm both declared exfiltration channels:
 inherited networking reaches a host listener, and a writable workspace retains

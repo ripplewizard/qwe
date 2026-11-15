@@ -348,6 +348,11 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
 - `just sandbox-userns-disabled-vm-matrix` disables user namespaces globally on
   Ubuntu 22.04, Ubuntu 24.04, and Debian 12, verifies `userns_disabled`, runs
   an ordinary Pane command successfully in each VM, and restores sysctls.
+- `just sandbox-selinux-vm` runs the complete Stage 10 probe on Fedora 44 with
+  SELinux confirmed `Enforcing` before and after execution.
+- `just sandbox-bubblewrap-oldest-vm-matrix` builds the pinned Bubblewrap
+  0.5.0 source and passes the complete Stage 10 probe on Ubuntu 22.04, Ubuntu
+  24.04 under the packaged AppArmor profile, and Debian 12.
 - `just sandbox-apparmor-vm` loads the packaged path-scoped profile on Ubuntu
   24.04 while preserving `apparmor_restrict_unprivileged_userns=1`, verifies the
   expected profiles are loaded, and passes the complete Stage 10 probe.
@@ -373,10 +378,8 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
 
 Remaining qualification before production:
 
-- broader distribution coverage including SELinux-enforcing systems and
-  additional user-namespace-disabled configurations;
-- real Bubblewrap minimum-version/feature behavior across the supported release
-  matrix, beyond the runtime required-option probe;
+- additional SELinux-enforcing distributions and user-namespace-disabled
+  configurations beyond the current Fedora/Ubuntu/Debian coverage;
 - additional named seccomp profiles and wider runtime compatibility coverage;
 - broader network escape and filesystem escape probes;
 - credential/file-exfiltration cases;

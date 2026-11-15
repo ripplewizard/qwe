@@ -51,6 +51,9 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
 - Ubuntu 24.04 keeps `apparmor_restrict_unprivileged_userns=1` while the
   packaged path-scoped profile grants `userns` only to supported Bubblewrap
   paths, and the complete Stage 10 probe passes;
+- Fedora 44 passes the complete probe with SELinux confirmed `Enforcing`;
+- Bubblewrap 0.5.0 built from the pinned source archive passes the complete
+  probe on Ubuntu 22.04, Ubuntu 24.04 under AppArmor, and Debian 12;
 - qwed restart reconnects to the same worker, wrapper, child, profile, and
   events;
 - forced Pane teardown removes the worker, wrapper, child, descendants, and
@@ -207,6 +210,29 @@ Stage 10 probe. The probe restores the VM's previous profile state afterward.
 A custom `QWE_BWRAP_PATH` outside the documented paths requires an
 administrator-reviewed extension.
 
+### SELinux and oldest Bubblewrap
+
+Fedora 44 provides a real SELinux enforcing qualification. `SANDBOX-016`
+asserts `/sys/fs/selinux/enforce=1` and `getenforce=Enforcing` before and after
+the complete Stage 10 probe; the distribution Bubblewrap 0.12.0 runs without
+disabling SELinux or adding a permissive domain.
+
+The tested VM used Fedora Cloud Base Generic 44-1.7 x86_64 with SHA-256
+`28680fe5b371a5a82ebf43a31926e086a168e59949d03969c5093e7071f90b7f`,
+kernel `6.19.10-300.fc44.x86_64`, and the `bubblewrap`, `python3`, and
+`policycoreutils` packages.
+
+The minimum-version matrix pins Bubblewrap 0.5.0 source by SHA-256
+`9910917c031bc4305e5620e53a602161fdd676de9c9f7da5c082a508a880912c`. The recipe
+builds and installs that version on Ubuntu 22.04, Ubuntu 24.04, and Debian 12,
+then runs the complete Stage 10 probe. Ubuntu 24.04 also loads the packaged
+AppArmor profile, so the oldest Bubblewrap version is qualified without
+turning off the global userns restriction.
+
+Each VM temporarily replaces `/usr/local/bin/bwrap`, verifies the exact
+`bubblewrap 0.5.0` version, and restores the previous binary/profile in a shell
+trap.
+
 Capability issue separately checks that `bwrap --help` lists every option used
 by the production adapter. This catches backends that can start simple
 namespaces but cannot support `--json-status-fd`, `--seccomp`, the required
@@ -311,6 +337,10 @@ that Bubblewrap cannot mount.
   sysctls to zero on Ubuntu 22.04, Ubuntu 24.04, and Debian 12, verifies reason
   `userns_disabled`, executes an ordinary Pane command successfully, and
   restores the original sysctl values through a shell trap.
+- `just sandbox-selinux-vm`: Fedora 44 remains SELinux `Enforcing` throughout
+  the complete Stage 10 probe.
+- `just sandbox-bubblewrap-oldest-vm-matrix`: Bubblewrap 0.5.0 passes the full
+  probe on Ubuntu 22.04, Ubuntu 24.04 with AppArmor, and Debian 12.
 - `just sandbox-systemd-properties`: runs Bubblewrap 0.13.1 under the packaged
   `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`, and
   `PrivateTmp` properties. RW workspace writes pass under both `/run/user` and
@@ -326,9 +356,7 @@ claim that Bubblewrap succeeds inside a restricted container.
 
 ## Not Yet Validated
 
-- SELinux-enforcing distributions and other kernels with user namespaces
+- additional SELinux-enforcing distributions and kernels with user namespaces
   explicitly disabled;
-- full behavioral qualification against the oldest supported Bubblewrap
-  version in addition to the runtime required-option check;
 - additional named seccomp profiles, broader runtime compatibility coverage,
   Landlock ABI 5+ device-ioctl behavior, and stronger VM/OCI isolation.
