@@ -1138,6 +1138,23 @@ def run_backend_unavailable_probe(qwed, root):
             },
         )
         assert created.get("running") is True, created
+        low_principal = request_with_capability(
+            socket_path,
+            "SECURITY_PRINCIPAL_CREATE",
+            {"parent_id": principal_id},
+            management,
+        )["principal_id"]
+        low_management = request_with_capability(
+            socket_path,
+            "SECURITY_CAPABILITY_ISSUE",
+            {
+                "principal_id": low_principal,
+                "operation": "manage_principals",
+                "scope": {"kind": "global"},
+                "ttl_ms": 60000,
+            },
+            management,
+        )["token"]
         result = issue_capability(
             socket_path,
             management,
@@ -1148,11 +1165,32 @@ def run_backend_unavailable_probe(qwed, root):
         assert result.get("code") == "sandbox_backend_unavailable", result
         assert result["details"]["reason"] == "bwrap_missing", result
         assert result["details"]["diagnostics"]["environment"] in ("host", "container")
+        assert "stderr" in result["details"]["diagnostics"], result
+        assert "backend_path" in result["details"]["diagnostics"], result
+        low_result = issue_capability(
+            socket_path,
+            low_management,
+            low_principal,
+            created["pane_id"],
+            profile(root),
+        )
+        assert low_result.get("code") == "sandbox_backend_unavailable", low_result
+        assert low_result["details"]["reason"] == "bwrap_missing", low_result
+        low_diagnostics = low_result["details"]["diagnostics"]
+        assert low_diagnostics["environment"] in ("host", "container"), low_result
+        for restricted in (
+            "stderr",
+            "sysctls",
+            "backend_path",
+            "backend_version",
+            "probe_time_ms",
+        ):
+            assert restricted not in low_diagnostics, low_result
         (empty_path / "bwrap").symlink_to(shutil.which("bwrap"))
         recovered = issue_capability(
             socket_path,
             management,
-            principal_id,
+            low_principal,
             created["pane_id"],
             profile(root),
         )
@@ -1178,6 +1216,9 @@ def run_backend_unavailable_probe(qwed, root):
             failed_terminal.get("error_details", {}).get("reason")
             == "bwrap_missing"
         ), failed_terminal
+        restricted_diagnostics = failed_terminal["error_details"]["diagnostics"]
+        assert "stderr" not in restricted_diagnostics, failed_terminal
+        assert "backend_path" not in restricted_diagnostics, failed_terminal
     finally:
         stop_qwed(process, socket_path)
 
@@ -1241,6 +1282,7 @@ def main():
         results["backend_unavailable"] = "pass"
         results["backend_probe_refresh"] = "pass"
         results["runtime_start_failure_details"] = "pass"
+        results["diagnostics_visibility"] = "pass"
         print(
             json.dumps(
                 {

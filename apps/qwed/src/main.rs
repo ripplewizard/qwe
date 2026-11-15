@@ -774,20 +774,21 @@ fn agent_command_operation(
         .parse()
         .map_err(|failure: uuid::Error| error("invalid_request", failure.to_string()))?;
     let command = find_agent_command(context, &command_id)?;
-    {
+    let full_diagnostics = {
         let store = context
             .store
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if matches!(
+        let grant = if matches!(
             operation,
             "AGENT_COMMAND_TERMINATE" | "AGENT_COMMAND_SIGNAL"
         ) {
-            security::require_command_terminate(&store, auth_context, &command, now_ms())?;
+            security::require_command_terminate(&store, auth_context, &command, now_ms())?
         } else {
-            security::require_command_read(&store, auth_context, &command, now_ms())?;
-        }
-    }
+            security::require_command_read(&store, auth_context, &command, now_ms())?
+        };
+        grant.principal.high_trust
+    };
     let pane_key = command.pane_id.to_string();
     let timeout = if operation == "AGENT_COMMAND_WAIT_IDLE" {
         WORKER_AGENT_WAIT_TIMEOUT
@@ -847,6 +848,9 @@ fn agent_command_operation(
         Err(failure) => return Err(failure),
     };
     add_sandbox_audit(context, &command, &mut value)?;
+    if let Some(error_details) = value.get_mut("error_details") {
+        redact_sandbox_value(error_details, full_diagnostics);
+    }
     let pane = context
         .store
         .lock()
@@ -3858,6 +3862,27 @@ fn map_sandbox_probe_failure(failure: ProtocolErrorBody) -> ProtocolErrorBody {
     }
 }
 
+fn redact_sandbox_error(mut failure: ProtocolErrorBody, full: bool) -> ProtocolErrorBody {
+    if !full
+        && let Some(details) = failure.details.as_mut()
+        && let Some(diagnostics) = details.diagnostics.as_object_mut()
+    {
+        diagnostics
+            .retain(|key, _| matches!(key.as_str(), "environment" | "failed_stage" | "target"));
+    }
+    failure
+}
+
+fn redact_sandbox_value(value: &mut Value, full: bool) {
+    if full {
+        return;
+    }
+    if let Some(diagnostics) = value.get_mut("diagnostics").and_then(Value::as_object_mut) {
+        diagnostics
+            .retain(|key, _| matches!(key.as_str(), "environment" | "failed_stage" | "target"));
+    }
+}
+
 fn security_capability_issue(
     context: &Context,
     request: &RequestEnvelope,
@@ -3896,6 +3921,15 @@ fn security_capability_issue(
         .transpose()
         .map_err(|failure| error("invalid_request", failure.to_string()))?;
     security::validate_sandbox_grant(operation, sandbox_profile.as_ref())?;
+    let diagnostics_trusted = {
+        let store = context
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        security::require_management(&store, request.auth_context.as_ref(), now_ms())?
+            .principal
+            .high_trust
+    };
     let sandbox_grant = if let Some(profile) = &sandbox_profile {
         let pane_id = match &scope {
             CapabilityScope::Pane { pane_id } => pane_id,
@@ -3908,7 +3942,8 @@ fn security_capability_issue(
         };
         Some(security::SandboxCapabilityGrant {
             profile: profile.clone(),
-            audit: probe_sandbox_worker(context, pane_id, profile)?,
+            audit: probe_sandbox_worker(context, pane_id, profile)
+                .map_err(|failure| redact_sandbox_error(failure, diagnostics_trusted))?,
         })
     } else {
         None

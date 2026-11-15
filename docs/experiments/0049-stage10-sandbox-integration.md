@@ -179,6 +179,11 @@ Asynchronous `AGENT_EXEC` startup failures expose the same shape through
 `error_details`. A capability can succeed, then lose Bubblewrap before exec;
 the command must still fail with `bwrap_missing`.
 
+Diagnostics visibility is capability-principal based. High-trust callers see
+the full bounded snapshot. Low-trust callers retain stable reason/environment/
+failed-stage/target fields, but not stderr, backend path/version, probe time, or
+sysctl values.
+
 ### Mount layout
 
 The adapter mounts existing common system roots read-only, provides private

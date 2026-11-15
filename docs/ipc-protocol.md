@@ -431,6 +431,10 @@ Stable sandbox reason values are `bwrap_missing`,
 surface. Diagnostics are bounded and sanitized, and clients must treat unknown
 reason values as `unknown`.
 
+High-trust Principals receive the full diagnostics object. Other authenticated
+Principals receive only `environment`, `failed_stage`, and `target`; stderr,
+backend paths/version, probe time, and sysctl snapshots remain restricted.
+
 `AGENT_EXEC` startup failures expose the same `{reason, diagnostics}` shape as
 `error_details` in command status/wait responses.
 
