@@ -590,7 +590,11 @@
       "manage_principals",
       "agent_exec",
       "agent_command_read",
-      "agent_command_terminate"
+      "agent_command_terminate",
+      "sandboxed_pane",
+      "pane_exec",
+      "pane_input",
+      "pane_resize"
     ],
     "revocation_severity": [
       "administrative",
@@ -729,6 +733,7 @@
     "SANDBOX-031",
     "SANDBOX-032",
     "SANDBOX-033",
+    "SANDBOX-034",
     "ATTACH-001",
     "ATTACH-002",
     "ATTACH-003",

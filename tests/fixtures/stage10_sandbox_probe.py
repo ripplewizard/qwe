@@ -272,6 +272,36 @@ def run_positive_probe(
     assert created.get("running") is True, created
     pane_id = created["pane_id"]
 
+    low_pane_principal = request_with_capability(
+        socket_path,
+        "SECURITY_PRINCIPAL_CREATE",
+        {"parent_id": principal_id},
+        management,
+    )["principal_id"]
+    low_pane_management = request_with_capability(
+        socket_path,
+        "SECURITY_CAPABILITY_ISSUE",
+        {
+            "principal_id": low_pane_principal,
+            "operation": "manage_principals",
+            "scope": {"kind": "global"},
+            "ttl_ms": 60000,
+        },
+        management,
+    )["token"]
+    low_pane_input = request_with_capability(
+        socket_path,
+        "SECURITY_CAPABILITY_ISSUE",
+        {
+            "principal_id": low_pane_principal,
+            "operation": "pane_input",
+            "scope": {"kind": "pane", "pane_id": pane_id},
+            "ttl_ms": 60000,
+        },
+        low_pane_management,
+    )
+    assert low_pane_input.get("code") == "insufficient_trust", low_pane_input
+
     read_only_profile = profile(workspace)
     read_only = issue_capability(
         socket_path,
@@ -1415,6 +1445,7 @@ def run_positive_probe(
 
     return {
         "profile_authorization": "pass",
+        "pane_input_trust_floor": "pass",
         "fd_bind_probe": "pass",
         "strict_seccomp": "pass",
         "nested_bubblewrap": "pass",

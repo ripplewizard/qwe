@@ -3942,6 +3942,12 @@ fn security_capability_issue(
             .principal
             .high_trust
     };
+    if operation == CapabilityOperation::PaneInput && !diagnostics_trusted {
+        return Err(error(
+            "insufficient_trust",
+            "pane_input is equivalent to code execution and currently requires a high-trust issuer",
+        ));
+    }
     let sandbox_grant = if let Some(profile) = &sandbox_profile {
         let pane_id = match &scope {
             CapabilityScope::Pane { pane_id } => pane_id,

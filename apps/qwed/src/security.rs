@@ -414,6 +414,10 @@ fn validate_operation_scope(
         CapabilityOperation::AgentCommandRead | CapabilityOperation::AgentCommandTerminate => {
             matches!(scope, CapabilityScope::Command { .. })
         }
+        CapabilityOperation::SandboxedPane => matches!(scope, CapabilityScope::Session { .. }),
+        CapabilityOperation::PaneExec
+        | CapabilityOperation::PaneInput
+        | CapabilityOperation::PaneResize => matches!(scope, CapabilityScope::Pane { .. }),
     };
     if valid {
         Ok(())
@@ -534,6 +538,45 @@ mod tests {
         assert_eq!(failure.code, "sandbox_profile_unsupported");
         profile.landlock = SandboxLandlockMode::Required { min_abi: 1 };
         validate_sandbox_grant(CapabilityOperation::AgentExec, Some(&profile)).unwrap();
+    }
+
+    #[test]
+    fn pane_capabilities_require_their_intended_scope() {
+        use qwe_core::CapabilityScope;
+        let pane_id = PaneId::new();
+        assert!(
+            validate_operation_scope(
+                CapabilityOperation::SandboxedPane,
+                &CapabilityScope::Session {
+                    session_id: "session".into()
+                }
+            )
+            .is_ok()
+        );
+        for operation in [
+            CapabilityOperation::PaneExec,
+            CapabilityOperation::PaneInput,
+            CapabilityOperation::PaneResize,
+        ] {
+            assert!(
+                validate_operation_scope(
+                    operation,
+                    &CapabilityScope::Pane {
+                        pane_id: pane_id.clone()
+                    }
+                )
+                .is_ok()
+            );
+            assert!(
+                validate_operation_scope(
+                    operation,
+                    &CapabilityScope::Session {
+                        session_id: "session".into()
+                    }
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]

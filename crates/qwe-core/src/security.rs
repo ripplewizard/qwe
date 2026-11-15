@@ -47,14 +47,22 @@ pub enum CapabilityOperation {
     AgentExec,
     AgentCommandRead,
     AgentCommandTerminate,
+    SandboxedPane,
+    PaneExec,
+    PaneInput,
+    PaneResize,
 }
 
 impl CapabilityOperation {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 8] = [
         Self::ManagePrincipals,
         Self::AgentExec,
         Self::AgentCommandRead,
         Self::AgentCommandTerminate,
+        Self::SandboxedPane,
+        Self::PaneExec,
+        Self::PaneInput,
+        Self::PaneResize,
     ];
 
     #[must_use]
@@ -64,6 +72,10 @@ impl CapabilityOperation {
             Self::AgentExec => "agent_exec",
             Self::AgentCommandRead => "agent_command_read",
             Self::AgentCommandTerminate => "agent_command_terminate",
+            Self::SandboxedPane => "sandboxed_pane",
+            Self::PaneExec => "pane_exec",
+            Self::PaneInput => "pane_input",
+            Self::PaneResize => "pane_resize",
         }
     }
 
@@ -73,6 +85,10 @@ impl CapabilityOperation {
             "manage_principals" => Self::ManagePrincipals,
             "agent_command_read" => Self::AgentCommandRead,
             "agent_command_terminate" => Self::AgentCommandTerminate,
+            "sandboxed_pane" => Self::SandboxedPane,
+            "pane_exec" => Self::PaneExec,
+            "pane_input" => Self::PaneInput,
+            "pane_resize" => Self::PaneResize,
             _ => Self::AgentExec,
         }
     }
@@ -87,6 +103,10 @@ impl FromStr for CapabilityOperation {
             "agent_exec" => Ok(Self::AgentExec),
             "agent_command_read" => Ok(Self::AgentCommandRead),
             "agent_command_terminate" => Ok(Self::AgentCommandTerminate),
+            "sandboxed_pane" => Ok(Self::SandboxedPane),
+            "pane_exec" => Ok(Self::PaneExec),
+            "pane_input" => Ok(Self::PaneInput),
+            "pane_resize" => Ok(Self::PaneResize),
             _ => Err(format!("unknown capability operation '{value}'")),
         }
     }
