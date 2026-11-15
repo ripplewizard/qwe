@@ -1,6 +1,6 @@
 use qwe_core::{LayoutRect, PaneId, PaneKind, PaneSpec, tile_pane_specs};
 use qwe_protocol::{
-    ATTACH_PROTOCOL_VERSION, ProtocolErrorBody,
+    ATTACH_PROTOCOL_VERSION, AuthContext, ProtocolErrorBody,
     attach::{self, FrameType},
     verify_same_uid,
 };
@@ -179,6 +179,7 @@ pub fn run(
     control_socket: &str,
     session_id: &str,
     owner: &str,
+    input_auth_context: Option<AuthContext>,
 ) -> Result<Value, ProtocolErrorBody> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         return Err(attach_error(
@@ -206,6 +207,7 @@ pub fn run(
             rows,
             columns,
             events_tx.clone(),
+            input_auth_context.clone(),
         )?;
         let mut parser = Parser::new(
             NonZeroU16::new(rows).expect("Pane content rows are positive"),
@@ -409,6 +411,7 @@ pub fn run(
                             &mut views,
                             &shared,
                             focused,
+                            input_auth_context.clone(),
                         ),
                         ComposeAction::Float => create_floating_pane(
                             control_socket,
@@ -418,6 +421,7 @@ pub fn run(
                             &mut views,
                             &shared,
                             focused,
+                            input_auth_context.clone(),
                         ),
                         ComposeAction::Close => {
                             close_focused_pane(control_socket, owner, &mut views, &shared, focused)
@@ -1118,6 +1122,7 @@ fn apply_floating_draft(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn split_focused_pane(
     control_socket: &str,
     session_id: &str,
@@ -1126,6 +1131,7 @@ fn split_focused_pane(
     views: &mut Vec<PaneView>,
     shared: &Arc<Mutex<SharedInput>>,
     focused: usize,
+    input_auth_context: Option<AuthContext>,
 ) -> Result<(usize, bool), ProtocolErrorBody> {
     let source = views
         .get(focused)
@@ -1158,6 +1164,7 @@ fn split_focused_pane(
         rows,
         columns,
         events.clone(),
+        input_auth_context.clone(),
     );
     let (writer, snapshot) = match attached {
         Ok(attached) => attached,
@@ -1216,6 +1223,7 @@ fn split_focused_pane(
     Ok((insertion, true))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_floating_pane(
     control_socket: &str,
     session_id: &str,
@@ -1224,6 +1232,7 @@ fn create_floating_pane(
     views: &mut Vec<PaneView>,
     shared: &Arc<Mutex<SharedInput>>,
     focused: usize,
+    input_auth_context: Option<AuthContext>,
 ) -> Result<(usize, bool), ProtocolErrorBody> {
     let (rows, columns) = views
         .get(focused)
@@ -1256,6 +1265,7 @@ fn create_floating_pane(
         rows,
         columns,
         events.clone(),
+        input_auth_context.clone(),
     );
     let (writer, snapshot) = match attached {
         Ok(attached) => attached,
@@ -1555,6 +1565,7 @@ fn pane_content_size(rect: LayoutRect) -> (u16, u16) {
     (rect.rows.saturating_sub(1).max(1), rect.columns.max(1))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn attach_to_pane(
     control_socket: &str,
     session_id: &str,
@@ -1563,14 +1574,18 @@ fn attach_to_pane(
     rows: u16,
     columns: u16,
     events: mpsc::Sender<Event>,
+    input_auth_context: Option<AuthContext>,
 ) -> Result<(UnixStream, attach::TerminalSnapshot), ProtocolErrorBody> {
     let attach_path = attach_socket(control_socket);
     let reader = UnixStream::connect(&attach_path)
         .map_err(|failure| attach_error("transport", format!("{attach_path}: {failure}")))?;
     verify_same_uid(&reader)
         .map_err(|failure| attach_error("unauthorized_peer", failure.to_string()))?;
-    let open = attach::AttachOpen::versioned(session_id, owner, rows, columns)
+    let mut open = attach::AttachOpen::versioned(session_id, owner, rows, columns)
         .with_pane(pane_id.to_string());
+    if let Some(auth_context) = input_auth_context {
+        open = open.with_input_auth_context(auth_context);
+    }
     attach::write_json_frame(
         &mut reader
             .try_clone()

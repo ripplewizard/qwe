@@ -5618,6 +5618,10 @@ fn serve_observer_attachment(
 fn serve_client_attachment_input(
     mut client: UnixStream,
     mut worker: UnixStream,
+    context: Arc<Context>,
+    pane_id: PaneId,
+    sandbox: Option<qwe_core::PaneSandboxRecord>,
+    input_auth_context: Option<qwe_protocol::AuthContext>,
 ) -> ClientAttachmentEnd {
     loop {
         let frame = match attach::read_frame(&mut client) {
@@ -5634,6 +5638,54 @@ fn serve_client_attachment_input(
                 return ClientAttachmentEnd::Eof;
             }
         };
+        if frame.frame_type == attach::FrameType::Input
+            && let Some(sandbox) = &sandbox
+        {
+            let input_bytes = frame.payload.len();
+            let result = (|| {
+                if input_bytes > MAX_CONTROL_INPUT_BYTES {
+                    return Err(error(
+                        "input_too_large",
+                        format!(
+                            "control input is {input_bytes} bytes; maximum is {MAX_CONTROL_INPUT_BYTES}"
+                        ),
+                    ));
+                }
+                let _input_guard = context
+                    .attachment_lock
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let grant = {
+                    let store = context
+                        .store
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    security::require_pane_input(
+                        &store,
+                        input_auth_context.as_ref(),
+                        &pane_id,
+                        now_ms(),
+                    )?
+                };
+                record_pane_input_audit(
+                    context.as_ref(),
+                    &pane_id,
+                    sandbox,
+                    &grant,
+                    input_bytes,
+                    now_ms(),
+                )?;
+                if let Err(failure) = forward_attachment_frame(&mut worker, &frame) {
+                    return Err(error("worker_unreachable", failure.to_string()));
+                }
+                Ok(())
+            })();
+            if let Err(failure) = result {
+                let _ = worker.shutdown(std::net::Shutdown::Both);
+                return ClientAttachmentEnd::Error(attach_error(&failure.code, failure.message));
+            }
+            continue;
+        }
         if frame.frame_type == attach::FrameType::Detach {
             let detach = match attach::decode_json::<attach::Detach>(&frame.payload) {
                 Ok(detach) => detach,
@@ -5748,7 +5800,7 @@ fn serve_attachment(
         return Ok(());
     }
 
-    let (raw_token, generation, worker, pane_id) = {
+    let (raw_token, generation, worker, pane_id, sandbox) = {
         let _authority_guard = context
             .attachment_lock
             .lock()
@@ -5834,6 +5886,29 @@ fn serve_attachment(
             },
         };
         let pane_id = pane.id.clone();
+        let sandbox = match store.find_pane_sandbox(&pane_id) {
+            Ok(sandbox) => sandbox,
+            Err(failure) => {
+                drop(store);
+                send_attachment_error(
+                    &mut client,
+                    attach_error("persistence_failure", failure.to_string()),
+                );
+                return Ok(());
+            }
+        };
+        if sandbox.is_some()
+            && let Err(failure) = security::require_pane_input(
+                &store,
+                open.input_auth_context.as_ref(),
+                &pane_id,
+                now,
+            )
+        {
+            drop(store);
+            send_attachment_error(&mut client, attach_error(&failure.code, failure.message));
+            return Ok(());
+        }
         let mut authority = store
             .get_attachment_authority_for_pane(&pane_id)
             .map_err(|failure| std::io::Error::other(failure.to_string()))?
@@ -5907,13 +5982,16 @@ fn serve_attachment(
         };
         verify_same_uid(&worker)
             .map_err(|failure| format!("worker attach peer verification failed: {failure}"))?;
-        let internal_open = attach::AttachOpen::versioned(
+        let mut internal_open = attach::AttachOpen::versioned(
             &open.session_id,
             secure_attach_token().map_err(|failure| std::io::Error::other(failure.message))?,
             open.rows,
             open.columns,
         )
         .with_pane(pane_id.to_string());
+        if sandbox.is_some() {
+            internal_open = internal_open.authorize_input();
+        }
         if let Err(failure) =
             attach::write_json_frame(&mut worker, attach::FrameType::AttachOpen, &internal_open)
         {
@@ -6099,13 +6177,26 @@ fn serve_attachment(
             return Ok(());
         }
         drop(store);
-        (raw_token, next.generation, worker, pane_id)
+        (raw_token, next.generation, worker, pane_id, sandbox)
     };
 
     let hub = attachment_hub(context, &pane_id.to_string());
     let input_client = client.try_clone()?;
     let input_worker = worker.try_clone()?;
-    let input = thread::spawn(move || serve_client_attachment_input(input_client, input_worker));
+    let input_context = Arc::clone(context);
+    let input_pane_id = pane_id.clone();
+    let input_auth_context = open.input_auth_context.clone();
+    let input_sandbox = sandbox.clone();
+    let input = thread::spawn(move || {
+        serve_client_attachment_input(
+            input_client,
+            input_worker,
+            input_context,
+            input_pane_id,
+            input_sandbox,
+            input_auth_context,
+        )
+    });
     let mut worker_reader = worker;
     while let Ok(frame) = attach::read_frame(&mut worker_reader) {
         if forward_attachment_frame(&mut client, &frame).is_err() {

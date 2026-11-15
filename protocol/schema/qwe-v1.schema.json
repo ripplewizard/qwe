@@ -128,6 +128,21 @@
         "lease_generation": {
           "$ref": "#/$defs/UInt64"
         },
+        "input_auth_context": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capability"],
+          "properties": {
+            "capability": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "input_authorized": {
+          "type": "boolean",
+          "description": "Internal qwed-to-worker authorization marker; client values are ignored."
+        },
         "rows": {
           "$ref": "#/$defs/Rows"
         },
@@ -744,6 +759,7 @@
     "SANDBOX-042",
     "SANDBOX-043",
     "SANDBOX-044",
+    "SANDBOX-045",
     "ATTACH-001",
     "ATTACH-002",
     "ATTACH-003",

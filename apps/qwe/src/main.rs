@@ -497,6 +497,12 @@ fn read_capability_file(path: &Path) -> Result<AuthContext, ProtocolErrorBody> {
     })
 }
 
+fn optional_capability(
+    capability_file: Option<&Path>,
+) -> Result<Option<AuthContext>, ProtocolErrorBody> {
+    capability_file.map(read_capability_file).transpose()
+}
+
 fn management_capability(
     socket: &str,
     capability_file: Option<&Path>,
@@ -914,13 +920,17 @@ fn run_control_input(
     session_id: &str,
     owner: &str,
     data: &str,
+    input_auth_context: Option<AuthContext>,
 ) -> Result<Value, ProtocolErrorBody> {
     let attach_path = attach_socket(control_socket);
     let mut stream = UnixStream::connect(&attach_path)
         .map_err(|failure| attach_error("transport", format!("{attach_path}: {failure}")))?;
     verify_same_uid(&stream)
         .map_err(|failure| attach_error("unauthorized_peer", failure.to_string()))?;
-    let open = attach::AttachOpen::versioned(session_id, owner, 24, 80);
+    let mut open = attach::AttachOpen::versioned(session_id, owner, 24, 80);
+    if let Some(auth_context) = input_auth_context.clone() {
+        open = open.with_input_auth_context(auth_context);
+    }
     attach::write_json_frame(&mut stream, attach::FrameType::AttachOpen, &open)
         .map_err(|failure| attach_error("transport", failure.to_string()))?;
     loop {
@@ -946,10 +956,11 @@ fn run_control_input(
             }
         }
     }
-    let result = call(
+    let result = call_with_auth(
         control_socket,
         "SESSION_INPUT",
         json!({"session_id": session_id, "owner": owner, "data": data}),
+        input_auth_context,
     );
     let detach = attach::Detach {
         protocol_version: ATTACH_PROTOCOL_VERSION,
@@ -964,6 +975,7 @@ fn run_attach(
     control_socket: &str,
     session_id: &str,
     owner: &str,
+    input_auth_context: Option<AuthContext>,
 ) -> Result<Value, ProtocolErrorBody> {
     let attach_path = attach_socket(control_socket);
     let mut reader = UnixStream::connect(&attach_path)
@@ -972,7 +984,10 @@ fn run_attach(
         .map_err(|failure| attach_error("unauthorized_peer", failure.to_string()))?;
     let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let (rows, columns) = terminal_size();
-    let open = attach::AttachOpen::versioned(session_id, owner, rows, columns);
+    let mut open = attach::AttachOpen::versioned(session_id, owner, rows, columns);
+    if let Some(auth_context) = input_auth_context {
+        open = open.with_input_auth_context(auth_context);
+    }
     attach::write_json_frame(&mut reader, attach::FrameType::AttachOpen, &open)
         .map_err(|failure| attach_error("transport", failure.to_string()))?;
     let writer =
@@ -1162,9 +1177,25 @@ fn main() -> ExitCode {
                 "SESSION_STATUS",
                 json!({"session_id": id}),
             ),
-            SessionCommand::Attach { id } => run_attach(&arguments.socket, &id, &arguments.owner),
+            SessionCommand::Attach { id } => {
+                let auth = match optional_capability(arguments.capability_file.as_deref()) {
+                    Ok(auth) => auth,
+                    Err(failure) => {
+                        eprintln!("{}: {}", failure.code, failure.message);
+                        return ExitCode::FAILURE;
+                    }
+                };
+                run_attach(&arguments.socket, &id, &arguments.owner, auth)
+            }
             SessionCommand::Compose { id } => {
-                compositor::run(&arguments.socket, &id, &arguments.owner)
+                let auth = match optional_capability(arguments.capability_file.as_deref()) {
+                    Ok(auth) => auth,
+                    Err(failure) => {
+                        eprintln!("{}: {}", failure.code, failure.message);
+                        return ExitCode::FAILURE;
+                    }
+                };
+                compositor::run(&arguments.socket, &id, &arguments.owner, auth)
             }
             SessionCommand::Layout { id, rows, columns } => {
                 let (default_rows, default_columns) = terminal_size();
@@ -1184,7 +1215,14 @@ fn main() -> ExitCode {
                 json!({"session_id": id}),
             ),
             SessionCommand::Input { id, data } => {
-                run_control_input(&arguments.socket, &id, &arguments.owner, &data)
+                let auth = match optional_capability(arguments.capability_file.as_deref()) {
+                    Ok(auth) => auth,
+                    Err(failure) => {
+                        eprintln!("{}: {}", failure.code, failure.message);
+                        return ExitCode::FAILURE;
+                    }
+                };
+                run_control_input(&arguments.socket, &id, &arguments.owner, &data, auth)
             }
             SessionCommand::Detach { id } => call(
                 &arguments.socket,

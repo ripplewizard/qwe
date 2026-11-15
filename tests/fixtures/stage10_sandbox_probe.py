@@ -29,6 +29,33 @@ OWNER = "stage10-sandbox"
 SESSION_ID = "stage10-sandbox-session"
 COMMAND_SECRET = b"stage10-sandbox-credential-4d1e"
 HOST_ENV_SECRET = "stage10-host-environment-secret-28c9"
+ATTACH_OPEN = 0x01
+ATTACH_INPUT = 0x02
+ATTACH_DETACH = 0x05
+ATTACH_ACCEPTED = 0x81
+ATTACH_SNAPSHOT = 0x82
+ATTACH_ERROR = 0x87
+
+
+def attach_write_frame(stream, frame_type, payload):
+    stream.sendall(bytes([frame_type]) + len(payload).to_bytes(4, "big") + payload)
+
+
+def attach_read_frame(stream):
+    header = b""
+    while len(header) < 5:
+        chunk = stream.recv(5 - len(header))
+        if not chunk:
+            raise ConnectionError("attach stream closed")
+        header += chunk
+    length = int.from_bytes(header[1:], "big")
+    payload = b""
+    while len(payload) < length:
+        chunk = stream.recv(length - len(payload))
+        if not chunk:
+            raise ConnectionError("attach payload closed")
+        payload += chunk
+    return header[0], payload
 
 
 def landlock_available():
@@ -341,6 +368,7 @@ def run_positive_probe(
     )
     sandboxed_pane_capability = None
     sandboxed_input_secret = None
+    interactive_input_secret = None
     if audit["fd_bind"]:
         assert sandboxed_pane.get("token"), sandboxed_pane
         assert sandboxed_pane["sandbox_audit"]["fd_bind"] is True, sandboxed_pane
@@ -550,6 +578,65 @@ def run_positive_probe(
             )["screen"],
             "sandboxed Pane input did not execute",
         )
+        attach_path = f"{socket_path}.attach"
+        missing_cap_attach = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        missing_cap_attach.connect(attach_path)
+        missing_open = {
+            "protocol_version": 1,
+            "session_id": sandboxed_session_id,
+            "pane_id": sandboxed_pane_id,
+            "owner": OWNER,
+            "rows": 24,
+            "columns": 80,
+            "mode": "exclusive",
+            "lease_generation": sandboxed_generation,
+        }
+        attach_write_frame(
+            missing_cap_attach,
+            ATTACH_OPEN,
+            json.dumps(missing_open).encode(),
+        )
+        frame_type, payload = attach_read_frame(missing_cap_attach)
+        assert frame_type == ATTACH_ERROR, (frame_type, payload)
+        assert json.loads(payload)["code"] == "capability_missing", payload
+        missing_cap_attach.close()
+
+        interactive_attach = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        interactive_attach.connect(attach_path)
+        interactive_open = {
+            **missing_open,
+            "input_auth_context": {"capability": sandboxed_pane_input["token"]},
+        }
+        attach_write_frame(
+            interactive_attach,
+            ATTACH_OPEN,
+            json.dumps(interactive_open).encode(),
+        )
+        while True:
+            frame_type, payload = attach_read_frame(interactive_attach)
+            if frame_type == ATTACH_SNAPSHOT:
+                break
+            assert frame_type in (ATTACH_ACCEPTED,), (frame_type, payload)
+        interactive_input_secret = "INTERACTIVE_INPUT_SECRET_91c2"
+        interactive_command = (
+            f"printf 'INTERACTIVE_INPUT_EXECUTED:{interactive_input_secret}\\n'\n"
+        ).encode()
+        attach_write_frame(interactive_attach, ATTACH_INPUT, interactive_command)
+        wait_for(
+            lambda: "INTERACTIVE_INPUT_EXECUTED"
+            in request(
+                socket_path,
+                "PANE_ATTACH",
+                {"pane_id": sandboxed_pane_id},
+            )["screen"],
+            "interactive sandboxed Pane input did not execute",
+        )
+        attach_write_frame(
+            interactive_attach,
+            ATTACH_DETACH,
+            json.dumps({"protocol_version": 1, "hold_ttl_ms": 0}).encode(),
+        )
+        interactive_attach.close()
         sandboxed_pane_resize = request_with_capability(
             socket_path,
             "SECURITY_CAPABILITY_ISSUE",
@@ -1708,6 +1795,8 @@ def run_positive_probe(
         assert HOST_ENV_SECRET.encode() not in contents
         if sandboxed_input_secret is not None:
             assert sandboxed_input_secret.encode() not in contents
+        if interactive_input_secret is not None:
+            assert interactive_input_secret.encode() not in contents
         for token in capability_tokens:
             assert token.encode() not in contents
     log_path = Path(f"{socket_path}.runtime").parent / "qwed-stage10.log"
@@ -1715,17 +1804,18 @@ def run_positive_probe(
         contents = log_path.read_bytes()
         assert COMMAND_SECRET not in contents
         assert HOST_ENV_SECRET.encode() not in contents
-    if sandboxed_input_secret is not None:
+    if sandboxed_input_secret is not None and interactive_input_secret is not None:
         connection = sqlite3.connect(f"{socket_path}.sqlite")
         try:
             rows = connection.execute(
-                "SELECT byte_length, content_recorded FROM pane_input_audits"
+                "SELECT byte_length, content_recorded FROM pane_input_audits ORDER BY id"
             ).fetchall()
         finally:
             connection.close()
-        assert len(rows) == 1, rows
+        assert len(rows) == 2, rows
         assert rows[0][0] == len(input_command.encode()), rows
-        assert rows[0][1] == 0, rows
+        assert rows[1][0] == len(interactive_command), rows
+        assert all(row[1] == 0 for row in rows), rows
 
     return {
         "profile_authorization": "pass",
@@ -1735,6 +1825,7 @@ def run_positive_probe(
         ),
         "sandboxed_pane_restricted_output": "pass",
         "sandboxed_pane_input_audit": "pass",
+        "sandboxed_pane_attach_input_audit": "pass",
         "sandboxed_pane_resize": "pass",
         "pane_input_trust_floor": "pass",
         "fd_bind_probe": "pass",

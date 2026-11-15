@@ -1497,6 +1497,7 @@ fn serve_attachment_input(
     mut stream: UnixStream,
     session: Arc<WorkerSession>,
     queue: Arc<AttachmentQueue>,
+    sandbox_input_authorized: bool,
 ) {
     loop {
         let frame = match attach::read_frame(&mut stream) {
@@ -1516,7 +1517,7 @@ fn serve_attachment_input(
         };
         let result = (|| match frame.frame_type {
             attach::FrameType::Input => {
-                if session.sandbox_profile.is_some() {
+                if session.sandbox_profile.is_some() && !sandbox_input_authorized {
                     Err(attach_error(
                         "sandbox_input_disabled",
                         "sandboxed Pane PTY input is disabled until bounded input audit is implemented",
@@ -1660,6 +1661,7 @@ fn serve_worker_attachment(
         );
         return Ok(());
     }
+    let sandbox_input_authorized = open.input_authorized;
     let registration = match session.register_attachment(&open) {
         Ok(registration) => registration,
         Err(failure) => {
@@ -1692,7 +1694,12 @@ fn serve_worker_attachment(
     let input_session = Arc::clone(&session);
     let input_queue = Arc::clone(&registration.queue);
     thread::spawn(move || {
-        serve_attachment_input(input_stream, input_session, input_queue);
+        serve_attachment_input(
+            input_stream,
+            input_session,
+            input_queue,
+            sandbox_input_authorized,
+        );
     });
 
     loop {

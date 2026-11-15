@@ -17,7 +17,10 @@ pub mod attach {
     use serde::{Deserialize, Serialize};
     use thiserror::Error;
 
-    use super::{ATTACH_PROTOCOL_VERSION, MAX_ATTACH_FRAME_PAYLOAD_BYTES, MAX_ATTACH_OUTPUT_BYTES};
+    use super::{
+        ATTACH_PROTOCOL_VERSION, AuthContext, MAX_ATTACH_FRAME_PAYLOAD_BYTES,
+        MAX_ATTACH_OUTPUT_BYTES,
+    };
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum Direction {
@@ -332,6 +335,14 @@ pub mod attach {
         pub columns: u16,
         #[serde(default)]
         pub mode: AttachMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub input_auth_context: Option<AuthContext>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub input_authorized: bool,
+    }
+
+    fn is_false(value: &bool) -> bool {
+        !*value
     }
 
     impl AttachOpen {
@@ -352,12 +363,26 @@ pub mod attach {
                 rows,
                 columns,
                 mode: AttachMode::default(),
+                input_auth_context: None,
+                input_authorized: false,
             }
         }
 
         #[must_use]
         pub fn with_pane(mut self, pane_id: impl Into<String>) -> Self {
             self.pane_id = Some(pane_id.into());
+            self
+        }
+
+        #[must_use]
+        pub fn with_input_auth_context(mut self, auth_context: AuthContext) -> Self {
+            self.input_auth_context = Some(auth_context);
+            self
+        }
+
+        #[must_use]
+        pub fn authorize_input(mut self) -> Self {
+            self.input_authorized = true;
             self
         }
     }
@@ -443,7 +468,7 @@ pub mod attach {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthContext {
     pub capability: String,
 }
@@ -762,6 +787,8 @@ mod tests {
         assert_eq!(value["mode"], "exclusive");
         assert!(value.get("pane_id").is_none());
         assert!(value.get("reclaim_token").is_none());
+        assert!(value.get("input_auth_context").is_none());
+        assert!(value.get("input_authorized").is_none());
     }
 
     #[test]
@@ -769,6 +796,23 @@ mod tests {
         let open = attach::AttachOpen::versioned("session-1", "owner", 24, 80).with_pane("pane-1");
         let value = serde_json::to_value(&open).unwrap();
         assert_eq!(value["pane_id"], "pane-1");
+        assert_eq!(
+            serde_json::from_value::<attach::AttachOpen>(value).unwrap(),
+            open
+        );
+    }
+
+    #[test]
+    fn attach_open_round_trips_input_authority_and_redacts_debug() {
+        let open = attach::AttachOpen::versioned("session-1", "owner", 24, 80)
+            .with_input_auth_context(AuthContext {
+                capability: "sensitive-capability".into(),
+            })
+            .authorize_input();
+        let debug = format!("{open:?}");
+        assert!(!debug.contains("sensitive-capability"));
+        let value = serde_json::to_value(&open).unwrap();
+        assert_eq!(value["input_authorized"], true);
         assert_eq!(
             serde_json::from_value::<attach::AttachOpen>(value).unwrap(),
             open
