@@ -1,7 +1,7 @@
 use qwe_core::{
     AgentCommandRecord, CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
     MAX_CAPABILITY_TTL_MS, PaneId, PrincipalEpoch, PrincipalId, PrincipalRecord, ReclaimTokenHash,
-    SANDBOX_PROFILE_VERSION, SandboxAuditRecord, SandboxProfile,
+    SANDBOX_PROFILE_VERSION, SandboxAuditRecord, SandboxLandlockMode, SandboxProfile,
 };
 use qwe_protocol::{AuthContext, ProtocolErrorBody};
 use qwe_runtime::resolve_beneath;
@@ -134,6 +134,15 @@ pub fn validate_sandbox_grant(
         return Err(error(
             "sandbox_profile_unsupported",
             "only the named seccomp profile 'strict' is implemented",
+        ));
+    }
+    if matches!(
+        profile.landlock,
+        SandboxLandlockMode::Required { min_abi: 0 }
+    ) {
+        return Err(error(
+            "sandbox_profile_unsupported",
+            "Landlock min_abi must be greater than zero",
         ));
     }
     if !profile.workspace.is_absolute() {
@@ -461,7 +470,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qwe_core::SandboxSeccompMode;
+    use qwe_core::{SandboxLandlockMode, SandboxSeccompMode};
     use std::path::PathBuf;
 
     fn profile() -> SandboxProfile {
@@ -514,6 +523,17 @@ mod tests {
         let failure = validate_sandbox_grant(CapabilityOperation::AgentExec, Some(&named_seccomp))
             .unwrap_err();
         assert_eq!(failure.code, "sandbox_profile_unsupported");
+    }
+
+    #[test]
+    fn landlock_required_min_abi_must_be_positive() {
+        let mut profile = profile();
+        profile.landlock = SandboxLandlockMode::Required { min_abi: 0 };
+        let failure =
+            validate_sandbox_grant(CapabilityOperation::AgentExec, Some(&profile)).unwrap_err();
+        assert_eq!(failure.code, "sandbox_profile_unsupported");
+        profile.landlock = SandboxLandlockMode::Required { min_abi: 1 };
+        validate_sandbox_grant(CapabilityOperation::AgentExec, Some(&profile)).unwrap();
     }
 
     #[test]

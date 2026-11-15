@@ -162,7 +162,7 @@ fn sandbox_probe(payload: &Value) -> Result<Value, ProtocolErrorBody> {
     agent::validate_sandbox_profile(&profile)?;
     let seccomp_profile_hash = crate::sandbox::seccomp_filter_hash(&profile.seccomp)
         .map_err(|failure| error("sandbox_profile_unsupported", failure.to_string()))?;
-    let support = crate::sandbox::probe_bubblewrap().map_err(|failure| {
+    let support = crate::sandbox::probe_bubblewrap(profile.landlock).map_err(|failure| {
         error("sandbox_backend_unavailable", failure.message)
             .with_details(failure.details.reason, failure.details.diagnostics)
     })?;

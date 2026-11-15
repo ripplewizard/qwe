@@ -24,9 +24,9 @@ pub use layout::{
     tile_panes,
 };
 pub use sandbox::{
-    SANDBOX_PROFILE_VERSION, SANDBOX_SECCOMP_STRICT_PROFILE, SandboxHomeMode, SandboxNetworkMode,
-    SandboxProcessMode, SandboxProfile, SandboxSeccompMode, SandboxWorkspaceMode,
-    find_hardlinked_protected_path,
+    SANDBOX_PROFILE_VERSION, SANDBOX_SECCOMP_STRICT_PROFILE, SandboxHomeMode, SandboxLandlockMode,
+    SandboxNetworkMode, SandboxProcessMode, SandboxProfile, SandboxSeccompMode,
+    SandboxWorkspaceMode, find_hardlinked_protected_path,
 };
 pub use security::{
     CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,

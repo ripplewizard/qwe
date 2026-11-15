@@ -49,6 +49,17 @@ pub enum SandboxSeccompMode {
     },
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum SandboxLandlockMode {
+    Off,
+    #[default]
+    BestEffort,
+    Required {
+        min_abi: u32,
+    },
+}
+
 impl SandboxSeccompMode {
     #[must_use]
     pub fn is_supported_v1(&self) -> bool {
@@ -78,6 +89,8 @@ pub struct SandboxProfile {
     pub process_namespace: SandboxProcessMode,
     #[serde(default)]
     pub seccomp: SandboxSeccompMode,
+    #[serde(default)]
+    pub landlock: SandboxLandlockMode,
 }
 
 impl SandboxProfile {
@@ -93,12 +106,18 @@ impl SandboxProfile {
             private_tmp: true,
             process_namespace: SandboxProcessMode::Isolated,
             seccomp: SandboxSeccompMode::None,
+            landlock: SandboxLandlockMode::BestEffort,
         }
     }
 
     #[must_use]
     pub fn is_enforced_v1(&self) -> bool {
-        self.version == SANDBOX_PROFILE_VERSION && self.seccomp.is_supported_v1()
+        self.version == SANDBOX_PROFILE_VERSION
+            && self.seccomp.is_supported_v1()
+            && match self.landlock {
+                SandboxLandlockMode::Required { min_abi } => min_abi > 0,
+                SandboxLandlockMode::Off | SandboxLandlockMode::BestEffort => true,
+            }
     }
 }
 
@@ -149,6 +168,7 @@ mod tests {
         assert!(profile.private_tmp);
         assert_eq!(profile.process_namespace, SandboxProcessMode::Isolated);
         assert_eq!(profile.seccomp, SandboxSeccompMode::None);
+        assert_eq!(profile.landlock, SandboxLandlockMode::BestEffort);
         assert!(profile.is_enforced_v1());
     }
 
@@ -174,5 +194,26 @@ mod tests {
             profile: "unknown".into(),
         };
         assert!(!profile.is_enforced_v1());
+    }
+
+    #[test]
+    fn landlock_mode_is_versioned_and_min_abi_must_be_positive() {
+        let mut profile = SandboxProfile::new(PathBuf::from("/tmp/workspace"));
+        profile.landlock = SandboxLandlockMode::Off;
+        assert!(profile.is_enforced_v1());
+        profile.landlock = SandboxLandlockMode::Required { min_abi: 1 };
+        assert!(profile.is_enforced_v1());
+        profile.landlock = SandboxLandlockMode::Required { min_abi: 0 };
+        assert!(!profile.is_enforced_v1());
+
+        let serialized = serde_json::to_value(SandboxProfile {
+            landlock: SandboxLandlockMode::Required { min_abi: 3 },
+            ..SandboxProfile::new(PathBuf::from("/tmp/workspace"))
+        })
+        .unwrap();
+        assert_eq!(
+            serialized["landlock"],
+            serde_json::json!({"mode": "required", "min_abi": 3})
+        );
     }
 }

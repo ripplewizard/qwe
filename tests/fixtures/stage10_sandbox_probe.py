@@ -166,8 +166,9 @@ def profile(
     workspace_mode="read_only",
     protected_paths=None,
     network="isolated_loopback",
+    landlock=None,
 ):
-    return {
+    value = {
         "version": 1,
         "workspace": str(workspace),
         "workspace_mode": workspace_mode,
@@ -178,6 +179,8 @@ def profile(
         "process_namespace": "isolated",
         "seccomp": {"mode": "none"},
     }
+    value["landlock"] = landlock or {"mode": "best_effort"}
+    return value
 
 
 def tcp_capture():
@@ -288,6 +291,56 @@ def run_positive_probe(
     else:
         assert audit.get("landlock_abi") is None, audit
     read_only_capability = read_only["token"]
+
+    landlock_off_profile = profile(workspace, landlock={"mode": "off"})
+    landlock_off = issue_capability(
+        socket_path,
+        management,
+        principal_id,
+        pane_id,
+        landlock_off_profile,
+    )
+    assert landlock_off["sandbox_audit"].get("landlock_abi") is None, landlock_off
+    landlock_off_command = exec_command(
+        socket_path,
+        landlock_off["token"],
+        pane_id,
+        "/bin/sh",
+        "-c",
+        "printf '%s' \"${QWE_LANDLOCK_ABI:-missing}\"",
+    )
+    assert_done(socket_path, landlock_off["token"], landlock_off_command)
+    landlock_off_events = events(
+        socket_path,
+        landlock_off["token"],
+        landlock_off_command["command_id"],
+    )
+    assert decode_stream(landlock_off_events, "stdout") == b"missing"
+
+    if landlock_expected:
+        required_landlock = issue_capability(
+            socket_path,
+            management,
+            principal_id,
+            pane_id,
+            profile(workspace, landlock={"mode": "required", "min_abi": 1}),
+        )
+        assert required_landlock["sandbox_audit"]["landlock_abi"] >= 1, required_landlock
+
+    landlock_required_failure = issue_capability(
+        socket_path,
+        management,
+        principal_id,
+        pane_id,
+        profile(workspace, landlock={"mode": "required", "min_abi": 999}),
+    )
+    assert (
+        landlock_required_failure.get("code") == "sandbox_backend_unavailable"
+    ), landlock_required_failure
+    assert (
+        landlock_required_failure["details"]["reason"]
+        == "landlock_required_unavailable"
+    ), landlock_required_failure
 
     strict_profile = profile(workspace)
     strict_profile["seccomp"] = {"mode": "named", "profile": "strict"}
@@ -1224,6 +1277,7 @@ def run_positive_probe(
     return {
         "profile_authorization": "pass",
         "strict_seccomp": "pass",
+        "landlock_profile_modes": "pass",
         "request_cannot_enable": "pass",
         "request_cannot_downgrade": "pass",
         "workspace_ro_rw": "pass",

@@ -1,6 +1,6 @@
 use qwe_core::{
-    SANDBOX_SECCOMP_STRICT_PROFILE, SandboxHomeMode, SandboxNetworkMode, SandboxProcessMode,
-    SandboxProfile, SandboxSeccompMode, SandboxWorkspaceMode,
+    SANDBOX_SECCOMP_STRICT_PROFILE, SandboxHomeMode, SandboxLandlockMode, SandboxNetworkMode,
+    SandboxProcessMode, SandboxProfile, SandboxSeccompMode, SandboxWorkspaceMode,
 };
 use qwe_protocol::ProtocolErrorDetails;
 use serde_json::json;
@@ -53,7 +53,9 @@ const REQUIRED_BUBBLEWRAP_OPTIONS: &[&str] = &[
     "--unshare-uts",
 ];
 
-pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
+pub fn probe_bubblewrap(
+    landlock: SandboxLandlockMode,
+) -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
     let mut evidence = ProbeEvidence::collect();
     let executable = bubblewrap_executable();
     evidence.backend_path = executable.display().to_string();
@@ -110,23 +112,55 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
             &evidence,
         ));
     }
-    let landlock_abi = match qwe_runtime::landlock_abi_version() {
-        Ok(version) => Some(version),
-        Err(qwe_runtime::LandlockError::Unsupported)
-        | Err(qwe_runtime::LandlockError::UnsupportedArchitecture) => None,
-        Err(failure) => {
-            evidence.stderr = sanitize_stderr(failure.to_string().as_bytes());
-            evidence.landlock_abi = None;
-            return Err(probe_failure(
-                "landlock_probe_failed",
-                "failed to probe Landlock defense in depth",
-                &evidence,
-            ));
-        }
+    let landlock_abi = match landlock {
+        SandboxLandlockMode::Off => None,
+        SandboxLandlockMode::BestEffort => match qwe_runtime::landlock_abi_version() {
+            Ok(version) => Some(version),
+            Err(qwe_runtime::LandlockError::Unsupported)
+            | Err(qwe_runtime::LandlockError::UnsupportedArchitecture) => None,
+            Err(failure) => {
+                evidence.stderr = sanitize_stderr(failure.to_string().as_bytes());
+                return Err(probe_failure(
+                    "landlock_probe_failed",
+                    "failed to probe Landlock defense in depth",
+                    &evidence,
+                ));
+            }
+        },
+        SandboxLandlockMode::Required { min_abi } => match qwe_runtime::landlock_abi_version() {
+            Ok(version) if version >= min_abi => Some(version),
+            Ok(version) => {
+                evidence.landlock_abi = Some(version);
+                evidence.stderr =
+                    format!("Landlock ABI {version} is lower than required ABI {min_abi}");
+                return Err(probe_failure(
+                    "landlock_required_unavailable",
+                    format!("Landlock ABI {version} is lower than required ABI {min_abi}"),
+                    &evidence,
+                ));
+            }
+            Err(qwe_runtime::LandlockError::Unsupported)
+            | Err(qwe_runtime::LandlockError::UnsupportedArchitecture) => {
+                evidence.stderr = format!("Landlock is unavailable; required ABI is {min_abi}");
+                return Err(probe_failure(
+                    "landlock_required_unavailable",
+                    format!("Landlock is unavailable; required ABI is {min_abi}"),
+                    &evidence,
+                ));
+            }
+            Err(failure) => {
+                evidence.stderr = sanitize_stderr(failure.to_string().as_bytes());
+                return Err(probe_failure(
+                    "landlock_probe_failed",
+                    "failed to probe required Landlock support",
+                    &evidence,
+                ));
+            }
+        },
     };
     evidence.landlock_abi = landlock_abi;
     if landlock_abi.is_some()
-        && let Err(failure) = sandbox_init_for_landlock()
+        && let Err(failure) = sandbox_init_for_landlock(landlock)
     {
         evidence.stderr = sanitize_stderr(failure.to_string().as_bytes());
         return Err(probe_failure(
@@ -219,9 +253,41 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
     }
 }
 
-pub fn sandbox_init_for_landlock() -> io::Result<Option<PathBuf>> {
-    match qwe_runtime::landlock_abi_version() {
-        Ok(_) => {
+pub fn sandbox_init_for_landlock(mode: SandboxLandlockMode) -> io::Result<Option<PathBuf>> {
+    match mode {
+        SandboxLandlockMode::Off => Ok(None),
+        SandboxLandlockMode::BestEffort | SandboxLandlockMode::Required { .. } => {
+            let abi = qwe_runtime::landlock_abi_version();
+            let available = match (mode, abi) {
+                (SandboxLandlockMode::Off, _) => false,
+                (SandboxLandlockMode::BestEffort, Ok(_)) => true,
+                (
+                    SandboxLandlockMode::BestEffort,
+                    Err(qwe_runtime::LandlockError::Unsupported)
+                    | Err(qwe_runtime::LandlockError::UnsupportedArchitecture),
+                ) => false,
+                (SandboxLandlockMode::Required { min_abi }, Ok(version)) if version >= min_abi => {
+                    true
+                }
+                (SandboxLandlockMode::Required { min_abi }, Ok(version)) => {
+                    return Err(io::Error::other(format!(
+                        "Landlock ABI {version} is lower than required ABI {min_abi}"
+                    )));
+                }
+                (
+                    SandboxLandlockMode::Required { min_abi },
+                    Err(qwe_runtime::LandlockError::Unsupported)
+                    | Err(qwe_runtime::LandlockError::UnsupportedArchitecture),
+                ) => {
+                    return Err(io::Error::other(format!(
+                        "Landlock is unavailable; required ABI is {min_abi}"
+                    )));
+                }
+                (_, Err(failure)) => return Err(io::Error::other(failure)),
+            };
+            if !available {
+                return Ok(None);
+            }
             let init = std::env::current_exe()?.with_file_name("qwe-sandbox-init");
             let metadata = fs::metadata(&init).map_err(|failure| {
                 io::Error::new(
@@ -243,9 +309,6 @@ pub fn sandbox_init_for_landlock() -> io::Result<Option<PathBuf>> {
             }
             Ok(Some(init))
         }
-        Err(qwe_runtime::LandlockError::Unsupported)
-        | Err(qwe_runtime::LandlockError::UnsupportedArchitecture) => Ok(None),
-        Err(failure) => Err(io::Error::other(failure)),
     }
 }
 
@@ -306,7 +369,9 @@ fn probe_failure(
     let failed_stage = match reason {
         "bwrap_missing" => "resolve",
         "bwrap_version_incompatible" => "version",
-        "landlock_probe_failed" | "sandbox_init_unavailable" => "landlock_init",
+        "landlock_probe_failed" | "landlock_required_unavailable" | "sandbox_init_unavailable" => {
+            "landlock_init"
+        }
         "uid_map_denied" => "uid_map",
         "mount_denied" => "mount",
         "userns_disabled" | "userns_create_denied" => "userns",

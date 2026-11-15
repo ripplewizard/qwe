@@ -2,8 +2,8 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use qwe_core::{
     AGENT_MAX_WAIT_MS, AGENT_OUTPUT_CHUNK_BYTES, AGENT_REPLAY_LIMIT_BYTES, AgentCommandId,
     AgentCommandState, AgentEvent, AgentEventKind, AgentOutputMode, AgentOutputStream, AgentSignal,
-    AgentWaitState, ProcessIdentity, SANDBOX_PROFILE_VERSION, SandboxNetworkMode, SandboxProfile,
-    SandboxWorkspaceMode,
+    AgentWaitState, ProcessIdentity, SANDBOX_PROFILE_VERSION, SandboxLandlockMode,
+    SandboxNetworkMode, SandboxProfile, SandboxWorkspaceMode,
 };
 use qwe_protocol::ProtocolErrorBody;
 use qwe_runtime::{process_identity, resolve_beneath};
@@ -410,13 +410,15 @@ impl AgentCommand {
 
     fn fail_sandbox_start(&self, reason: String) {
         #[cfg(target_os = "linux")]
-        let details = self.sandbox_profile.as_ref().and_then(|_| {
-            crate::sandbox::probe_bubblewrap().err().map(|failure| {
-                json!({
-                    "reason": failure.details.reason,
-                    "diagnostics": failure.details.diagnostics
+        let details = self.sandbox_profile.as_ref().and_then(|profile| {
+            crate::sandbox::probe_bubblewrap(profile.landlock)
+                .err()
+                .map(|failure| {
+                    json!({
+                        "reason": failure.details.reason,
+                        "diagnostics": failure.details.diagnostics
+                    })
                 })
-            })
         });
         #[cfg(not(target_os = "linux"))]
         let details = self.sandbox_profile.as_ref().map(|_| {
@@ -1112,6 +1114,15 @@ pub(crate) fn validate_sandbox_profile(profile: &SandboxProfile) -> Result<(), P
             "only the named seccomp profile 'strict' is implemented",
         ));
     }
+    if matches!(
+        profile.landlock,
+        SandboxLandlockMode::Required { min_abi: 0 }
+    ) {
+        return Err(error(
+            "sandbox_profile_unsupported",
+            "Landlock min_abi must be greater than zero",
+        ));
+    }
     if !profile.workspace.is_absolute() || !profile.workspace.is_dir() {
         return Err(error(
             "sandbox_profile_unsupported",
@@ -1574,7 +1585,7 @@ fn spawn_sandboxed_process(
             return Err(failure);
         }
     };
-    let sandbox_init = match crate::sandbox::sandbox_init_for_landlock() {
+    let sandbox_init = match crate::sandbox::sandbox_init_for_landlock(profile.landlock) {
         Ok(path) => path,
         Err(failure) => {
             close_fd(status_read);
@@ -1782,7 +1793,7 @@ fn build_pty_spawn_plan(request: PtySpawnRequest<'_>) -> std::io::Result<PtySpaw
                     return Err(failure);
                 }
             };
-            let sandbox_init = match crate::sandbox::sandbox_init_for_landlock() {
+            let sandbox_init = match crate::sandbox::sandbox_init_for_landlock(profile.landlock) {
                 Ok(path) => path,
                 Err(failure) => {
                     let _ = std::fs::remove_file(&seccomp_path);
