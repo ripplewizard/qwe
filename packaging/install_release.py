@@ -9,7 +9,13 @@ from pathlib import Path
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-ALLOWED_BINARIES = {"qwe", "qwed", "qwe-worker", "qwe-session-exec"}
+ALLOWED_BINARIES = {
+    "qwe",
+    "qwed",
+    "qwe-worker",
+    "qwe-session-exec",
+    "qwe-sandbox-init",
+}
 ALLOWED_SERVICE_PREFIX = Path("share/qwe/service")
 
 

@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use thiserror::Error;
 
 mod cgroup;
+mod landlock;
 mod process;
 mod terminal;
 
@@ -10,6 +11,9 @@ pub use cgroup::{
     detect_resource_support, pane_scope_unit, read_cgroup_stats, read_cpu_usage_microseconds,
     read_effective_resource_policy, read_enforcement_event, read_resource_usage, stop_pane_scope,
     stop_systemd_scope, systemd_scope_available,
+};
+pub use landlock::{
+    LandlockError, LandlockPolicy, abi_version as landlock_abi_version, apply as apply_landlock,
 };
 pub use process::{process_identity, process_matches};
 pub use terminal::{

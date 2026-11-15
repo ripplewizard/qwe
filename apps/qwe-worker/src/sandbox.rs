@@ -20,6 +20,7 @@ pub struct BubblewrapSupport {
     pub version: String,
     pub path: PathBuf,
     pub probe_time_ms: i64,
+    pub landlock_abi: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -154,6 +155,7 @@ pub fn probe_bubblewrap() -> Result<BubblewrapSupport, BubblewrapProbeFailure> {
                     version: evidence.backend_version,
                     path: executable,
                     probe_time_ms: evidence.probe_time_ms,
+                    landlock_abi: qwe_runtime::landlock_abi_version().ok(),
                 });
             }
             Ok(Some(status)) => {
@@ -351,6 +353,7 @@ pub struct BubblewrapOptions<'a> {
     pub seccomp_fd: Option<i32>,
     pub credential_present: bool,
     pub term: Option<&'a str>,
+    pub sandbox_init: Option<&'a Path>,
 }
 
 pub fn bubblewrap_invocation(
@@ -433,6 +436,15 @@ pub fn bubblewrap_invocation(
     ] {
         push_option(&mut args, "--ro-bind-try", system_path, system_path);
     }
+    if let Some(sandbox_init) = options.sandbox_init {
+        let sandbox_init = std::fs::canonicalize(sandbox_init)?;
+        push_option(
+            &mut args,
+            "--ro-bind",
+            &path_string(&sandbox_init)?,
+            "/qwe-sandbox-init",
+        );
+    }
     args.extend([
         "--proc".into(),
         "/proc".into(),
@@ -509,6 +521,23 @@ pub fn bubblewrap_invocation(
         args.extend(["--setenv".into(), "QWE_CREDENTIAL_FD".into(), "3".into()]);
     }
     args.push("--".into());
+    if options.sandbox_init.is_some() {
+        args.push("/qwe-sandbox-init".into());
+        args.extend([
+            "--workspace".into(),
+            path_string(&workspace)?,
+            "--workspace-mode".into(),
+            match profile.workspace_mode {
+                SandboxWorkspaceMode::ReadOnly => "read-only",
+                SandboxWorkspaceMode::ReadWrite => "read-write",
+            }
+            .into(),
+        ]);
+        if profile.private_tmp {
+            args.push("--private-tmp".into());
+        }
+        args.push("--".into());
+    }
     args.push(path_string(&program)?);
     args.extend(arguments.iter().cloned());
 

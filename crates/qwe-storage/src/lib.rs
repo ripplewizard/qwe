@@ -3926,6 +3926,7 @@ mod tests {
                 backend_version: "bubblewrap 0.13.1".into(),
                 probe_time_ms: 23,
                 seccomp_profile_hash: Some("seccomp-hash".into()),
+                landlock_abi: Some(1),
             }),
         };
         store.install_capability(&capability).unwrap();

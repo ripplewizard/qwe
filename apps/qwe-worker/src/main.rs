@@ -172,6 +172,7 @@ fn sandbox_probe(payload: &Value) -> Result<Value, ProtocolErrorBody> {
         "path": support.path,
         "probe_time_ms": support.probe_time_ms,
         "seccomp_profile_hash": seccomp_profile_hash,
+        "landlock_abi": support.landlock_abi,
         "fresh": true
     }))
 }

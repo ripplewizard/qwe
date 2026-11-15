@@ -7,6 +7,8 @@ use qwe_core::{
 };
 use qwe_protocol::ProtocolErrorBody;
 use qwe_runtime::process_identity;
+#[cfg(target_os = "linux")]
+use qwe_runtime::{LandlockError, landlock_abi_version};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
@@ -1524,6 +1526,18 @@ fn wait_for_readers(readers: &Receiver<()>, count: usize) {
 }
 
 #[cfg(target_os = "linux")]
+fn sandbox_init_for_landlock() -> std::io::Result<Option<PathBuf>> {
+    match landlock_abi_version() {
+        Ok(_) => {
+            let init = std::env::current_exe()?.with_file_name("qwe-sandbox-init");
+            executable_file(init).map(Some)
+        }
+        Err(LandlockError::Unsupported | LandlockError::UnsupportedArchitecture) => Ok(None),
+        Err(failure) => Err(std::io::Error::other(failure)),
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn spawn_sandboxed_process(
     profile: &SandboxProfile,
     program: &str,
@@ -1548,6 +1562,15 @@ fn spawn_sandboxed_process(
             return Err(failure);
         }
     };
+    let sandbox_init = match sandbox_init_for_landlock() {
+        Ok(path) => path,
+        Err(failure) => {
+            close_fd(status_read);
+            close_fd(status_write);
+            close_fd(seccomp_fd);
+            return Err(failure);
+        }
+    };
     let invocation = match crate::sandbox::bubblewrap_invocation(
         profile,
         &program,
@@ -1558,6 +1581,7 @@ fn spawn_sandboxed_process(
             seccomp_fd: Some(seccomp_fd),
             credential_present: credential_fd.is_some(),
             term: None,
+            sandbox_init: sandbox_init.as_deref(),
         },
     ) {
         Ok(invocation) => invocation,
@@ -1746,6 +1770,13 @@ fn build_pty_spawn_plan(request: PtySpawnRequest<'_>) -> std::io::Result<PtySpaw
                     return Err(failure);
                 }
             };
+            let sandbox_init = match sandbox_init_for_landlock() {
+                Ok(path) => path,
+                Err(failure) => {
+                    let _ = std::fs::remove_file(&seccomp_path);
+                    return Err(failure);
+                }
+            };
             let invocation = match crate::sandbox::bubblewrap_invocation(
                 profile,
                 &program,
@@ -1756,6 +1787,7 @@ fn build_pty_spawn_plan(request: PtySpawnRequest<'_>) -> std::io::Result<PtySpaw
                     seccomp_fd: Some(5),
                     credential_present,
                     term: Some("xterm-256color"),
+                    sandbox_init: sandbox_init.as_deref(),
                 },
             ) {
                 Ok(invocation) => invocation,

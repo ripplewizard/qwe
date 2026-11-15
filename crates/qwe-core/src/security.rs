@@ -202,6 +202,8 @@ pub struct SandboxAuditRecord {
     pub probe_time_ms: i64,
     #[serde(default)]
     pub seccomp_profile_hash: Option<String>,
+    #[serde(default)]
+    pub landlock_abi: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -21,7 +21,13 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARIES = ("qwe", "qwed", "qwe-worker", "qwe-session-exec")
+BINARIES = (
+    "qwe",
+    "qwed",
+    "qwe-worker",
+    "qwe-session-exec",
+    "qwe-sandbox-init",
+)
 UTC = timezone.utc
 
 
@@ -255,7 +261,7 @@ def main():
                 f"binary version {version_report.get('version')} does not match "
                 f"release version {version}"
             )
-        for name in ("qwed", "qwe-worker", "qwe-session-exec"):
+        for name in ("qwed", "qwe-worker", "qwe-session-exec", "qwe-sandbox-init"):
             report = run([bin_dir / name, "--version"])
             if f" {version}" not in report:
                 raise SystemExit(

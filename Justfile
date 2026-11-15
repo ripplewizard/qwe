@@ -1125,6 +1125,9 @@ stage9-check:
 bubblewrap-poc:
     cargo test -p qwe-worker --test bubblewrap_contract -- --nocapture
 
+landlock-poc:
+    cargo test -p qwe-worker --test landlock_contract -- --nocapture
+
 stage10-sandbox:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1141,6 +1144,7 @@ stage10-sandbox:
 stage10-check:
     just --justfile "{{ justfile() }}" check-qwe
     just --justfile "{{ justfile() }}" bubblewrap-poc
+    just --justfile "{{ justfile() }}" landlock-poc
     just --justfile "{{ justfile() }}" stage10-sandbox
 
 sandbox-container-matrix images="ubuntu:22.04 ubuntu:24.04 debian:12":
@@ -1197,6 +1201,7 @@ sandbox-vm-matrix hosts="ubuntu2204 ubuntu2404 debian12":
         target/release/qwed \
         target/release/qwe-worker \
         target/release/qwe-session-exec \
+        target/release/qwe-sandbox-init \
         tests/fixtures/stage7_resource_probe.py \
         tests/fixtures/stage10_sandbox_probe.py \
         tests/fixtures/sandbox_container_fail_closed.py \
@@ -1245,6 +1250,7 @@ sandbox-userns-disabled-vm host="ubuntu2204":
       target/release/qwed \
       target/release/qwe-worker \
       target/release/qwe-session-exec \
+      target/release/qwe-sandbox-init \
       tests/fixtures/stage7_resource_probe.py \
       tests/fixtures/sandbox_container_fail_closed.py \
       "$target:$remote_dir/"
@@ -1331,7 +1337,8 @@ sandbox-systemd-service-smoke:
     }
     trap cleanup_service EXIT
     cargo build --release -p qwe-worker -p qwed
-    cp target/release/qwed target/release/qwe-worker target/release/qwe-session-exec "$bin/"
+    cp target/release/qwed target/release/qwe-worker \
+      target/release/qwe-session-exec target/release/qwe-sandbox-init "$bin/"
     bwrap_path="${QWE_BWRAP_PATH:-$(command -v bwrap)}"
     systemd-run --user --unit="$unit" --quiet \
       --working-directory="$root" \

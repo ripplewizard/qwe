@@ -3838,6 +3838,10 @@ fn probe_sandbox_worker(
         .get("seccomp_profile_hash")
         .and_then(Value::as_str)
         .ok_or_else(|| error("worker_contract", "sandbox probe has no seccomp hash"))?;
+    let landlock_abi = result
+        .get("landlock_abi")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok());
     let profile_json =
         serde_json::to_vec(profile).map_err(|failure| error("internal", failure.to_string()))?;
     Ok(SandboxAuditRecord {
@@ -3846,6 +3850,7 @@ fn probe_sandbox_worker(
         backend_version: backend_version.into(),
         probe_time_ms,
         seccomp_profile_hash: Some(seccomp_profile_hash.into()),
+        landlock_abi,
     })
 }
 

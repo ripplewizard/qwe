@@ -270,6 +270,7 @@ def main():
             qwed,
             qwed.with_name("qwe-worker"),
             qwed.with_name("qwe-session-exec"),
+            qwed.with_name("qwe-sandbox-init"),
         ):
             shutil.copy2(source, service_bin / source.name)
         if sys.platform == "linux":

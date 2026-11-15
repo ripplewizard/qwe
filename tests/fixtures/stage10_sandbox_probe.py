@@ -239,6 +239,12 @@ def run_positive_probe(
     assert len(audit["profile_hash"]) == 64, audit
     assert audit["probe_time_ms"] > 0, audit
     assert len(audit["seccomp_profile_hash"]) == 64, audit
+    lsm = Path("/sys/kernel/security/lsm")
+    landlock_expected = lsm.exists() and "landlock" in lsm.read_text().split(",")
+    if landlock_expected:
+        assert audit.get("landlock_abi", 0) >= 1, audit
+    else:
+        assert audit.get("landlock_abi") is None, audit
     read_only_capability = read_only["token"]
 
     strict_profile = profile(workspace)
@@ -777,6 +783,25 @@ def run_positive_probe(
         == b"NO_NEW_PRIVS_SETUID_DENIED"
     )
 
+    if landlock_expected:
+        landlock_command = exec_command(
+            socket_path,
+            read_only_capability,
+            pane_id,
+            "/bin/sh",
+            "-c",
+            "printf '%s' \"${QWE_LANDLOCK_ABI:-missing}\"",
+        )
+        assert_done(socket_path, read_only_capability, landlock_command)
+        landlock_events = events(
+            socket_path,
+            read_only_capability,
+            landlock_command["command_id"],
+        )
+        assert decode_stream(landlock_events, "stdout") == str(
+            audit["landlock_abi"]
+        ).encode()
+
     non_pty_tiocsti_script = (
         "import ctypes,sys;"
         "libc=ctypes.CDLL(None,use_errno=True);"
@@ -1030,6 +1055,9 @@ def run_positive_probe(
         "network_isolation": "pass",
         "loopback": "pass",
         "setuid_no_new_privs": "pass",
+        "landlock_defense_in_depth": (
+            "pass" if landlock_expected else "unavailable"
+        ),
         "tiocsti_non_pty": "pass",
         "fd3_and_redaction": "pass",
         "cgroup": "pass",
@@ -1423,7 +1451,8 @@ def main():
                 {
                     "case": (
                         "SANDBOX-004/SANDBOX-005/SANDBOX-006/"
-                        "SANDBOX-007/SANDBOX-008/SANDBOX-009/SANDBOX-010"
+                        "SANDBOX-007/SANDBOX-008/SANDBOX-009/"
+                        "SANDBOX-010/SANDBOX-011"
                     ),
                     "status": "skip",
                     "reason": "Linux and Bubblewrap are required",
@@ -1481,7 +1510,8 @@ def main():
                 {
                     "case": (
                         "SANDBOX-004/SANDBOX-005/SANDBOX-006/"
-                        "SANDBOX-007/SANDBOX-008/SANDBOX-009/SANDBOX-010"
+                        "SANDBOX-007/SANDBOX-008/SANDBOX-009/"
+                        "SANDBOX-010/SANDBOX-011"
                     ),
                     "status": "pass",
                     **results,
