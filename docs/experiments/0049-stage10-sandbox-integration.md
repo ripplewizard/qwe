@@ -1,4 +1,4 @@
-# Experiment 0049: Stage 10.1-10.3 Sandbox Integration
+# Experiment 0049: Stage 10.1-10.4 Sandbox Integration
 
 Date: 2026-11-15
 Status: Pass for Linux `AGENT_EXEC` pipe-split and PTY commands, including
@@ -45,8 +45,8 @@ The confirmed `network:inherit + FD3 credential` transfer is a known-risk
 capability, not a redaction bug. Command status exposes structured
 `sandbox.risk` flags and events include `sandbox_risk_observed`. These identify
 network exfiltration and workspace persistence channels. Current risk events
-share the in-memory command replay lifetime; durable SQLite risk metadata
-remains deferred.
+and the base risk flags are persisted in SQLite, so they survive worker loss
+and qwed restart. Event replay itself remains worker-memory bounded.
 
 The probe is `tests/fixtures/stage10_sandbox_probe.py` and runs with:
 

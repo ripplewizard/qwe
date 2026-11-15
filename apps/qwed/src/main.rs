@@ -13,8 +13,8 @@ use qwe_core::{
     DEFAULT_FREEZE_GRACE_MS, DEFAULT_RECLAIM_GRACE_MS, LeaseRecord, MAX_FREEZE_GRACE_MS,
     MAX_LEASE_TTL_MS, PaneId, PaneKind, PaneRecord, PaneSpec, PaneWorkerRecord, PrincipalId,
     ProcessIdentity, ReclaimTokenHash, ReconciliationDisposition, ResourcePolicy, ResourceProfile,
-    ResourceScopeId, RevocationSeverity, SandboxProfile, SessionRecord, TaskId, TaskRecord,
-    TaskState, WorkerHealth, tile_pane_specs,
+    ResourceScopeId, RevocationSeverity, SandboxAuditRecord, SandboxProfile, SandboxRiskRecord,
+    SessionRecord, TaskId, TaskRecord, TaskState, WorkerHealth, tile_pane_specs,
 };
 use qwe_protocol::{
     ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody, RequestEnvelope,
@@ -563,6 +563,14 @@ fn agent_command_record(
             ));
         }
     };
+    let sandbox_risk = status
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("risk"))
+        .filter(|value| !value.is_null())
+        .cloned()
+        .map(serde_json::from_value::<SandboxRiskRecord>)
+        .transpose()
+        .map_err(|failure| error("worker_contract", failure.to_string()))?;
     Ok(AgentCommandRecord {
         id,
         session_id: pane.session_id.clone(),
@@ -594,6 +602,7 @@ fn agent_command_record(
             .get("exit_signal")
             .and_then(Value::as_str)
             .map(str::to_string),
+        sandbox_risk,
     })
 }
 
@@ -613,6 +622,7 @@ fn persist_agent_status(
     {
         record.principal_id = existing.principal_id;
         record.creator_capability_id = existing.creator_capability_id;
+        record.sandbox_risk = existing.sandbox_risk.or(record.sandbox_risk);
         drop(store);
         context
             .store
@@ -690,18 +700,46 @@ fn sandbox_json_for_command(
         .store
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let profile = store
+    let capability = store
+        .find_capability(capability_id)
+        .map_err(storage_error)?;
+    let Some(capability) = capability else {
+        return Ok(None);
+    };
+    let Some(profile) = capability.sandbox_profile else {
+        return Ok(None);
+    };
+    Ok(Some(json!({
+        "enforced": true,
+        "profile": profile,
+        "audit": capability.sandbox_audit,
+        "risk": command.sandbox_risk,
+        "wrapper_pid": command.process_identity.as_ref().map(|identity| identity.pid),
+        "child_pid": null
+    })))
+}
+
+fn add_sandbox_audit(
+    context: &Context,
+    command: &AgentCommandRecord,
+    value: &mut Value,
+) -> Result<(), ProtocolErrorBody> {
+    let Some(capability_id) = command.creator_capability_id.as_ref() else {
+        return Ok(());
+    };
+    let audit = context
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .find_capability(capability_id)
         .map_err(storage_error)?
-        .and_then(|capability| capability.sandbox_profile);
-    Ok(profile.map(|profile| {
-        json!({
-            "enforced": true,
-            "profile": profile,
-            "wrapper_pid": command.process_identity.as_ref().map(|identity| identity.pid),
-            "child_pid": null
-        })
-    }))
+        .and_then(|capability| capability.sandbox_audit);
+    if let Some(audit) = audit
+        && let Some(sandbox) = value.get_mut("sandbox").and_then(Value::as_object_mut)
+    {
+        sandbox.insert("audit".into(), json!(audit));
+    }
+    Ok(())
 }
 
 fn agent_record_json(command: &AgentCommandRecord, sandbox: Option<&Value>) -> Value {
@@ -718,6 +756,7 @@ fn agent_record_json(command: &AgentCommandRecord, sandbox: Option<&Value>) -> V
         "updated_at_ms": command.updated_at_ms,
         "exit_code": command.exit_code,
         "exit_signal": command.exit_signal,
+        "sandbox_risk": command.sandbox_risk,
         "sandbox": sandbox
     })
 }
@@ -774,7 +813,7 @@ fn agent_command_operation(
         worker_payload["timeout_ms"] = json!(timeout_ms);
     }
     let result = call_pane_worker(context, &pane_key, operation, worker_payload, timeout);
-    let value = match result {
+    let mut value = match result {
         Ok(value) => value,
         Err(failure) if matches!(failure.code.as_str(), "not_found" | "terminal_lost") => {
             let lost = mark_agent_command_lost(context, &command)?;
@@ -807,6 +846,7 @@ fn agent_command_operation(
         }
         Err(failure) => return Err(failure),
     };
+    add_sandbox_audit(context, &command, &mut value)?;
     let pane = context
         .store
         .lock()
@@ -3769,16 +3809,35 @@ fn probe_sandbox_worker(
     context: &Context,
     pane_id: &PaneId,
     profile: &SandboxProfile,
-) -> Result<(), ProtocolErrorBody> {
-    call_pane_worker(
+) -> Result<SandboxAuditRecord, ProtocolErrorBody> {
+    let result = call_pane_worker(
         context,
         &pane_id.to_string(),
         "SANDBOX_PROBE",
         json!({"sandbox_profile": profile}),
         WORKER_REQUEST_TIMEOUT,
     )
-    .map(|_| ())
-    .map_err(map_sandbox_probe_failure)
+    .map_err(map_sandbox_probe_failure)?;
+    let backend_path = result
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("worker_contract", "sandbox probe has no backend path"))?;
+    let backend_version = result
+        .get("version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("worker_contract", "sandbox probe has no backend version"))?;
+    let probe_time_ms = result
+        .get("probe_time_ms")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| error("worker_contract", "sandbox probe has no probe time"))?;
+    let profile_json =
+        serde_json::to_vec(profile).map_err(|failure| error("internal", failure.to_string()))?;
+    Ok(SandboxAuditRecord {
+        profile_hash: format!("{:x}", Sha256::digest(profile_json)),
+        backend_path: backend_path.into(),
+        backend_version: backend_version.into(),
+        probe_time_ms,
+    })
 }
 
 fn map_sandbox_probe_failure(failure: ProtocolErrorBody) -> ProtocolErrorBody {
@@ -3837,7 +3896,7 @@ fn security_capability_issue(
         .transpose()
         .map_err(|failure| error("invalid_request", failure.to_string()))?;
     security::validate_sandbox_grant(operation, sandbox_profile.as_ref())?;
-    if let Some(profile) = &sandbox_profile {
+    let sandbox_grant = if let Some(profile) = &sandbox_profile {
         let pane_id = match &scope {
             CapabilityScope::Pane { pane_id } => pane_id,
             _ => {
@@ -3847,8 +3906,13 @@ fn security_capability_issue(
                 ));
             }
         };
-        probe_sandbox_worker(context, pane_id, profile)?;
-    }
+        Some(security::SandboxCapabilityGrant {
+            profile: profile.clone(),
+            audit: probe_sandbox_worker(context, pane_id, profile)?,
+        })
+    } else {
+        None
+    };
     let ttl_ms = request
         .payload
         .get("ttl_ms")
@@ -3888,7 +3952,7 @@ fn security_capability_issue(
             &principal_id,
             operation,
             scope,
-            sandbox_profile,
+            sandbox_grant,
             ttl_ms,
             now_ms(),
         )?
@@ -4159,13 +4223,18 @@ fn client_operation(
             }
             payload["session_id"] = json!(pane.session_id);
             payload["pane_id"] = json!(pane.id);
-            let status = call_pane_worker(
+            let mut status = call_pane_worker(
                 context,
                 &pane.id.to_string(),
                 "AGENT_EXEC",
                 payload,
                 WORKER_REQUEST_TIMEOUT,
             )?;
+            if let Some(audit) = &grant.capability.sandbox_audit
+                && let Some(sandbox) = status.get_mut("sandbox").and_then(Value::as_object_mut)
+            {
+                sandbox.insert("audit".into(), json!(audit));
+            }
             persist_agent_exec_status(context, &pane, &status, &grant)?;
             Ok(status)
         }

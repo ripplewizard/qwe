@@ -205,6 +205,13 @@ pub enum AgentOutputStream {
     Pty,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxRiskRecord {
+    pub network_inherit: bool,
+    pub writable_workspace: bool,
+    pub credential_exposed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentCommandRecord {
     pub id: AgentCommandId,
@@ -221,6 +228,7 @@ pub struct AgentCommandRecord {
     pub updated_at_ms: i64,
     pub exit_code: Option<i32>,
     pub exit_signal: Option<String>,
+    pub sandbox_risk: Option<SandboxRiskRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

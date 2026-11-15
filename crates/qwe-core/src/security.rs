@@ -195,6 +195,14 @@ pub struct PrincipalEpoch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxAuditRecord {
+    pub profile_hash: String,
+    pub backend_path: String,
+    pub backend_version: String,
+    pub probe_time_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityRecord {
     pub id: CapabilityId,
     pub token_hash: ReclaimTokenHash,
@@ -206,6 +214,7 @@ pub struct CapabilityRecord {
     pub expires_at_ms: i64,
     pub revoked_at_ms: Option<i64>,
     pub sandbox_profile: Option<SandboxProfile>,
+    pub sandbox_audit: Option<SandboxAuditRecord>,
 }
 
 #[cfg(test)]

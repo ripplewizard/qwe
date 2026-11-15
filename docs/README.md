@@ -9,7 +9,7 @@
 - [IPC Protocol](ipc-protocol.md): field-level client, Host, and worker protocol.
 - [Storage Migration](storage-migration.md): v10-to-v11 shared prerequisites,
   Pane layout through v13, command metadata in v14, capability/revocation state
-  in v15, and the current v16 sandbox-profile field.
+  in v15, sandbox profiles in v16, and current v17 audit metadata.
 - [Protocol Schema](../protocol/schema/qwe-v1.schema.json): canonical Attach
   frames, payloads, limits, state machines, and stable test-ID manifest.
 - [Extension Architecture](extension-architecture.md): deferred capabilities

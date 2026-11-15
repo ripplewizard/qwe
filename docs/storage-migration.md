@@ -1,6 +1,6 @@
 # Storage Migration: Pane Layout, Agent Security, and Sandbox Profiles
 
-Status: Implemented through Stage 10.3; schema v16 is current
+Status: Implemented through Stage 10.4; schema v17 is current
 Date: 2026-11-14
 Authority: [ADR 0021](adr/0021-shared-prerequisites.md) and the v11 schema in
 `crates/qwe-storage`; Pane layout metadata is governed by
@@ -263,6 +263,18 @@ Schema v16 adds nullable `agent_capabilities.sandbox_profile_json`.
 
 The migration is transactional and sets `PRAGMA user_version = 16`. A v15
 binary must refuse a v16 database.
+
+## 14. v16 to v17: Sandbox Audit Metadata
+
+Schema v17 adds:
+
+- `agent_capabilities.sandbox_audit_json`, containing the sandbox profile
+  SHA-256 hash, resolved Bubblewrap path/version, and probe timestamp;
+- `agent_commands.sandbox_risk_json`, containing network-inherit, writable
+  workspace, and credential-exposure flags.
+
+Existing rows migrate with null audit metadata. The migration is transactional
+and sets `PRAGMA user_version = 17`. A v16 binary must refuse a v17 database.
 
 - Bounds are clamped to the current usable viewport at render time.
 - Migration leaves every existing floating Pane with null bounds, preserving

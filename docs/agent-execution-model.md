@@ -188,6 +188,7 @@ Sandbox status also reports `risk.network_inherit`,
 `risk.writable_workspace`, and `risk.credential_exposed`. Their combinations
 identify possible network exfiltration or workspace persistence. A
 `sandbox_risk_observed` event is committed when the command is accepted.
+Risk flags are persisted in SQLite and survive worker replacement.
 
 Sandboxed PTY commands keep the portable-pty controlling terminal and do not use
 `--new-session`. A minimal internal seccomp filter rejects `TIOCSTI`; FD3

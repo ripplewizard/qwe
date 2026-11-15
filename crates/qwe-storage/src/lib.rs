@@ -4,14 +4,14 @@ use qwe_core::{
     LeaseRecord, PaneId, PaneRecord, PaneWorkerRecord, PrincipalEpoch, PrincipalId,
     PrincipalRecord, ProcessIdentity, ResourceBackend, ResourcePolicy, ResourceScopeId,
     ResourceScopeRecord, ResourceScopeState, ResourceScopeTargetKind, RevocationSeverity,
-    SessionRecord, TaskId, TaskRecord, TaskState,
+    SandboxAuditRecord, SandboxRiskRecord, SessionRecord, TaskId, TaskRecord, TaskState,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::json;
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 16;
+pub const SCHEMA_VERSION: i64 = 17;
 pub const IDEMPOTENCY_RETENTION_MS: i64 = 24 * 60 * 60 * 1_000;
 pub const HISTORY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 pub const HISTORY_MAX_TERMINAL_SESSIONS: i64 = 10_000;
@@ -157,6 +157,7 @@ struct AgentCommandRow {
     updated_at_ms: i64,
     exit_code: Option<i32>,
     exit_signal: Option<String>,
+    sandbox_risk_json: Option<String>,
 }
 
 impl TryFrom<AgentCommandRow> for AgentCommandRecord {
@@ -210,6 +211,13 @@ impl TryFrom<AgentCommandRow> for AgentCommandRecord {
             updated_at_ms: row.updated_at_ms,
             exit_code: row.exit_code,
             exit_signal: row.exit_signal,
+            sandbox_risk: row
+                .sandbox_risk_json
+                .map(|value| {
+                    serde_json::from_str::<SandboxRiskRecord>(&value)
+                        .map_err(|failure| StorageError::Invariant(failure.to_string()))
+                })
+                .transpose()?,
         })
     }
 }
@@ -539,6 +547,10 @@ impl Store {
         }
         if current == 15 {
             self.migrate_v15_to_v16()?;
+            current = 16;
+        }
+        if current == 16 {
+            self.migrate_v16_to_v17()?;
         }
         Ok(())
     }
@@ -565,6 +577,10 @@ impl Store {
 
     fn migrate_v15_to_v16(&mut self) -> Result<(), StorageError> {
         migrate_v15_to_v16(self)
+    }
+
+    fn migrate_v16_to_v17(&mut self) -> Result<(), StorageError> {
+        migrate_v16_to_v17(self)
     }
 
     #[must_use]
@@ -1623,15 +1639,21 @@ impl Store {
         command: &AgentCommandRecord,
     ) -> Result<(), StorageError> {
         let process = command.process_identity.as_ref();
+        let sandbox_risk_json = command
+            .sandbox_risk
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|failure| StorageError::Invariant(failure.to_string()))?;
         self.connection.execute(
             "INSERT INTO agent_commands (
                 id, session_id, pane_id, owner, principal_id, creator_capability_id,
                 worker_pid, worker_pgid, worker_start_token, process_pid, process_pgid,
                 process_start_token, state, output_mode, created_at_ms, updated_at_ms,
-                exit_code, exit_signal
+                exit_code, exit_signal, sandbox_risk_json
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                ?15, ?16, ?17, ?18
+                ?15, ?16, ?17, ?18, ?19
              )
              ON CONFLICT(id) DO UPDATE SET
                 principal_id = excluded.principal_id,
@@ -1642,7 +1664,8 @@ impl Store {
                 state = excluded.state,
                 updated_at_ms = excluded.updated_at_ms,
                 exit_code = excluded.exit_code,
-                exit_signal = excluded.exit_signal",
+                exit_signal = excluded.exit_signal,
+                sandbox_risk_json = excluded.sandbox_risk_json",
             params![
                 command.id.to_string(),
                 command.session_id,
@@ -1665,6 +1688,7 @@ impl Store {
                 command.updated_at_ms,
                 command.exit_code,
                 command.exit_signal,
+                sandbox_risk_json,
             ],
         )?;
         Ok(())
@@ -1680,7 +1704,8 @@ impl Store {
                 "SELECT id, session_id, pane_id, owner, principal_id, creator_capability_id,
                         worker_pid, worker_pgid, worker_start_token, process_pid,
                         process_pgid, process_start_token, state, output_mode,
-                        created_at_ms, updated_at_ms, exit_code, exit_signal
+                        created_at_ms, updated_at_ms, exit_code, exit_signal,
+                        sandbox_risk_json
                  FROM agent_commands WHERE id = ?1",
                 [command_id.to_string()],
                 agent_command_row,
@@ -1694,7 +1719,8 @@ impl Store {
             "SELECT id, session_id, pane_id, owner, principal_id, creator_capability_id,
                     worker_pid, worker_pgid, worker_start_token, process_pid,
                     process_pgid, process_start_token, state, output_mode,
-                    created_at_ms, updated_at_ms, exit_code, exit_signal
+                    created_at_ms, updated_at_ms, exit_code, exit_signal,
+                    sandbox_risk_json
              FROM agent_commands
              WHERE state IN ('starting', 'running', 'idle')
              ORDER BY created_at_ms, id",
@@ -1715,7 +1741,8 @@ impl Store {
             "SELECT id, session_id, pane_id, owner, principal_id, creator_capability_id,
                     worker_pid, worker_pgid, worker_start_token, process_pid,
                     process_pgid, process_start_token, state, output_mode,
-                    created_at_ms, updated_at_ms, exit_code, exit_signal
+                    created_at_ms, updated_at_ms, exit_code, exit_signal,
+                    sandbox_risk_json
              FROM agent_commands
              WHERE principal_id = ?1
              ORDER BY created_at_ms, id",
@@ -1733,10 +1760,17 @@ impl Store {
         command: &AgentCommandRecord,
     ) -> Result<(), StorageError> {
         let process = command.process_identity.as_ref();
+        let sandbox_risk_json = command
+            .sandbox_risk
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|failure| StorageError::Invariant(failure.to_string()))?;
         let changed = self.connection.execute(
             "UPDATE agent_commands
              SET process_pid = ?2, process_pgid = ?3, process_start_token = ?4,
-                 state = ?5, updated_at_ms = ?6, exit_code = ?7, exit_signal = ?8
+                 state = ?5, updated_at_ms = ?6, exit_code = ?7, exit_signal = ?8,
+                 sandbox_risk_json = ?9
              WHERE id = ?1",
             params![
                 command.id.to_string(),
@@ -1747,6 +1781,7 @@ impl Store {
                 command.updated_at_ms,
                 command.exit_code,
                 command.exit_signal,
+                sandbox_risk_json,
             ],
         )?;
         if changed == 0 {
@@ -1945,12 +1980,18 @@ impl Store {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|failure| StorageError::Invariant(failure.to_string()))?;
+        let sandbox_audit_json = capability
+            .sandbox_audit
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|failure| StorageError::Invariant(failure.to_string()))?;
         self.connection.execute(
             "INSERT INTO agent_capabilities (
                 id, token_hash, principal_id, principal_epochs_json, operation,
                 scope_kind, session_id, pane_id, command_id, created_at_ms,
-                expires_at_ms, revoked_at_ms, sandbox_profile_json
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                expires_at_ms, revoked_at_ms, sandbox_profile_json, sandbox_audit_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(id) DO UPDATE SET
                 token_hash = excluded.token_hash,
                 principal_id = excluded.principal_id,
@@ -1963,7 +2004,8 @@ impl Store {
                 created_at_ms = excluded.created_at_ms,
                 expires_at_ms = excluded.expires_at_ms,
                 revoked_at_ms = excluded.revoked_at_ms,
-                sandbox_profile_json = excluded.sandbox_profile_json",
+                sandbox_profile_json = excluded.sandbox_profile_json,
+                sandbox_audit_json = excluded.sandbox_audit_json",
             params![
                 capability.id.to_string(),
                 capability.token_hash.as_str(),
@@ -1978,6 +2020,7 @@ impl Store {
                 capability.expires_at_ms,
                 capability.revoked_at_ms,
                 sandbox_profile_json,
+                sandbox_audit_json,
             ],
         )?;
         Ok(())
@@ -1991,7 +2034,8 @@ impl Store {
             .query_row(
                 "SELECT id, token_hash, principal_id, principal_epochs_json,
                         operation, scope_kind, session_id, pane_id, command_id,
-                        created_at_ms, expires_at_ms, revoked_at_ms, sandbox_profile_json
+                        created_at_ms, expires_at_ms, revoked_at_ms, sandbox_profile_json,
+                        sandbox_audit_json
                  FROM agent_capabilities WHERE token_hash = ?1",
                 [token_hash.as_str()],
                 capability_from_row,
@@ -2008,7 +2052,8 @@ impl Store {
             .query_row(
                 "SELECT id, token_hash, principal_id, principal_epochs_json,
                         operation, scope_kind, session_id, pane_id, command_id,
-                        created_at_ms, expires_at_ms, revoked_at_ms, sandbox_profile_json
+                        created_at_ms, expires_at_ms, revoked_at_ms, sandbox_profile_json,
+                        sandbox_audit_json
                  FROM agent_capabilities WHERE id = ?1",
                 [capability_id.to_string()],
                 capability_from_row,
@@ -3196,6 +3241,21 @@ fn migrate_v15_to_v16(store: &mut Store) -> Result<(), StorageError> {
     Ok(())
 }
 
+fn migrate_v16_to_v17(store: &mut Store) -> Result<(), StorageError> {
+    let transaction = store.connection.transaction()?;
+    transaction.execute_batch(
+        "
+        ALTER TABLE agent_capabilities
+            ADD COLUMN sandbox_audit_json TEXT;
+        ALTER TABLE agent_commands
+            ADD COLUMN sandbox_risk_json TEXT;
+        PRAGMA user_version = 17;
+        ",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn unix_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -3288,6 +3348,7 @@ fn agent_command_row(row: &Row<'_>) -> rusqlite::Result<AgentCommandRow> {
         updated_at_ms: row.get(15)?,
         exit_code: row.get(16)?,
         exit_signal: row.get(17)?,
+        sandbox_risk_json: row.get(18)?,
     })
 }
 
@@ -3321,6 +3382,7 @@ fn capability_from_row(row: &Row<'_>) -> rusqlite::Result<CapabilityRecord> {
     let pane_id = row.get::<_, Option<String>>(7)?;
     let command_id = row.get::<_, Option<String>>(8)?;
     let sandbox_profile_json = row.get::<_, Option<String>>(12)?;
+    let sandbox_audit_json = row.get::<_, Option<String>>(13)?;
     let scope = match scope_kind.as_str() {
         "global" => CapabilityScope::Global,
         "session" => CapabilityScope::Session {
@@ -3406,6 +3468,17 @@ fn capability_from_row(row: &Row<'_>) -> rusqlite::Result<CapabilityRecord> {
                 serde_json::from_str::<qwe_core::SandboxProfile>(&value).map_err(|failure| {
                     rusqlite::Error::FromSqlConversionFailure(
                         12,
+                        rusqlite::types::Type::Text,
+                        Box::new(failure),
+                    )
+                })
+            })
+            .transpose()?,
+        sandbox_audit: sandbox_audit_json
+            .map(|value| {
+                serde_json::from_str::<SandboxAuditRecord>(&value).map_err(|failure| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        13,
                         rusqlite::types::Type::Text,
                         Box::new(failure),
                     )
@@ -3671,6 +3744,29 @@ mod tests {
     }
 
     #[test]
+    fn v17_schema_stores_sandbox_audit_metadata() {
+        let store = Store::open_in_memory().unwrap();
+        let capability_columns = store
+            .connection
+            .prepare("PRAGMA table_info(agent_capabilities)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(capability_columns.contains(&"sandbox_audit_json".into()));
+        let command_columns = store
+            .connection
+            .prepare("PRAGMA table_info(agent_commands)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(command_columns.contains(&"sandbox_risk_json".into()));
+    }
+
+    #[test]
     fn persists_and_updates_tasks() {
         let mut store = Store::open_in_memory().unwrap();
         let id = TaskId::new();
@@ -3712,6 +3808,11 @@ mod tests {
             updated_at_ms: 20,
             exit_code: None,
             exit_signal: None,
+            sandbox_risk: Some(SandboxRiskRecord {
+                network_inherit: true,
+                writable_workspace: true,
+                credential_exposed: true,
+            }),
         };
         store.upsert_agent_command(&record).unwrap();
         assert_eq!(
@@ -3769,6 +3870,7 @@ mod tests {
             updated_at_ms: 20,
             exit_code: None,
             exit_signal: None,
+            sandbox_risk: None,
         };
         store.upsert_agent_command(&record).unwrap();
         let mut update = record.clone();
@@ -3818,6 +3920,12 @@ mod tests {
             expires_at_ms: 100,
             revoked_at_ms: None,
             sandbox_profile: Some(qwe_core::SandboxProfile::new("/tmp/agent-workspace".into())),
+            sandbox_audit: Some(SandboxAuditRecord {
+                profile_hash: "profile-hash".into(),
+                backend_path: "/opt/local/bin/bwrap".into(),
+                backend_version: "bubblewrap 0.13.1".into(),
+                probe_time_ms: 23,
+            }),
         };
         store.install_capability(&capability).unwrap();
         assert_eq!(
@@ -4549,7 +4657,7 @@ mod tests {
         assert_eq!(store.list_resource_scopes().unwrap().len(), 2);
         assert_eq!(store.local_root_principal().unwrap().epoch, 1);
 
-        let backup_prefix = format!("{}.pre-v16-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v17-", path.file_name().unwrap().to_string_lossy());
         let backup = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
             .flatten()
@@ -4568,7 +4676,7 @@ mod tests {
         drop(backup);
         drop(store);
 
-        let backup_prefix = format!("{}.pre-v16-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v17-", path.file_name().unwrap().to_string_lossy());
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry
                 .file_name()
@@ -4675,7 +4783,7 @@ mod tests {
         let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry.file_name().to_string_lossy().starts_with(&format!(
-                "{}.pre-v16-",
+                "{}.pre-v17-",
                 path.file_name().unwrap().to_string_lossy()
             )) {
                 let _ = std::fs::remove_file(entry.path());
@@ -4684,7 +4792,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_v15_capability_without_sandbox_profile_to_v16() {
+    fn migrates_v15_capability_without_sandbox_metadata_to_current() {
         let path = std::env::temp_dir().join(format!(
             "qwe-storage-v15-capability-{}-{}.sqlite",
             std::process::id(),
@@ -4742,11 +4850,12 @@ mod tests {
         assert_eq!(store.schema_version(), SCHEMA_VERSION);
         let capability = store.find_capability_by_hash(&token_hash).unwrap().unwrap();
         assert_eq!(capability.sandbox_profile, None);
+        assert_eq!(capability.sandbox_audit, None);
         drop(store);
 
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry.file_name().to_string_lossy().starts_with(&format!(
-                "{}.pre-v16-",
+                "{}.pre-v17-",
                 path.file_name().unwrap().to_string_lossy()
             )) {
                 let _ = std::fs::remove_file(entry.path());

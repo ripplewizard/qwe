@@ -233,6 +233,11 @@ def run_positive_probe(
     )
     assert read_only.get("token"), read_only
     assert read_only["sandbox_profile"] == read_only_profile, read_only
+    audit = read_only["sandbox_audit"]
+    assert audit["backend_path"].endswith("bwrap"), audit
+    assert audit["backend_version"].startswith("bubblewrap"), audit
+    assert len(audit["profile_hash"]) == 64, audit
+    assert audit["probe_time_ms"] > 0, audit
     read_only_capability = read_only["token"]
 
     basic = exec_command(
@@ -893,6 +898,8 @@ def run_positive_probe(
         "network_inherit": "pass",
         "credential_network_exfil_confirmed": "pass",
         "sandbox_risk_audit": "pass",
+        "sandbox_audit_persistence": "pass",
+        "sandbox_risk_persistence": "pass",
         "home_and_tmp": "pass",
         "environment_and_pid_isolation": "pass",
         "filesystem_boundary": "pass",
@@ -967,6 +974,10 @@ def run_recovery_probe(
     assert (
         after_restart["sandbox"]["child_pid"]
         == before_restart["sandbox"]["child_pid"]
+    )
+    assert (
+        after_restart["sandbox"]["audit"]
+        == before_restart["sandbox"]["audit"]
     )
     recovered = assert_done(socket_path, capability, recovering)
     assert recovered["exit_code"] == 0, recovered
@@ -1079,6 +1090,8 @@ def run_recovery_probe(
         timeout=8,
     )
     assert lost["sandbox"]["enforced"] is True, lost
+    assert lost["sandbox"]["risk"]["network_inherit"] is False, lost
+    assert lost["sandbox"]["audit"]["profile_hash"], lost
     wait_for(
         lambda: process_gone(loss_wrapper),
         "Bubblewrap wrapper survived worker loss",

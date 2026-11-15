@@ -1,7 +1,7 @@
 use qwe_core::{
     AgentCommandRecord, CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
     MAX_CAPABILITY_TTL_MS, PaneId, PrincipalEpoch, PrincipalId, PrincipalRecord, ReclaimTokenHash,
-    SANDBOX_PROFILE_VERSION, SandboxProfile, SandboxSeccompMode,
+    SANDBOX_PROFILE_VERSION, SandboxAuditRecord, SandboxProfile, SandboxSeccompMode,
 };
 use qwe_protocol::{AuthContext, ProtocolErrorBody};
 use qwe_storage::{StorageError, Store};
@@ -20,6 +20,11 @@ pub struct SecurityGrant {
 pub struct IssuedCapability {
     pub token: String,
     pub record: CapabilityRecord,
+}
+
+pub struct SandboxCapabilityGrant {
+    pub profile: SandboxProfile,
+    pub audit: SandboxAuditRecord,
 }
 
 pub fn initialize_bootstrap(
@@ -50,7 +55,7 @@ pub fn issue_capability(
     principal_id: &PrincipalId,
     operation: CapabilityOperation,
     scope: CapabilityScope,
-    sandbox_profile: Option<SandboxProfile>,
+    sandbox_grant: Option<SandboxCapabilityGrant>,
     ttl_ms: i64,
     now_ms: i64,
 ) -> Result<IssuedCapability, ProtocolErrorBody> {
@@ -61,7 +66,10 @@ pub fn issue_capability(
         ));
     }
     validate_operation_scope(operation, &scope)?;
-    validate_sandbox_grant(operation, sandbox_profile.as_ref())?;
+    validate_sandbox_grant(
+        operation,
+        sandbox_grant.as_ref().map(|grant| &grant.profile),
+    )?;
     let chain = store.principal_chain(principal_id).map_err(storage_error)?;
     if chain
         .iter()
@@ -80,6 +88,8 @@ pub fn issue_capability(
         })
         .collect::<Vec<_>>();
     let token = capability_token()?;
+    let sandbox_profile = sandbox_grant.as_ref().map(|grant| grant.profile.clone());
+    let sandbox_audit = sandbox_grant.map(|grant| grant.audit);
     let record = CapabilityRecord {
         id: CapabilityId::new(),
         token_hash: ReclaimTokenHash::from_token(&token),
@@ -91,6 +101,7 @@ pub fn issue_capability(
         expires_at_ms: now_ms.saturating_add(ttl_ms),
         revoked_at_ms: None,
         sandbox_profile,
+        sandbox_audit,
     };
     store.install_capability(&record).map_err(storage_error)?;
     Ok(IssuedCapability { token, record })
@@ -239,6 +250,7 @@ pub fn capability_json(issued: &IssuedCapability) -> serde_json::Value {
         "created_at_ms": issued.record.created_at_ms,
         "expires_at_ms": issued.record.expires_at_ms,
         "sandbox_profile": issued.record.sandbox_profile,
+        "sandbox_audit": issued.record.sandbox_audit,
         "token": issued.token
     })
 }

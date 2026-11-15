@@ -381,6 +381,10 @@ Sandboxed PTY execution preserves terminal semantics and applies an internal
 `TIOCSTI`-denying seccomp filter; the profile's `seccomp:none` value does not
 disable that adapter hardening.
 
+A sandboxed capability also returns `sandbox_audit` with `profile_hash`,
+`backend_path`, `backend_version`, and `probe_time_ms`. These values are stored
+with the capability and included in live and recovered sandbox status.
+
 `SECURITY_PRINCIPAL_REVOKE.severity` is `administrative`, `freeze`, or
 `terminate`; omission defaults to `freeze`. Freeze grace defaults to 60000 ms
 and is capped at 300000 ms. Expiry escalates to termination. Administrative
@@ -491,6 +495,7 @@ start. States are `starting`, `running`, `idle`, `done`, `failed`, and `lost`.
 Sandboxed commands additionally expose `sandbox.risk` flags for
 `network_inherit`, `writable_workspace`, and `credential_exposed`, plus derived
 `credential_network_exfiltration` and `credential_workspace_persistence`.
+The base risk flags and capability audit metadata are durable in SQLite.
 
 `AGENT_COMMAND_WAIT_IDLE` returns `idle`, `done`, `failed`, `lost`, or `unknown`.
 Timeout returns `unknown`, never `idle`. A terminal state takes precedence over a

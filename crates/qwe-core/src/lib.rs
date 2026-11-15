@@ -12,7 +12,7 @@ mod security;
 pub use agent::{
     AGENT_MAX_WAIT_MS, AGENT_OUTPUT_CHUNK_BYTES, AGENT_REPLAY_LIMIT_BYTES, AgentCommandId,
     AgentCommandRecord, AgentCommandState, AgentEvent, AgentEventKind, AgentOutputMode,
-    AgentOutputStream, AgentSignal, AgentWaitState,
+    AgentOutputStream, AgentSignal, AgentWaitState, SandboxRiskRecord,
 };
 pub use authority::{
     AttachmentAuthority, AttachmentOperation, AuthorityCredentials, AuthorityError,
@@ -30,7 +30,7 @@ pub use sandbox::{
 pub use security::{
     CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
     DEFAULT_CAPABILITY_TTL_MS, DEFAULT_FREEZE_GRACE_MS, MAX_CAPABILITY_TTL_MS, MAX_FREEZE_GRACE_MS,
-    PrincipalEpoch, RevocationSeverity,
+    PrincipalEpoch, RevocationSeverity, SandboxAuditRecord,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
