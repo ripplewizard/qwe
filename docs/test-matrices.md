@@ -158,7 +158,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 ## Bubblewrap Sandbox
 
-Rows 001-020 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
+Rows 001-021 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown.
 Ubuntu 22.04 and Debian 12 real VMs pass the complete matrix. Default Ubuntu
 24.04 returns `sandbox_backend_unavailable`; with the packaged path-scoped
@@ -190,6 +190,7 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-018 | Reject a protected-path profile containing hardlinked files so a writable alias cannot bypass read-only protection |
 | SANDBOX-019 | Verify abstract Unix sockets are reachable with `network:inherit` and isolated with `network:isolated_loopback` |
 | SANDBOX-020 | On Landlock ABI 5+, permit device ioctls under `/dev` and reject device ioctls outside allowed write roots |
+| SANDBOX-021 | Canonicalize a symlinked protected path before hardlink inspection and reject hardlinks reachable through the target directory |
 
 ## Core Object Model
 

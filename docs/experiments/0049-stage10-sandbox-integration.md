@@ -25,6 +25,8 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
   read-only;
 - protected paths containing hardlinked files are rejected before capability
   issue, preventing a writable alias from mutating the same inode;
+- symlinked protected directories are canonicalized before hardlink inspection,
+  so the symlink form cannot bypass the same check;
 - host `$HOME` is absent and `/tmp` is private;
 - host PIDs, `/etc/shadow`, `/sys`, and host environment values are absent;
 - workspace symlinks to host paths outside the mount policy are inaccessible;
@@ -319,6 +321,11 @@ alias. Stage 10 reproduced this bypass, then added recursive protected-path
 inspection at both capability issue and worker validation. A protected path
 containing any multi-link file now fails with
 `sandbox_profile_unsupported`.
+
+The first implementation inspected the profile path literally and therefore
+missed a directory symlink hiding the same condition. The validator now
+canonicalizes each top-level protected path before recursively inspecting the
+target, while still refusing to follow nested symlinks during the scan.
 
 In the shared PID namespace, `/proc/<worker-pid>/root` remains inaccessible;
 process visibility alone therefore does not bypass the mount policy. Abstract

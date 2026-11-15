@@ -238,9 +238,10 @@ Fedora 44 passes the complete Stage 10 probe while SELinux remains
 the full probe on all three Ubuntu/Debian VMs, including Ubuntu 24.04 under the
 packaged AppArmor profile.
 
-Protected-path hardlink aliases are rejected before capability issue; shared
-PID namespace `/proc/<pid>/root` access stays bounded, and abstract Unix
-sockets follow the selected network namespace.
+Protected-path hardlink aliases are rejected before capability issue, including
+hardlinks reached through a symlinked protected directory; shared PID namespace
+`/proc/<pid>/root` access stays bounded, and abstract Unix sockets follow the
+selected network namespace.
 
 The optional `strict` named seccomp profile passes pipe-split and PTY execution
 and records the SHA-256 of the exact cBPF program in capability audit metadata.

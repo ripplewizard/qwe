@@ -276,7 +276,8 @@ tmp, network policy, sandboxed PTY, `TIOCSTI` denial, qwed restart, worker loss,
 Pane teardown, the content-hashed `strict` named seccomp denylist, and rejection
 of a backend missing a production-required option. It explicitly confirms that
 a writable workspace can persist a credential and reports the corresponding
-risk. It also rejects protected-path hardlink aliases, verifies
+risk. It also rejects protected-path hardlink aliases including those reached
+through a symlinked protected directory, verifies
 `/proc/<pid>/root` cannot escape the mount policy, and checks abstract Unix
 socket isolation. `just landlock-poc` separately verifies write confinement and
 read/private tmp preservation; Stage 10 confirms the ABI is applied through the

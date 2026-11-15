@@ -109,6 +109,8 @@ risk reduction, not a claim that a writable workspace is trusted by host-side
 processes. Capability issue rejects a protected path containing any
 multi-link file: a writable hardlink alias elsewhere in the workspace would
 otherwise mutate the same inode despite the read-only path mount.
+The top-level protected path is canonicalized before this scan so a symlinked
+protected directory cannot hide the same hardlink condition.
 
 Bubblewrap's `--unshare-net` provides an isolated network namespace containing
 an UP loopback interface on the tested Bubblewrap 0.5, 0.6.1, 0.8, and 0.9
