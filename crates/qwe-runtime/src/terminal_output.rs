@@ -326,4 +326,16 @@ mod tests {
             ["abc界d".as_bytes()].concat()
         );
     }
+
+    #[test]
+    fn arbitrary_two_byte_inputs_never_panic() {
+        for first in 0_u8..=u8::MAX {
+            for second in 0_u8..=u8::MAX {
+                let mut filter = RestrictedTerminalFilter::new();
+                let _ = filter.push(&[first]);
+                let _ = filter.push(&[second]);
+                let _ = filter.finish();
+            }
+        }
+    }
 }

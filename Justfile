@@ -1135,6 +1135,12 @@ sandbox-pane-poc:
     cargo test -p qwe-worker --bin qwe-worker \
       seccomp_socket_denial_preserves_inherited_socket -- --nocapture
 
+fuzz-sandbox-control runs="10000":
+    cargo +nightly fuzz run sandbox_control -- -runs={{ runs }}
+
+fuzz-terminal-output runs="10000":
+    cargo +nightly fuzz run terminal_output -- -runs={{ runs }}
+
 landlock-poc:
     cargo test -p qwe-worker --test landlock_contract -- --nocapture
     cargo build -p qwe-worker --bin qwe-sandbox-init
