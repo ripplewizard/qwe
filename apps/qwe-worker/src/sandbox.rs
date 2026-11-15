@@ -561,11 +561,67 @@ pub struct BubblewrapInvocation {
 }
 
 pub struct BubblewrapOptions<'a> {
-    pub status_fd: i32,
+    pub status_fd: Option<i32>,
     pub seccomp_fd: Option<i32>,
     pub credential_present: bool,
     pub term: Option<&'a str>,
     pub sandbox_init: Option<&'a Path>,
+    pub pane_init: bool,
+    pub control_fd: Option<i32>,
+    pub pane_fd_pins: Option<&'a PaneFdPins>,
+}
+
+pub struct PaneFdPins {
+    pub workspace: i32,
+    pub protected_paths: Vec<(PathBuf, i32)>,
+    pub home: Option<i32>,
+}
+
+pub struct PaneMountPaths {
+    pub workspace: PathBuf,
+    pub protected_paths: Vec<PathBuf>,
+    pub home: Option<PathBuf>,
+}
+
+pub fn pane_mount_paths(profile: &SandboxProfile) -> io::Result<PaneMountPaths> {
+    let workspace = std::fs::canonicalize(&profile.workspace)?;
+    if !workspace.is_dir() {
+        return Err(invalid_input(format!(
+            "sandbox workspace '{}' is not a directory",
+            workspace.display()
+        )));
+    }
+    let protected_paths = profile
+        .protected_paths
+        .iter()
+        .map(|path| {
+            let path = qwe_runtime::resolve_beneath(&profile.workspace, path)?;
+            if !path.starts_with(&workspace) {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "protected path '{}' is outside workspace '{}'",
+                        path.display(),
+                        workspace.display()
+                    ),
+                ));
+            }
+            Ok(path)
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    let home = match profile.home {
+        SandboxHomeMode::Hidden => None,
+        SandboxHomeMode::ReadOnly => Some(std::fs::canonicalize(
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .ok_or_else(|| invalid_input("HOME is unavailable for sandbox profile"))?,
+        )?),
+    };
+    Ok(PaneMountPaths {
+        workspace,
+        protected_paths,
+        home,
+    })
 }
 
 pub fn bubblewrap_invocation(
@@ -614,8 +670,6 @@ pub fn bubblewrap_invocation(
         "--cap-drop".into(),
         "ALL".into(),
         "--die-with-parent".into(),
-        "--json-status-fd".into(),
-        options.status_fd.to_string(),
         "--clearenv".into(),
         "--setenv".into(),
         "PATH".into(),
@@ -624,6 +678,12 @@ pub fn bubblewrap_invocation(
         "LANG".into(),
         "C.UTF-8".into(),
     ];
+    if let Some(status_fd) = options.status_fd {
+        args.extend(["--json-status-fd".into(), status_fd.to_string()]);
+    }
+    if let Some(control_fd) = options.control_fd {
+        args.extend(["--sync-fd".into(), control_fd.to_string()]);
+    }
     if let Some(term) = options.term {
         args.extend(["--setenv".into(), "TERM".into(), term.into()]);
     }
@@ -685,14 +745,15 @@ pub fn bubblewrap_invocation(
         args.extend(["--unshare-pid".into(), "--as-pid-1".into()]);
     }
 
-    push_bind_option(
-        &mut args,
-        match profile.workspace_mode {
-            SandboxWorkspaceMode::ReadOnly => "--ro-bind",
-            SandboxWorkspaceMode::ReadWrite => "--bind",
-        },
-        &workspace,
-    )?;
+    let workspace_option = match profile.workspace_mode {
+        SandboxWorkspaceMode::ReadOnly => "--ro-bind",
+        SandboxWorkspaceMode::ReadWrite => "--bind",
+    };
+    if let Some(fd_pins) = options.pane_fd_pins {
+        push_fd_bind_option(&mut args, workspace_option, fd_pins.workspace, &workspace)?;
+    } else {
+        push_bind_option(&mut args, workspace_option, &workspace)?;
+    }
     for protected_path in &profile.protected_paths {
         let path = qwe_runtime::resolve_beneath(&profile.workspace, protected_path)?;
         if !path.starts_with(&workspace) {
@@ -705,7 +766,16 @@ pub fn bubblewrap_invocation(
                 ),
             ));
         }
-        push_bind_option(&mut args, "--ro-bind", &path)?;
+        if let Some(fd_pins) = options.pane_fd_pins {
+            let descriptor = fd_pins
+                .protected_paths
+                .iter()
+                .find_map(|(configured, descriptor)| (configured == &path).then_some(*descriptor))
+                .ok_or_else(|| invalid_input("Pane FD pin is missing for a protected path"))?;
+            push_fd_bind_option(&mut args, "--ro-bind-fd", descriptor, &path)?;
+        } else {
+            push_bind_option(&mut args, "--ro-bind", &path)?;
+        }
     }
 
     let home = match profile.home {
@@ -715,7 +785,14 @@ pub fn bubblewrap_invocation(
                 .map(PathBuf::from)
                 .ok_or_else(|| invalid_input("HOME is unavailable for sandbox profile"))?;
             let home = std::fs::canonicalize(home)?;
-            push_bind_option(&mut args, "--ro-bind", &home)?;
+            if let Some(fd_pins) = options.pane_fd_pins {
+                let descriptor = fd_pins
+                    .home
+                    .ok_or_else(|| invalid_input("Pane FD pin is missing for read-only HOME"))?;
+                push_fd_bind_option(&mut args, "--ro-bind-fd", descriptor, &home)?;
+            } else {
+                push_bind_option(&mut args, "--ro-bind", &home)?;
+            }
             home
         }
     };
@@ -728,6 +805,12 @@ pub fn bubblewrap_invocation(
     args.push("--".into());
     if options.sandbox_init.is_some() {
         args.push("/qwe-sandbox-init".into());
+        if options.pane_init {
+            args.push("--pane-init".into());
+        }
+        if let Some(control_fd) = options.control_fd {
+            args.extend(["--control-fd".into(), control_fd.to_string()]);
+        }
         args.extend([
             "--workspace".into(),
             path_string(&workspace)?,
@@ -991,6 +1074,27 @@ fn push_bind_option(args: &mut Vec<String>, option: &str, path: &Path) -> io::Re
     args.push(option.into());
     args.push(path.clone());
     args.push(path);
+    Ok(())
+}
+
+fn push_fd_bind_option(
+    args: &mut Vec<String>,
+    option: &str,
+    descriptor: i32,
+    destination: &Path,
+) -> io::Result<()> {
+    let fd_option = match option {
+        "--bind" => "--bind-fd",
+        "--ro-bind" => "--ro-bind-fd",
+        _ => {
+            return Err(invalid_input(format!(
+                "unsupported FD bind mode '{option}'"
+            )));
+        }
+    };
+    args.push(fd_option.into());
+    args.push(descriptor.to_string());
+    args.push(path_string(destination)?);
     Ok(())
 }
 

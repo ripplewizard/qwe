@@ -1600,11 +1600,14 @@ fn spawn_sandboxed_process(
         arguments,
         cwd,
         crate::sandbox::BubblewrapOptions {
-            status_fd: status_write,
+            status_fd: Some(status_write),
             seccomp_fd: Some(seccomp_fd),
             credential_present: credential_fd.is_some(),
             term: None,
             sandbox_init: sandbox_init.as_deref(),
+            pane_init: false,
+            control_fd: None,
+            pane_fd_pins: None,
         },
     ) {
         Ok(invocation) => invocation,
@@ -1806,11 +1809,14 @@ fn build_pty_spawn_plan(request: PtySpawnRequest<'_>) -> std::io::Result<PtySpaw
                 arguments,
                 cwd,
                 crate::sandbox::BubblewrapOptions {
-                    status_fd: 4,
+                    status_fd: Some(4),
                     seccomp_fd: Some(5),
                     credential_present,
                     term: Some("xterm-256color"),
                     sandbox_init: sandbox_init.as_deref(),
+                    pane_init: false,
+                    control_fd: None,
+                    pane_fd_pins: None,
                 },
             ) {
                 Ok(invocation) => invocation,
@@ -2145,7 +2151,7 @@ fn runtime_socket_path(runtime_dir: &Path, prefix: &str) -> std::io::Result<Path
     )))
 }
 
-fn resolve_program(program: &str) -> std::io::Result<PathBuf> {
+pub(crate) fn resolve_program(program: &str) -> std::io::Result<PathBuf> {
     let candidate = PathBuf::from(program);
     if candidate.components().count() > 1 {
         return executable_file(candidate);

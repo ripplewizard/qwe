@@ -1,7 +1,10 @@
 use clap::Parser;
+use serde::Deserialize;
+use std::collections::HashSet;
 use std::ffi::CString;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::net::UnixStream;
@@ -29,8 +32,21 @@ struct Args {
     control_socket: Option<std::path::PathBuf>,
     #[arg(long, hide = true)]
     control_fd: Option<i32>,
+    #[arg(long, hide = true)]
+    pane_mount_manifest: Option<std::path::PathBuf>,
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PaneMountManifest {
+    mounts: Vec<PaneMount>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PaneMount {
+    fd: i32,
+    path: std::path::PathBuf,
 }
 
 fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -41,25 +57,6 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         if acknowledged != *b"1" {
             return Err("agent process release handshake was rejected".into());
         }
-    }
-    if let Some(topology_socket) = &args.topology_socket {
-        let cgroup = qwe_runtime::current_cgroup_path()
-            .map_err(|failure| format!("failed to resolve Session cgroup: {failure}"))?;
-        let payload = serde_json::json!({
-            "pid": std::process::id(),
-            "cgroup": cgroup
-        });
-        let mut stream = UnixStream::connect(topology_socket)
-            .map_err(|failure| format!("failed to connect topology broker: {failure}"))?;
-        serde_json::to_writer(&mut stream, &payload)?;
-        stream.write_all(b"\n")?;
-        stream.flush()?;
-        let mut acknowledgement = [0_u8; 1];
-        stream.read_exact(&mut acknowledgement)?;
-        if acknowledgement != *b"1" {
-            return Err("resource topology broker rejected the handshake".into());
-        }
-        let _ = stream.shutdown(std::net::Shutdown::Both);
     }
     if args.credential_socket.is_some() && args.credential_fd.is_some() {
         return Err("credential socket and descriptor are mutually exclusive".into());
@@ -112,6 +109,28 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             return Err("Pane control socket and descriptor must be provided together".into());
         }
     }
+    if let Some(topology_socket) = &args.topology_socket {
+        let cgroup = qwe_runtime::current_cgroup_path()
+            .map_err(|failure| format!("failed to resolve Session cgroup: {failure}"))?;
+        let payload = serde_json::json!({
+            "pid": std::process::id(),
+            "cgroup": cgroup
+        });
+        let mut stream = UnixStream::connect(topology_socket)
+            .map_err(|failure| format!("failed to connect topology broker: {failure}"))?;
+        serde_json::to_writer(&mut stream, &payload)?;
+        stream.write_all(b"\n")?;
+        stream.flush()?;
+        let mut acknowledgement = [0_u8; 1];
+        stream.read_exact(&mut acknowledgement)?;
+        if acknowledgement != *b"1" {
+            return Err("resource topology broker rejected the handshake".into());
+        }
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+    }
+    if let Some(path) = &args.pane_mount_manifest {
+        install_pane_mounts(path)?;
+    }
     let program = CString::new(args.command[0].as_bytes())?;
     let arguments = args
         .command
@@ -128,6 +147,49 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     let failure = std::io::Error::last_os_error();
     Err(format!("failed to exec {}: {}", args.command[0], failure).into())
+}
+
+fn install_pane_mounts(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let result = (|| {
+        let manifest = serde_json::from_slice::<PaneMountManifest>(&std::fs::read(path)?).map_err(
+            |failure| {
+                format!(
+                    "failed to parse Pane mount manifest '{}': {failure}",
+                    path.display()
+                )
+            },
+        )?;
+        let mut targets = HashSet::new();
+        for mount in manifest.mounts {
+            if !targets.insert(mount.fd) {
+                return Err(format!("Pane mount target {} is duplicated", mount.fd).into());
+            }
+            let source = CString::new(mount.path.as_os_str().as_bytes()).map_err(|_| {
+                format!(
+                    "Pane mount path '{}' contains an embedded NUL",
+                    mount.path.display()
+                )
+            })?;
+            let descriptor = unsafe { libc::open(source.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+            if descriptor < 0 {
+                return Err(format!(
+                    "failed to pin Pane mount '{}': {}",
+                    mount.path.display(),
+                    std::io::Error::last_os_error()
+                )
+                .into());
+            }
+            if let Err(failure) = map_descriptor(descriptor, mount.fd, "Pane mount") {
+                unsafe {
+                    libc::close(descriptor);
+                }
+                return Err(failure);
+            }
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(path);
+    result
 }
 
 fn map_credential_descriptor(source: i32) -> Result<(), Box<dyn std::error::Error>> {

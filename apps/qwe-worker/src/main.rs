@@ -5,7 +5,7 @@ mod sandbox;
 
 use clap::Parser;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
-use qwe_core::{ProcessIdentity, ResourcePolicy};
+use qwe_core::{ProcessIdentity, ResourcePolicy, SandboxProcessMode, SandboxProfile};
 use qwe_protocol::{
     ATTACH_OUTPUT_QUEUE_BYTES, ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody,
     RequestEnvelope, ResponseEnvelope, attach, read_frame, validate_version, verify_same_uid,
@@ -19,9 +19,9 @@ use qwe_runtime::{
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{BufRead, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::FromRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -67,6 +67,8 @@ struct Args {
     #[arg(long, hide = true)]
     worker_credential_fd: Option<i32>,
     #[arg(long, hide = true)]
+    worker_sandbox_profile: Option<String>,
+    #[arg(long, hide = true)]
     sandbox_probe_profile: Option<String>,
     #[arg(long, hide = true)]
     worker_systemd_scope: bool,
@@ -81,9 +83,18 @@ struct WorkerCreateOptions<'a> {
     arguments: &'a [String],
     resource_policy: ResourcePolicy,
     credential_fd: Option<i32>,
+    sandbox_profile: Option<SandboxProfile>,
     runtime_dir: &'a Path,
     use_systemd_scope: bool,
     use_existing_scope: bool,
+}
+
+struct SandboxLaunch {
+    invocation: crate::sandbox::BubblewrapInvocation,
+    mount_manifest: PathBuf,
+    seccomp_file: PathBuf,
+    control_path: PathBuf,
+    control_receiver: mpsc::Receiver<Result<UnixStream, String>>,
 }
 
 struct WorkerSession {
@@ -100,6 +111,8 @@ struct WorkerSession {
     running: AtomicBool,
     exit_code: Mutex<Option<i32>>,
     exit_signal: Mutex<Option<String>>,
+    sandbox_profile: Option<SandboxProfile>,
+    pane_control: Mutex<Option<UnixStream>>,
     agents: agent::AgentManager,
 }
 
@@ -474,6 +487,175 @@ fn start_topology_listener(
     Ok((path, receiver))
 }
 
+fn start_pane_control_listener(
+    runtime_dir: &Path,
+) -> std::io::Result<(PathBuf, mpsc::Receiver<Result<UnixStream, String>>)> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let path = runtime_dir.join(format!("pane-control-{}-{nonce}.sock", std::process::id()));
+    let listener = UnixListener::bind(&path)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    listener.set_nonblocking(true)?;
+    let (sender, receiver) = mpsc::channel();
+    let cleanup_path = path.clone();
+    thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let result = loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let result = stream
+                        .set_nonblocking(false)
+                        .map(|()| stream)
+                        .map_err(|failure| failure.to_string());
+                    break result;
+                }
+                Err(failure) if failure.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        break Err("Pane control broker connection timed out".to_string());
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(failure) => break Err(failure.to_string()),
+            }
+        };
+        let _ = sender.send(result);
+        let _ = fs::remove_file(cleanup_path);
+    });
+    Ok((path, receiver))
+}
+
+fn prepare_sandbox_launch(
+    runtime_dir: &Path,
+    program: &str,
+    arguments: &[String],
+    profile: &SandboxProfile,
+) -> Result<SandboxLaunch, Box<dyn std::error::Error>> {
+    if profile.process_namespace != SandboxProcessMode::Isolated {
+        return Err(
+            "sandboxed Pane v1 requires an isolated process namespace until non-PID-1 tree teardown is implemented"
+                .into(),
+        );
+    }
+    let program = agent::resolve_program(program)?;
+    let mount_paths = crate::sandbox::pane_mount_paths(profile)?;
+    let mut mounts = vec![(20_i32, mount_paths.workspace.clone())];
+    let mut protected_pins = Vec::with_capacity(mount_paths.protected_paths.len());
+    for (index, path) in mount_paths.protected_paths.iter().enumerate() {
+        let descriptor = 21_i32
+            .checked_add(i32::try_from(index)?)
+            .ok_or("Pane protected-path descriptor overflowed i32")?;
+        protected_pins.push((path.clone(), descriptor));
+        mounts.push((descriptor, path.clone()));
+    }
+    if let Some(home) = &mount_paths.home {
+        mounts.push((19, home.clone()));
+    }
+    let pins = crate::sandbox::PaneFdPins {
+        workspace: 20,
+        protected_paths: protected_pins,
+        home: mount_paths.home.as_ref().map(|_| 19),
+    };
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let mount_manifest =
+        runtime_dir.join(format!("pane-mounts-{}-{nonce}.json", std::process::id()));
+    let manifest_bytes = serde_json::to_vec(&json!({
+        "mounts": mounts
+            .iter()
+            .map(|(descriptor, path)| json!({"fd": descriptor, "path": path}))
+            .collect::<Vec<_>>()
+    }))?;
+    let mut manifest_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&mount_manifest)?;
+    manifest_file.write_all(&manifest_bytes)?;
+    manifest_file.flush()?;
+    let seccomp_file = runtime_dir.join(format!(
+        "pane-seccomp-{}-{nonce}.filter",
+        std::process::id()
+    ));
+    if let Err(failure) = crate::sandbox::write_seccomp_filter(&seccomp_file, &profile.seccomp) {
+        let _ = fs::remove_file(&mount_manifest);
+        return Err(failure.into());
+    }
+    let sandbox_init = match crate::sandbox::sandbox_init_for_landlock(profile.landlock) {
+        Ok(path) => path,
+        Err(failure) => {
+            let _ = fs::remove_file(&mount_manifest);
+            let _ = fs::remove_file(&seccomp_file);
+            return Err(failure.into());
+        }
+    };
+    let invocation = match crate::sandbox::bubblewrap_invocation(
+        profile,
+        &program,
+        arguments,
+        None,
+        crate::sandbox::BubblewrapOptions {
+            status_fd: None,
+            seccomp_fd: Some(11),
+            credential_present: false,
+            term: Some("xterm-256color"),
+            sandbox_init: sandbox_init.as_deref(),
+            pane_init: true,
+            control_fd: Some(10),
+            pane_fd_pins: Some(&pins),
+        },
+    ) {
+        Ok(invocation) => invocation,
+        Err(failure) => {
+            let _ = fs::remove_file(&mount_manifest);
+            let _ = fs::remove_file(&seccomp_file);
+            return Err(failure.into());
+        }
+    };
+    let (control_path, control_receiver) = match start_pane_control_listener(runtime_dir) {
+        Ok(listener) => listener,
+        Err(failure) => {
+            let _ = fs::remove_file(&mount_manifest);
+            let _ = fs::remove_file(&seccomp_file);
+            return Err(failure.into());
+        }
+    };
+    Ok(SandboxLaunch {
+        invocation,
+        mount_manifest,
+        seccomp_file,
+        control_path,
+        control_receiver,
+    })
+}
+
+fn add_sandbox_launcher_args(command: &mut CommandBuilder, sandbox: &SandboxLaunch) {
+    command.arg("--control-socket");
+    command.arg(&sandbox.control_path);
+    command.args(["--control-fd", "10"]);
+    command.arg("--sandbox-seccomp-file");
+    command.arg(&sandbox.seccomp_file);
+    command.args(["--sandbox-seccomp-fd", "11"]);
+    command.arg("--pane-mount-manifest");
+    command.arg(&sandbox.mount_manifest);
+}
+
+fn add_launch_program(
+    command: &mut CommandBuilder,
+    sandbox: Option<&SandboxLaunch>,
+    program: &str,
+    arguments: &[String],
+) {
+    if let Some(sandbox) = sandbox {
+        command.arg(&sandbox.invocation.executable);
+        command.args(&sandbox.invocation.arguments);
+    } else {
+        command.arg(program);
+        command.args(arguments);
+    }
+}
+
 impl WorkerSession {
     fn create(options: WorkerCreateOptions<'_>) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
         let WorkerCreateOptions {
@@ -483,10 +665,14 @@ impl WorkerSession {
             arguments,
             resource_policy,
             credential_fd,
+            sandbox_profile,
             runtime_dir,
             use_systemd_scope,
             use_existing_scope,
         } = options;
+        if sandbox_profile.is_some() && credential_fd.is_some() {
+            return Err("sandboxed Panes do not accept long-lived credentials".into());
+        }
         let pair = native_pty_system().openpty(PtySize {
             rows: 24,
             cols: 80,
@@ -502,6 +688,10 @@ impl WorkerSession {
         } else {
             None
         };
+        let sandbox = sandbox_profile
+            .as_ref()
+            .map(|profile| prepare_sandbox_launch(runtime_dir, program, arguments, profile))
+            .transpose()?;
         let executable = std::env::current_exe()?.with_file_name("qwe-session-exec");
         let mut command = if use_systemd_scope {
             let (topology_socket, _) = topology
@@ -543,10 +733,12 @@ impl WorkerSession {
                 command.arg("--credential-socket");
                 command.arg(socket);
             }
-            command.arg(program);
-            command.args(arguments.iter());
+            if let Some(sandbox) = &sandbox {
+                add_sandbox_launcher_args(&mut command, sandbox);
+            }
+            add_launch_program(&mut command, sandbox.as_ref(), program, arguments);
             command
-        } else if use_existing_scope || credential_socket.is_some() {
+        } else if use_existing_scope || credential_socket.is_some() || sandbox.is_some() {
             let mut command = CommandBuilder::new(executable);
             if let Some((socket, _)) = &topology {
                 command.arg("--topology-socket");
@@ -556,8 +748,10 @@ impl WorkerSession {
                 command.arg("--credential-socket");
                 command.arg(socket);
             }
-            command.arg(program);
-            command.args(arguments.iter());
+            if let Some(sandbox) = &sandbox {
+                add_sandbox_launcher_args(&mut command, sandbox);
+            }
+            add_launch_program(&mut command, sandbox.as_ref(), program, arguments);
             command
         } else {
             let mut command = CommandBuilder::new(program);
@@ -567,6 +761,32 @@ impl WorkerSession {
         command.env("TERM", "xterm-256color");
         let child = pair.slave.spawn_command(command);
         let mut child = child?;
+        let pane_control = if let Some(sandbox) = &sandbox {
+            match sandbox
+                .control_receiver
+                .recv_timeout(Duration::from_secs(3))
+            {
+                Ok(Ok(stream)) => Some(stream),
+                Ok(Err(failure)) => {
+                    let _ = child.kill();
+                    let _ = fs::remove_file(&sandbox.control_path);
+                    let _ = fs::remove_file(&sandbox.mount_manifest);
+                    let _ = fs::remove_file(&sandbox.seccomp_file);
+                    return Err(format!("Pane control broker failed: {failure}").into());
+                }
+                Err(failure) => {
+                    let _ = child.kill();
+                    let _ = fs::remove_file(&sandbox.control_path);
+                    let _ = fs::remove_file(&sandbox.mount_manifest);
+                    let _ = fs::remove_file(&sandbox.seccomp_file);
+                    return Err(
+                        format!("Pane control broker handshake timed out: {failure}").into(),
+                    );
+                }
+            }
+        } else {
+            None
+        };
         let (pid, cgroup_dir, mut topology_stream) = if let Some((_, receiver)) = topology {
             match receiver.recv_timeout(Duration::from_secs(3)) {
                 Ok(Ok((pid, cgroup, stream))) => (pid, Some(cgroup), Some(stream)),
@@ -647,6 +867,8 @@ impl WorkerSession {
             running: AtomicBool::new(true),
             exit_code: Mutex::new(None),
             exit_signal: Mutex::new(None),
+            sandbox_profile,
+            pane_control: Mutex::new(pane_control),
             agents,
         });
         session.resources.start_monitor(pid, pgid);
@@ -736,8 +958,33 @@ impl WorkerSession {
             "resource_policy": self.resources.policy_json(),
             "resource_metrics": self.resources.metrics_json(),
             "truncated_from": stream.journal.truncated_from(),
-            "total_written": stream.journal.total_written()
+            "total_written": stream.journal.total_written(),
+            "sandbox": self.sandbox_json()
         })
+    }
+
+    fn sandbox_json(&self) -> Value {
+        match &self.sandbox_profile {
+            Some(profile) => json!({
+                "enforced": true,
+                "backend": "bubblewrap",
+                "profile": profile,
+                "control_protocol_version": 1
+            }),
+            None => json!({"enforced": false}),
+        }
+    }
+
+    fn send_sandbox_signal(&self, signal: libc::c_int) -> std::io::Result<()> {
+        let mut control = self
+            .pane_control
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(stream) = control.as_mut() else {
+            return Ok(());
+        };
+        stream.write_all(&[1, 1, 0, 1, u8::try_from(signal).unwrap_or_default()])?;
+        stream.flush()
     }
 
     fn ping(&self, session_id: &str) -> Value {
@@ -767,7 +1014,8 @@ impl WorkerSession {
             "requested_resource_policy": self.resources.policy_json(),
             "effective_resource_policy": self.resources.effective_policy_json(),
             "resource_policy": self.resources.policy_json(),
-            "resource_metrics": self.resources.metrics_json()
+            "resource_metrics": self.resources.metrics_json(),
+            "sandbox": self.sandbox_json()
         })
     }
 
@@ -810,7 +1058,8 @@ impl WorkerSession {
             "journal_hex": hex_encode(&tail),
             "snapshot_bytes": tail.len(),
             "truncated_from": stream.journal.truncated_from(),
-            "total_written": stream.journal.total_written()
+            "total_written": stream.journal.total_written(),
+            "sandbox": self.sandbox_json()
         })
     }
 
@@ -1044,6 +1293,7 @@ impl WorkerSession {
     fn stop_task(&self, session_id: &str) -> Result<Value, ProtocolErrorBody> {
         self.agents.terminate_all();
         if self.process_group_exists() {
+            let _ = self.send_sandbox_signal(libc::SIGTERM);
             self.signal_process_group(libc::SIGTERM)?;
             if !self.wait_for_process_group_exit(TASK_STOP_GRACE) {
                 self.signal_process_group(libc::SIGKILL)?;
@@ -1571,6 +1821,12 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let pane_id = args
         .worker_pane_id
         .unwrap_or_else(|| format!("standalone-{}", std::process::id()));
+    let sandbox_profile = args
+        .worker_sandbox_profile
+        .as_deref()
+        .map(serde_json::from_str::<SandboxProfile>)
+        .transpose()
+        .map_err(|failure| format!("invalid worker sandbox profile: {failure}"))?;
     if UnixStream::connect(&socket).is_ok() {
         return Err(format!("session worker already running at {}", socket.display()).into());
     }
@@ -1604,6 +1860,7 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             cpu_seconds: args.worker_cpu_seconds,
         },
         credential_fd: args.worker_credential_fd,
+        sandbox_profile,
         runtime_dir,
         use_systemd_scope: args.worker_systemd_scope,
         use_existing_scope: args.worker_existing_scope,
