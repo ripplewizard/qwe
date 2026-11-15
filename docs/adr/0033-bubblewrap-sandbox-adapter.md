@@ -89,7 +89,7 @@ SandboxProfileV1
   tmp: private
   process_namespace: isolated | shared
   setuid: denied
-  seccomp: none | named-profile
+  seccomp: none | strict
 ```
 
 `workspace:readonly` is the default. `workspace:read_write` is explicit.
@@ -106,6 +106,20 @@ listen/connect pair and the absence of a default route.
 Setuid privilege gain is denied by Bubblewrap's no-new-privileges state.
 Sandbox status reports `setuid_denied:true` and `no_new_privs:true`; Stage 10
 verifies `NoNewPrivs: 1` inside `/proc/self/status` on all tested versions.
+
+The optional `strict` named seccomp profile is a small compatibility-oriented
+denylist, not a syscall allowlist and not a complete syscall sandbox. It rejects
+`ptrace`, `bpf`, `keyctl`, `add_key`, `request_key`, and `userfaultfd` with
+`EPERM`, and `io_uring_setup` with `ENOSYS` so runtimes can detect an
+unsupported facility through their normal fallback path. All sandbox profiles,
+including `seccomp:none`, retain the adapter's `TIOCSTI` denial with `EPERM`.
+Unknown named profiles fail capability issue with
+`sandbox_profile_unsupported`.
+
+Seccomp audit identifiers are content-addressed. The effective cBPF program is
+hashed with SHA-256 and returned as `sandbox_audit.seccomp_profile_hash`;
+the stable profile name is descriptive metadata, while the hash identifies the
+bytes passed to Bubblewrap.
 
 ### 4. Capability controls profile choice
 
@@ -280,19 +294,22 @@ The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
 - `just sandbox-systemd-service-smoke` verifies sandboxed Agent execution,
   qwed crash recovery, binary replacement, and teardown in a transient user
   service using the packaged security properties.
+- `just stage10-sandbox` verifies the `strict` named seccomp profile in both
+  pipe-split and PTY commands, including denial return codes and the distinct
+  seccomp content hash in capability audit metadata.
 
 Remaining qualification before production:
 
 - explicit user-namespace-disabled configurations on additional distributions;
 - a successful Ubuntu 24.04 AppArmor/userns configuration;
 - Bubblewrap minimum-version/feature matrix;
-- named user seccomp profiles;
+- additional named seccomp profiles and wider runtime compatibility coverage;
 - broader network escape and filesystem escape probes;
 - credential/file-exfiltration cases;
 - interactive Agent PTY input/resize protocol, if that becomes a product
   requirement.
 
-Stage 10.1-10.3 evidence is recorded in
+Stage 10.1-10.4 evidence is recorded in
 [Experiment 0049](../experiments/0049-stage10-sandbox-integration.md).
 
 ## Consequences

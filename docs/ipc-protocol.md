@@ -376,14 +376,24 @@ path. The v1 profile shape is:
 `workspace_mode` is `read_only` or `read_write`; `network` is
 `isolated_loopback` or `inherit`; `home` is `hidden` or `read_only`; and
 `process_namespace` is `isolated` or `shared`. Unknown fields, non-v1 profiles,
-named seccomp, a missing workspace, or a missing protected path fail closed.
+named seccomp values other than the exact profile name `strict`, a missing
+workspace, or a missing protected path fail closed.
 Sandboxed PTY execution preserves terminal semantics and applies an internal
 `TIOCSTI`-denying seccomp filter; the profile's `seccomp:none` value does not
 disable that adapter hardening.
 
+The optional profile value `"seccomp":{"mode":"named","profile":"strict"}`
+adds a deny-focused cBPF layer. It rejects `ptrace`, `bpf`, `keyctl`,
+`add_key`, `request_key`, and `userfaultfd` with `EPERM`; it rejects
+`io_uring_setup` with `ENOSYS` so runtime feature detection can fall back.
+`strict` is a stable profile name, but it is not a syscall allowlist or a
+complete syscall sandbox. Unknown names are rejected rather than downgraded.
+
 A sandboxed capability also returns `sandbox_audit` with `profile_hash`,
-`backend_path`, `backend_version`, and `probe_time_ms`. These values are stored
-with the capability and included in live and recovered sandbox status.
+`seccomp_profile_hash`, `backend_path`, `backend_version`, and
+`probe_time_ms`. The seccomp hash is the SHA-256 of the exact cBPF bytes passed
+to Bubblewrap. These values are stored with the capability and included in
+live and recovered sandbox status.
 
 `SECURITY_PRINCIPAL_REVOKE.severity` is `administrative`, `freeze`, or
 `terminate`; omission defaults to `freeze`. Freeze grace defaults to 60000 ms

@@ -32,7 +32,10 @@ qwed, Pane worker, `qwe-session-exec`, and Bubblewrap chain. The probe verifies:
 - sandboxed PTY commands preserve terminal size, FD3 credentials, redaction,
   foreground idle, termination, and cgroup ownership;
 - a seccomp filter rejects `TIOCSTI` with `EPERM` while preserving normal PTY
-  operation; and
+  operation;
+- the `strict` named seccomp profile rejects its configured high-risk syscalls
+  with stable return codes in pipe-split and PTY commands, and its
+  content-addressed filter hash is present in capability audit metadata;
 - an unavailable Bubblewrap executable fails capability issue closed;
 - qwed restart reconnects to the same worker, wrapper, child, profile, and
   events;
@@ -184,6 +187,25 @@ the full bounded snapshot. Low-trust callers retain stable reason/environment/
 failed-stage/target fields, but not stderr, backend path/version, probe time, or
 sysctl values.
 
+### Named seccomp profile
+
+Profile v1 now accepts the exact named seccomp profile `strict`. The profile is
+a small denylist chosen to preserve common runtime fallback behavior:
+
+- `ptrace`, `bpf`, `keyctl`, `add_key`, `request_key`, and `userfaultfd`
+  return `EPERM`; and
+- `io_uring_setup` returns `ENOSYS`.
+
+The worker rejects unknown names before issuing a token. The capability audit
+stores `seccomp_profile_hash`, the SHA-256 of the exact cBPF byte sequence
+passed to Bubblewrap. This means the stable profile name does not hide future
+filter changes: a capability records the bytes that were actually authorized.
+
+The Stage 10 probe exercises both pipe-split and PTY execution under `strict`.
+It asserts the specified errno results, confirms the strict hash differs from
+the base adapter filter, and verifies the hash survives in live sandbox audit
+metadata. `strict` remains a denylist rather than a complete syscall sandbox.
+
 ### Mount layout
 
 The adapter mounts existing common system roots read-only, provides private
@@ -194,7 +216,7 @@ that Bubblewrap cannot mount.
 
 ## Verification
 
-- `just stage10-sandbox`: pass.
+- `just stage10-sandbox`: pass, including the named `strict` seccomp profile.
 - `just stage9-agent-exec`: pass, covering the pre-sandbox agent regression.
 - `just bubblewrap-poc`: pass, 5 tests.
 - `just sandbox-container-matrix`: Ubuntu 22.04, Ubuntu 24.04, and Debian 12
@@ -227,4 +249,5 @@ claim that Bubblewrap succeeds inside a restricted container.
 - a successful Ubuntu 24.04 configuration with an approved AppArmor/userns
   policy;
 - other distributions and kernels with user namespaces explicitly disabled; and
-- seccomp, Landlock, and stronger VM/OCI isolation.
+- additional named seccomp profiles, broader runtime compatibility coverage,
+  Landlock, and stronger VM/OCI isolation.

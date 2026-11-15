@@ -193,4 +193,5 @@ Bubblewrap `--json-status-fd`, internal `TIOCSTI` seccomp, and
 pass locally and on Ubuntu 22.04/Debian 12 real VMs. Ubuntu 24.04 currently
 fails closed under the tested AppArmor/userns policy. Session/Pane
 startup-program sandboxing, Landlock fallback, init shims, additional platform
-qualification, and stronger VM/OCI backends remain deferred.
+qualification, additional named seccomp profiles, and stronger VM/OCI backends
+remain deferred.

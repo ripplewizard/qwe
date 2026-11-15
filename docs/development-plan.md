@@ -556,9 +556,10 @@ profiles to Linux `AGENT_EXEC`. It preserves FD3 credentials, Pane cgroups,
 fail-closed behavior, PTY terminal semantics, and internal `TIOCSTI` denial.
 Sandboxed restart recovery and Pane-teardown qualification pass locally and on
 Ubuntu 22.04/Debian 12 real VMs. Ubuntu 24.04 fails closed under the tested
-AppArmor/userns policy. Session/Pane startup-program sandboxing, Landlock
-fallback, additional platform qualification, and VM/OCI backends remain later
-decisions.
+AppArmor/userns policy. The content-hashed `strict` named seccomp denylist
+passes pipe-split and PTY execution. Session/Pane startup-program sandboxing,
+Landlock fallback, additional named seccomp profiles, additional platform
+qualification, and VM/OCI backends remain later decisions.
 
 ## Test and Delivery Gates
 

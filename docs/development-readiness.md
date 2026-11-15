@@ -229,3 +229,7 @@ proves fail-closed behavior on Ubuntu 22.04, Ubuntu 24.04, and Debian 12 rather
 than successful nested sandbox execution. The real-VM matrix passes the full
 Stage 10 probe on Ubuntu 22.04 and Debian 12; Ubuntu 24.04 fails closed under the
 tested AppArmor/userns policy.
+
+The optional `strict` named seccomp profile passes pipe-split and PTY execution
+and records the SHA-256 of the exact cBPF program in capability audit metadata.
+Unknown named profiles fail closed.
