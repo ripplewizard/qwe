@@ -224,6 +224,22 @@ def unix_capture():
     return listener, worker, received, name
 
 
+def fifo_capture(path):
+    os.mkfifo(path)
+    received = []
+
+    def receive():
+        try:
+            with open(path, "rb", buffering=0) as stream:
+                received.append(stream.read(16384))
+        except OSError:
+            pass
+
+    worker = threading.Thread(target=receive, daemon=True)
+    worker.start()
+    return worker, received
+
+
 def run_positive_probe(
     socket_path,
     workspace,
@@ -491,6 +507,50 @@ def run_positive_probe(
     assert_done(socket_path, rw_capability, rw_command)
     assert rw_target.read_text() == "RW_OK"
 
+    fd_script = (
+        "import json,os;"
+        "fds={};"
+        "\nfor fd in os.listdir('/proc/self/fd'):"
+        "\n try: fds[fd]=os.readlink('/proc/self/fd/'+fd)"
+        "\n except OSError: pass"
+        "\nprint(json.dumps(fds,sort_keys=True))"
+    )
+    fd_command = exec_command(
+        socket_path,
+        read_only_capability,
+        pane_id,
+        "/usr/bin/python3",
+        "-c",
+        fd_script,
+    )
+    assert_done(socket_path, read_only_capability, fd_command)
+    fd_events = events(socket_path, read_only_capability, fd_command["command_id"])
+    inherited_fds = json.loads(decode_stream(fd_events, "stdout"))
+    assert set(inherited_fds) <= {"0", "1", "2"}, inherited_fds
+
+    fifo_path = workspace / "credential-channel.fifo"
+    fifo_worker, fifo_data = fifo_capture(fifo_path)
+    fifo_script = (
+        "import os;"
+        "secret=os.read(3,16384);"
+        f"fd=os.open({str(fifo_path)!r},os.O_WRONLY);"
+        "os.write(fd,secret);"
+        "os.close(fd)"
+    )
+    fifo_command = exec_command(
+        socket_path,
+        rw_capability,
+        pane_id,
+        "/usr/bin/python3",
+        "-c",
+        fifo_script,
+        credential="CMD_KEY",
+    )
+    assert_done(socket_path, rw_capability, fifo_command)
+    fifo_worker.join(4)
+    assert fifo_data == [COMMAND_SECRET], fifo_data
+    fifo_path.unlink()
+
     persisted_credential = workspace / "credential-workspace-persistence.bin"
     credential_persistence_command = exec_command(
         socket_path,
@@ -565,7 +625,7 @@ def run_positive_probe(
     assert not protected_target.exists(), protected_target
 
     protected_link = workspace / "protected-link"
-    protected_link.symlink_to(protected_git)
+    protected_link.symlink_to(".git")
     symlink_hardlink_source = protected_git / "symlink-hardlink-source"
     symlink_hardlink_source.write_text("ORIGINAL")
     symlink_hardlink_alias = workspace / "symlink-hardlink-alias"
@@ -611,6 +671,25 @@ def run_positive_probe(
     assert_done(socket_path, linked_capability, linked_command)
     assert not (protected_git / "symlink-blocked").exists()
     protected_link.unlink()
+
+    absolute_protected_link = workspace / "absolute-protected-link"
+    absolute_protected_link.symlink_to(protected_git)
+    absolute_link_profile = profile(
+        workspace,
+        workspace_mode="read_write",
+        protected_paths=[absolute_protected_link],
+    )
+    absolute_link_issue = issue_capability(
+        socket_path,
+        management,
+        principal_id,
+        pane_id,
+        absolute_link_profile,
+    )
+    assert (
+        absolute_link_issue.get("code") == "sandbox_profile_unsupported"
+    ), absolute_link_issue
+    absolute_protected_link.unlink()
 
     home_profile = profile(workspace)
     home_profile["home"] = "read_only"
@@ -1148,11 +1227,14 @@ def run_positive_probe(
         "request_cannot_enable": "pass",
         "request_cannot_downgrade": "pass",
         "workspace_ro_rw": "pass",
+        "fd_inheritance": "pass",
+        "credential_workspace_fifo_exfil_confirmed": "pass",
         "credential_workspace_persistence_confirmed": "pass",
         "protected_path": "pass",
         "protected_hardlink": "pass",
         "symlink_protected_hardlink": "pass",
         "symlink_protection": "pass",
+        "absolute_protected_symlink_rejected": "pass",
         "home_read_only": "pass",
         "process_namespace_shared": "pass",
         "proc_root_bounded": "pass",

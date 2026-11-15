@@ -203,6 +203,17 @@ pub fn abi_version() -> Result<u32, LandlockError> {
 ))]
 pub fn apply(policy: &LandlockPolicy<'_>) -> Result<u32, LandlockError> {
     let abi = abi_version()?;
+    let workspace_metadata =
+        std::fs::metadata(policy.workspace).map_err(|source| LandlockError::Syscall {
+            operation: "workspace validation",
+            source,
+        })?;
+    if !workspace_metadata.is_dir() {
+        return Err(LandlockError::Syscall {
+            operation: "workspace validation",
+            source: io::Error::new(io::ErrorKind::NotADirectory, "workspace is not a directory"),
+        });
+    }
     let write_access = write_access_for_abi(abi);
     if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } < 0 {
         return Err(LandlockError::Syscall {

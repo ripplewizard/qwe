@@ -56,6 +56,22 @@ fn run_init(root: &TestRoot, mode: &str, script: &str) -> std::process::Output {
 }
 
 #[test]
+fn sandbox_init_failure_has_a_distinct_exit_code() {
+    let output = Command::new(env!("CARGO_BIN_EXE_qwe-sandbox-init"))
+        .arg("--workspace")
+        .arg("/definitely/missing/qwe-workspace")
+        .arg("--workspace-mode")
+        .arg("read-only")
+        .arg("--private-tmp")
+        .arg("--")
+        .arg("/bin/true")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(125));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("qwe-sandbox-init:"));
+}
+
+#[test]
 fn landlock_confines_writes_while_preserving_reads_and_private_tmp() {
     if landlock_abi_version().is_err() {
         return;

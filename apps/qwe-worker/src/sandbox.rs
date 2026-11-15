@@ -430,14 +430,7 @@ pub fn bubblewrap_invocation(
         )));
     }
     let cwd = match requested_cwd {
-        Some(path) => {
-            let candidate = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                workspace.join(path)
-            };
-            std::fs::canonicalize(candidate)?
-        }
+        Some(path) => qwe_runtime::resolve_beneath(&profile.workspace, path)?,
         None => workspace.clone(),
     };
     if !cwd.starts_with(&workspace) {
@@ -548,7 +541,7 @@ pub fn bubblewrap_invocation(
         &workspace,
     )?;
     for protected_path in &profile.protected_paths {
-        let path = std::fs::canonicalize(protected_path)?;
+        let path = qwe_runtime::resolve_beneath(&profile.workspace, protected_path)?;
         if !path.starts_with(&workspace) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,

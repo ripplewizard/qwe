@@ -6,7 +6,7 @@ use qwe_core::{
     SandboxWorkspaceMode,
 };
 use qwe_protocol::ProtocolErrorBody;
-use qwe_runtime::process_identity;
+use qwe_runtime::{process_identity, resolve_beneath};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
@@ -1124,11 +1124,9 @@ pub(crate) fn validate_sandbox_profile(profile: &SandboxProfile) -> Result<(), P
             "sandbox profile v1 requires a private /tmp",
         ));
     }
+    let mut resolved_protected = Vec::with_capacity(profile.protected_paths.len());
     for path in &profile.protected_paths {
-        if !path.is_absolute()
-            || !path.starts_with(&profile.workspace)
-            || std::fs::symlink_metadata(path).is_err()
-        {
+        if !path.is_absolute() || !path.starts_with(&profile.workspace) {
             return Err(error(
                 "sandbox_profile_unsupported",
                 format!(
@@ -1137,8 +1135,18 @@ pub(crate) fn validate_sandbox_profile(profile: &SandboxProfile) -> Result<(), P
                 ),
             ));
         }
+        let resolved = resolve_beneath(&profile.workspace, path).map_err(|failure| {
+            error(
+                "sandbox_profile_unsupported",
+                format!(
+                    "protected path '{}' is unavailable or escapes the workspace: {failure}",
+                    path.display()
+                ),
+            )
+        })?;
+        resolved_protected.push(resolved);
     }
-    match qwe_core::find_hardlinked_protected_path(&profile.protected_paths) {
+    match qwe_core::find_hardlinked_protected_path(&resolved_protected) {
         Ok(None) => {}
         Ok(Some(path)) => {
             return Err(error(

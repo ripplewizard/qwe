@@ -3,6 +3,7 @@ use thiserror::Error;
 
 mod cgroup;
 mod landlock;
+mod path;
 mod process;
 mod terminal;
 
@@ -15,6 +16,7 @@ pub use cgroup::{
 pub use landlock::{
     LandlockError, LandlockPolicy, abi_version as landlock_abi_version, apply as apply_landlock,
 };
+pub use path::resolve_beneath;
 pub use process::{process_identity, process_matches};
 pub use terminal::{
     CursorStyle, MouseProtocolEncoding, MouseProtocolMode, TerminalScreen, TerminalSnapshot,

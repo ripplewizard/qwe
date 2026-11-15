@@ -28,6 +28,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         workspace_read_write: matches!(args.workspace_mode, WorkspaceMode::ReadWrite),
         private_tmp: args.private_tmp,
     })?;
+    harden_process()?;
     unsafe {
         std::env::set_var("QWE_LANDLOCK_ABI", abi.to_string());
     }
@@ -50,6 +51,26 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     Err(format!("failed to exec {}: {}", args.command[0], failure).into())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    run(Args::parse())
+#[cfg(target_os = "linux")]
+fn harden_process() -> Result<(), Box<dyn std::error::Error>> {
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } < 0 {
+        return Err(format!(
+            "failed to disable process dumpability: {}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn harden_process() -> Result<(), Box<dyn std::error::Error>> {
+    Ok(())
+}
+
+fn main() {
+    if let Err(failure) = run(Args::parse()) {
+        eprintln!("qwe-sandbox-init: {failure}");
+        std::process::exit(125);
+    }
 }

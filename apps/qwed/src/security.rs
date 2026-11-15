@@ -4,6 +4,7 @@ use qwe_core::{
     SANDBOX_PROFILE_VERSION, SandboxAuditRecord, SandboxProfile,
 };
 use qwe_protocol::{AuthContext, ProtocolErrorBody};
+use qwe_runtime::resolve_beneath;
 use qwe_storage::{StorageError, Store};
 use serde_json::json;
 use std::fs::OpenOptions;
@@ -160,18 +161,20 @@ pub fn validate_sandbox_grant(
             "sandbox protected paths must be absolute",
         ));
     }
+    let mut resolved_protected = Vec::with_capacity(profile.protected_paths.len());
     for path in &profile.protected_paths {
-        if std::fs::symlink_metadata(path).is_err() {
-            return Err(error(
+        let resolved = resolve_beneath(&profile.workspace, path).map_err(|failure| {
+            error(
                 "sandbox_profile_unsupported",
                 format!(
-                    "sandbox protected path '{}' must already exist",
+                    "sandbox protected path '{}' is unavailable or escapes the workspace: {failure}",
                     path.display()
                 ),
-            ));
-        }
+            )
+        })?;
+        resolved_protected.push(resolved);
     }
-    match qwe_core::find_hardlinked_protected_path(&profile.protected_paths) {
+    match qwe_core::find_hardlinked_protected_path(&resolved_protected) {
         Ok(None) => {}
         Ok(Some(path)) => {
             return Err(error(
