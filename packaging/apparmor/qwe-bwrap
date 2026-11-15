@@ -1,0 +1,17 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+profile qwe-bwrap-usr /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/qwe-bwrap>
+}
+
+profile qwe-bwrap-usr-local /usr/local/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/qwe-bwrap>
+}
+
+profile qwe-bwrap-opt-local /opt/local/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/qwe-bwrap>
+}

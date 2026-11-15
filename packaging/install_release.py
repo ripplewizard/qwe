@@ -16,7 +16,10 @@ ALLOWED_BINARIES = {
     "qwe-session-exec",
     "qwe-sandbox-init",
 }
-ALLOWED_SERVICE_PREFIX = Path("share/qwe/service")
+ALLOWED_ASSET_PREFIXES = (
+    Path("share/qwe/service"),
+    Path("share/qwe/apparmor"),
+)
 
 
 def sha256(path):
@@ -95,9 +98,9 @@ def main():
         if (
             relative.is_absolute()
             or ".." in relative.parts
-            or ALLOWED_SERVICE_PREFIX not in relative.parents
+            or not any(prefix in relative.parents for prefix in ALLOWED_ASSET_PREFIXES)
         ):
-            raise SystemExit(f"unsafe service asset path: {relative}")
+            raise SystemExit(f"unsafe package asset path: {relative}")
 
     installed = []
     if not args.dry_run:

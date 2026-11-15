@@ -1235,6 +1235,50 @@ sandbox-vm-matrix hosts="ubuntu2204 ubuntu2404 debian12":
       fi
     done
 
+sandbox-apparmor-vm host="ubuntu2404":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "{{ host }}" = "ubuntu2404" ] || {
+      printf 'sandbox AppArmor qualification currently targets ubuntu2404 only\n' >&2
+      exit 2
+    }
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="$lab/ssh_config"
+    target="qwe-{{ host }}"
+    remote_dir="/home/qwe/bianca/qwe-apparmor-vm"
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    cd "$root"
+    cargo build --release -p qwe-worker -p qwed
+    ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+    scp -q -F "$ssh_config" \
+      target/release/qwed \
+      target/release/qwe-worker \
+      target/release/qwe-session-exec \
+      target/release/qwe-sandbox-init \
+      packaging/apparmor/qwe-bwrap \
+      packaging/apparmor/install.sh \
+      tests/fixtures/apparmor_profile_probe.py \
+      tests/fixtures/stage7_resource_probe.py \
+      tests/fixtures/stage10_sandbox_probe.py \
+      "$target:$remote_dir/"
+    ssh -F "$ssh_config" "$target" "
+      set -e
+      root=\$(mktemp -d /tmp/qwe-apparmor-vm.XXXXXX)
+      PYTHONPATH=$remote_dir python3 $remote_dir/apparmor_profile_probe.py \
+        --profile $remote_dir/qwe-bwrap \
+        --installer $remote_dir/install.sh \
+        --qwed $remote_dir/qwed \
+        --socket \"\$root/qwed.sock\" \
+        --stage10-fixture $remote_dir/stage10_sandbox_probe.py
+      rc=\$?
+      find \"\$root\" -depth -delete 2>/dev/null || true
+      exit \$rc
+    "
+
 sandbox-userns-disabled-vm host="ubuntu2204":
     #!/usr/bin/env bash
     set -euo pipefail

@@ -207,8 +207,10 @@ def main():
         staged_archive = scratch / f"{package_name}.tar.gz"
         bin_dir = package_root / "bin"
         service_dir = package_root / "share/qwe/service"
+        apparmor_dir = package_root / "share/qwe/apparmor"
         bin_dir.mkdir(parents=True)
         service_dir.mkdir(parents=True)
+        apparmor_dir.mkdir(parents=True)
 
         binary_records = {}
         for name in BINARIES:
@@ -252,6 +254,16 @@ def main():
         copy_file(
             ROOT / "packaging/launchd/qwed-wrapper.sh",
             service_dir / "launchd/qwed-wrapper.sh",
+            0o755,
+        )
+        copy_file(
+            ROOT / "packaging/apparmor/qwe-bwrap",
+            apparmor_dir / "qwe-bwrap",
+            0o644,
+        )
+        copy_file(
+            ROOT / "packaging/apparmor/install.sh",
+            apparmor_dir / "install.sh",
             0o755,
         )
 
@@ -301,6 +313,8 @@ def main():
                 "share/qwe/service/systemd/qwe.service",
                 "share/qwe/service/launchd/com.qwe.qwed.plist",
                 "share/qwe/service/launchd/qwed-wrapper.sh",
+                "share/qwe/apparmor/qwe-bwrap",
+                "share/qwe/apparmor/install.sh",
             ],
         }
         (package_root / "release.json").write_text(

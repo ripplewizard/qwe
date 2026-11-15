@@ -306,7 +306,11 @@ def main():
             binary = bin_dir / name
             assert binary.is_file()
             assert binary.stat().st_mode & 0o111
-        service_files = [bin_dir / "qwed-wrapper.sh"]
+        service_files = [
+            bin_dir / "qwed-wrapper.sh",
+            prefix / "share/qwe/apparmor/qwe-bwrap",
+            prefix / "share/qwe/apparmor/install.sh",
+        ]
         if manifest["target"].startswith("macos-"):
             service_files.append(prefix / "Library/LaunchAgents/com.qwe.qwed.plist")
         else:
