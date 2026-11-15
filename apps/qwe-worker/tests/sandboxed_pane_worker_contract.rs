@@ -1,7 +1,9 @@
 #![cfg(target_os = "linux")]
 
 use qwe_core::{SandboxProfile, SandboxWorkspaceMode};
-use qwe_protocol::{PROTOCOL_VERSION, RequestEnvelope, ResponseEnvelope, read_frame, write_frame};
+use qwe_protocol::{
+    PROTOCOL_VERSION, RequestEnvelope, ResponseEnvelope, attach, read_frame, write_frame,
+};
 use serde_json::{Value, json};
 use std::fs;
 use std::os::unix::net::UnixStream;
@@ -47,6 +49,14 @@ fn connect_with_retry(path: &Path, timeout: Duration) -> UnixStream {
 }
 
 fn call(stream: &mut UnixStream, operation: &str, payload: Value) -> Value {
+    call_result(stream, operation, payload).unwrap()
+}
+
+fn call_result(
+    stream: &mut UnixStream,
+    operation: &str,
+    payload: Value,
+) -> Result<Value, qwe_protocol::ProtocolErrorBody> {
     let request = RequestEnvelope {
         version: PROTOCOL_VERSION,
         request_id: format!("{operation}-{}", std::process::id()),
@@ -57,7 +67,7 @@ fn call(stream: &mut UnixStream, operation: &str, payload: Value) -> Value {
     };
     write_frame(stream, &request).unwrap();
     let response = read_frame::<_, ResponseEnvelope>(stream).unwrap();
-    response.result.unwrap()
+    response.result
 }
 
 fn wait_for_output(stream: &mut UnixStream, marker: &str) {
@@ -105,7 +115,13 @@ fn worker_starts_and_controls_a_long_lived_sandboxed_pane() {
         .arg("--worker-program")
         .arg("/bin/bash")
         .args(["--worker-arg", "--noprofile", "--worker-arg", "--norc"])
-        .args(["--worker-arg", "-i"])
+        .args([
+            "--worker-arg",
+            "-c",
+            "--worker-arg",
+            "printf 'PANE_SANDBOX_OK:%s:%s\\n' \"$HOME\" \"$(pwd)\"; \
+             touch sandboxed-pane-marker; exec /bin/bash --noprofile --norc -i",
+        ])
         .arg("--worker-sandbox-profile")
         .arg(profile_json)
         .stdin(Stdio::null())
@@ -123,9 +139,6 @@ fn worker_starts_and_controls_a_long_lived_sandboxed_pane() {
     assert_eq!(hello["sandbox"]["enforced"], true, "{hello}");
     assert_eq!(hello["sandbox"]["backend"], "bubblewrap", "{hello}");
 
-    let command =
-        "printf 'PANE_SANDBOX_OK:%s:%s\\n' \"$HOME\" \"$(pwd)\"; touch sandboxed-pane-marker\n";
-    call(&mut stream, "SESSION_INPUT", json!({"data": command}));
     wait_for_output(&mut stream, "PANE_SANDBOX_OK:/nonexistent:");
     let deadline = Instant::now() + Duration::from_secs(3);
     while !workspace.join("sandboxed-pane-marker").exists() {
@@ -135,6 +148,50 @@ fn worker_starts_and_controls_a_long_lived_sandboxed_pane() {
         );
         thread::sleep(Duration::from_millis(20));
     }
+    let input_failure =
+        call_result(&mut stream, "SESSION_INPUT", json!({"data": "true\n"})).unwrap_err();
+    assert_eq!(input_failure.code, "sandbox_input_disabled");
+
+    let attach_path = fs::read_dir(&root)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "a"))
+        .expect("worker attach socket exists");
+    let mut attach_stream = UnixStream::connect(attach_path).unwrap();
+    attach_stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let open =
+        attach::AttachOpen::versioned("sandboxed-pane-contract", "contract-observer", 24, 80)
+            .with_pane("sandboxed-pane-contract");
+    attach::write_json_frame(&mut attach_stream, attach::FrameType::AttachOpen, &open).unwrap();
+    loop {
+        let frame = attach::read_frame(&mut attach_stream).unwrap();
+        if frame.frame_type == attach::FrameType::Snapshot {
+            break;
+        }
+    }
+    attach::write_payload_frame(
+        &mut attach_stream,
+        attach::FrameType::Input,
+        b"touch attach-input-marker\n",
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let frame = attach::read_frame(&mut attach_stream).unwrap();
+        if frame.frame_type == attach::FrameType::Error {
+            let failure = attach::decode_json::<attach::AttachError>(&frame.payload).unwrap();
+            assert_eq!(failure.code, "sandbox_input_disabled", "{failure:?}");
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "sandboxed attach input did not fail closed"
+        );
+    }
+    assert!(!workspace.join("attach-input-marker").exists());
 
     let closed = call(&mut stream, "SESSION_CLOSE", json!({}));
     assert_eq!(closed["state"], "closed", "{closed}");

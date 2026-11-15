@@ -14,8 +14,8 @@ use qwe_protocol::{
 use qwe_runtime::{
     BoundedJournal, CursorStyle as RuntimeCursorStyle,
     MouseProtocolEncoding as RuntimeMouseProtocolEncoding,
-    MouseProtocolMode as RuntimeMouseProtocolMode, TerminalScreen, TerminalSnapshot,
-    process_identity,
+    MouseProtocolMode as RuntimeMouseProtocolMode, RestrictedTerminalFilter, TerminalScreen,
+    TerminalSnapshot, process_identity,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -119,6 +119,7 @@ struct WorkerSession {
 struct TerminalStream {
     journal: BoundedJournal,
     terminal: TerminalScreen,
+    output_filter: Option<RestrictedTerminalFilter>,
     attachments: HashMap<u64, Arc<AttachmentQueue>>,
 }
 
@@ -315,17 +316,28 @@ impl AttachmentQueue {
 }
 
 impl TerminalStream {
-    fn new(rows: u16, columns: u16) -> Result<Self, std::io::Error> {
+    fn new(rows: u16, columns: u16, restricted_output: bool) -> Result<Self, std::io::Error> {
         Ok(Self {
             journal: BoundedJournal::new(JOURNAL_LIMIT).map_err(|failure| {
                 std::io::Error::new(std::io::ErrorKind::InvalidInput, failure.to_string())
             })?,
             terminal: TerminalScreen::new(rows, columns, TERMINAL_SCROLLBACK_LINES),
+            output_filter: restricted_output.then(RestrictedTerminalFilter::new),
             attachments: HashMap::new(),
         })
     }
 
     fn append_output(&mut self, data: &[u8]) {
+        let filtered;
+        let data = if let Some(filter) = self.output_filter.as_mut() {
+            filtered = filter.push(data);
+            filtered.as_slice()
+        } else {
+            data
+        };
+        if data.is_empty() {
+            return;
+        }
         let stream_offset = self.journal.total_written();
         self.journal.append(data);
         self.terminal.process(data);
@@ -336,6 +348,15 @@ impl TerminalStream {
 
     fn stream_offset(&self) -> u64 {
         self.journal.total_written()
+    }
+
+    fn finish_output(&mut self) {
+        if let Some(filter) = self.output_filter.as_mut() {
+            let remaining = filter.finish();
+            if !remaining.is_empty() {
+                self.append_output(&remaining);
+            }
+        }
     }
 }
 
@@ -861,7 +882,7 @@ impl WorkerSession {
             resources,
             writer: Mutex::new(writer),
             master: Mutex::new(master),
-            stream: Mutex::new(TerminalStream::new(24, 80)?),
+            stream: Mutex::new(TerminalStream::new(24, 80, sandbox_profile.is_some())?),
             active_attachment: Mutex::new(None),
             next_attachment_id: std::sync::atomic::AtomicU64::new(1),
             running: AtomicBool::new(true),
@@ -885,6 +906,11 @@ impl WorkerSession {
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .append_output(&buffer[..count]);
             }
+            reader_session
+                .stream
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .finish_output();
             if let Ok(status) = child.wait() {
                 *reader_session
                     .exit_code
@@ -969,9 +995,11 @@ impl WorkerSession {
                 "enforced": true,
                 "backend": "bubblewrap",
                 "profile": profile,
-                "control_protocol_version": 1
+                "control_protocol_version": 1,
+                "output_policy": "restricted",
+                "input_policy": "disabled_pending_audit"
             }),
-            None => json!({"enforced": false}),
+            None => json!({"enforced": false, "output_policy": "full"}),
         }
     }
 
@@ -1064,6 +1092,12 @@ impl WorkerSession {
     }
 
     fn input(&self, session_id: &str, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+        if self.sandbox_profile.is_some() {
+            return Err(error(
+                "sandbox_input_disabled",
+                "sandboxed Pane PTY input is disabled until bounded input audit is implemented",
+            ));
+        }
         let data = payload
             .get("data")
             .and_then(Value::as_str)
@@ -1469,55 +1503,67 @@ fn serve_attachment_input(
                 return;
             }
         };
-        let result =
-            (|| match frame.frame_type {
-                attach::FrameType::Input => session
-                    .writer
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .write_all(&frame.payload)
-                    .map_err(|failure| attach_error("worker_protocol_error", failure.to_string())),
-                attach::FrameType::Resize => {
-                    let resize = attach::decode_json::<attach::Resize>(&frame.payload).map_err(
-                        |failure| attach_error("worker_protocol_error", failure.to_string()),
-                    )?;
-                    if resize.protocol_version != ATTACH_PROTOCOL_VERSION {
-                        return Err(attach_error(
-                            "incompatible_version",
-                            format!(
-                                "attach protocol {} is incompatible with {}",
-                                resize.protocol_version, ATTACH_PROTOCOL_VERSION
-                            ),
-                        ));
-                    }
+        let result = (|| match frame.frame_type {
+            attach::FrameType::Input => {
+                if session.sandbox_profile.is_some() {
+                    Err(attach_error(
+                        "sandbox_input_disabled",
+                        "sandboxed Pane PTY input is disabled until bounded input audit is implemented",
+                    ))
+                } else {
                     session
-                        .resize(resize.rows, resize.columns)
-                        .map(|_| ())
-                        .map_err(|failure| attach_error(&failure.code, failure.message))
+                        .writer
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .write_all(&frame.payload)
+                        .map_err(|failure| {
+                            attach_error("worker_protocol_error", failure.to_string())
+                        })
                 }
-                attach::FrameType::Ack => attach::decode_json::<attach::Ack>(&frame.payload)
+            }
+            attach::FrameType::Resize => {
+                let resize =
+                    attach::decode_json::<attach::Resize>(&frame.payload).map_err(|failure| {
+                        attach_error("worker_protocol_error", failure.to_string())
+                    })?;
+                if resize.protocol_version != ATTACH_PROTOCOL_VERSION {
+                    return Err(attach_error(
+                        "incompatible_version",
+                        format!(
+                            "attach protocol {} is incompatible with {}",
+                            resize.protocol_version, ATTACH_PROTOCOL_VERSION
+                        ),
+                    ));
+                }
+                session
+                    .resize(resize.rows, resize.columns)
                     .map(|_| ())
-                    .map_err(|failure| attach_error("worker_protocol_error", failure.to_string())),
-                attach::FrameType::Detach => {
-                    let detach = attach::decode_json::<attach::Detach>(&frame.payload).map_err(
-                        |failure| attach_error("worker_protocol_error", failure.to_string()),
-                    )?;
-                    if detach.hold_ttl_ms > 0 {
-                        return Err(attach_error(
-                            "unsupported_mode",
-                            "detached holds are scheduled for Stage 3",
-                        ));
-                    }
-                    Ok(())
+                    .map_err(|failure| attach_error(&failure.code, failure.message))
+            }
+            attach::FrameType::Ack => attach::decode_json::<attach::Ack>(&frame.payload)
+                .map(|_| ())
+                .map_err(|failure| attach_error("worker_protocol_error", failure.to_string())),
+            attach::FrameType::Detach => {
+                let detach =
+                    attach::decode_json::<attach::Detach>(&frame.payload).map_err(|failure| {
+                        attach_error("worker_protocol_error", failure.to_string())
+                    })?;
+                if detach.hold_ttl_ms > 0 {
+                    return Err(attach_error(
+                        "unsupported_mode",
+                        "detached holds are scheduled for Stage 3",
+                    ));
                 }
-                _ => Err(attach_error(
-                    "unknown_frame_type",
-                    format!(
-                        "{} is not a valid client-to-server frame",
-                        frame.frame_type.name()
-                    ),
-                )),
-            })();
+                Ok(())
+            }
+            _ => Err(attach_error(
+                "unknown_frame_type",
+                format!(
+                    "{} is not a valid client-to-server frame",
+                    frame.frame_type.name()
+                ),
+            )),
+        })();
         match result {
             Ok(()) => {
                 if frame.frame_type == attach::FrameType::Detach {
@@ -1942,5 +1988,46 @@ mod tests {
                 data
             } if data == b"ok"
         ));
+    }
+
+    #[test]
+    fn restricted_terminal_stream_filters_before_journal_and_attachments() {
+        let mut stream = TerminalStream::new(5, 40, true).unwrap();
+        let queue = Arc::new(AttachmentQueue::new(1024));
+        let observer = Arc::new(AttachmentQueue::new(1024));
+        stream.attachments.insert(1, Arc::clone(&queue));
+        stream.attachments.insert(2, Arc::clone(&observer));
+        stream.append_output(b"before\x1b]0,TITLE");
+        stream.append_output(b"\x07\x1b[31mred\x1b[0m after");
+
+        let mut attached = Vec::new();
+        for _ in 0..2 {
+            let event = queue.next_event().unwrap().unwrap();
+            let AttachmentEvent::Output { data, .. } = event else {
+                panic!("expected filtered output event");
+            };
+            attached.extend_from_slice(&data);
+        }
+        assert_eq!(attached, b"before\x1b[31mred\x1b[0m after");
+        let mut observed = Vec::new();
+        for _ in 0..2 {
+            let event = observer.next_event().unwrap().unwrap();
+            let AttachmentEvent::Output { data, .. } = event else {
+                panic!("expected filtered observer event");
+            };
+            observed.extend_from_slice(&data);
+        }
+        assert_eq!(observed, attached);
+        assert_eq!(stream.journal.snapshot(), attached);
+        assert!(!stream.terminal.snapshot().screen_text.contains("TITLE"));
+        assert!(stream.terminal.snapshot().screen_text.contains("before"));
+        assert!(stream.terminal.snapshot().screen_text.contains("after"));
+    }
+
+    #[test]
+    fn full_terminal_stream_preserves_osc_for_trusted_panes() {
+        let mut stream = TerminalStream::new(5, 40, false).unwrap();
+        stream.append_output(b"\x1b]0,TITLE\x07");
+        assert_eq!(stream.journal.snapshot(), b"\x1b]0,TITLE\x07");
     }
 }
