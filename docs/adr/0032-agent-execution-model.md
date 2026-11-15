@@ -3,7 +3,9 @@
 Status: Accepted
 Date: 2026-11-14
 Extends: [ADR 0021](0021-shared-prerequisites.md)
-Implementation state: Design accepted; implementation has not started.
+Implementation state: Accepted first delivery complete through Stage 9.5;
+verification and boundaries are tracked in
+[Agent Execution Model](../agent-execution-model.md).
 
 ## Context
 

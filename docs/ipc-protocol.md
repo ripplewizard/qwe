@@ -320,6 +320,166 @@ replacement, resize, process exit, and Attach close cancel it. Clipboard
 success names the provider; failure is explicit. Menu bytes are consumed before
 PTY input. See [ADR 0025](adr/0025-copy-and-quick-menu.md).
 
+### Security Capability Control
+
+Capability-authorized requests carry:
+
+```json
+{"auth_context":{"capability":"<opaque-token>"}}
+```
+
+The token is sent only inside the authenticated owner-only control socket
+envelope. It must not appear in operation payloads, argv, environment, SQLite,
+agent events, or logs. `RequestEnvelope.auth_context` is optional for legacy
+operations and required by security and agent operations.
+
+| Operation | Required payload |
+|---|---|
+| `SECURITY_BOOTSTRAP` | none; requires an active local-root management capability |
+| `SECURITY_PRINCIPAL_CREATE` | `parent_id`, optional `high_trust` |
+| `SECURITY_CAPABILITY_ISSUE` | `principal_id`, `operation`, `scope`; optional `ttl_ms`, `sandbox_profile` |
+| `SECURITY_PRINCIPAL_REVOKE` | `principal_id`; optional `severity`, `grace_ms`, `hold` |
+
+Capability operations and scopes:
+
+| Operation | Accepted scope |
+|---|---|
+| `manage_principals` | `{"kind":"global"}` |
+| `agent_exec` | `{"kind":"pane","pane_id":"..."}` |
+| `agent_command_read` | `{"kind":"command","pane_id":"...","command_id":"..."}` |
+| `agent_command_terminate` | `{"kind":"command","pane_id":"...","command_id":"..."}` |
+
+Capability issue is non-idempotent so the raw token is never copied into the
+durable idempotency response table. Tokens default to 24 hours and are capped at
+30 days; the local-root bootstrap management token uses the 30-day maximum.
+SQLite stores only token hashes plus the Principal's complete ancestor epoch
+snapshot.
+
+`sandbox_profile` is valid only for an `agent_exec` capability. Its presence
+makes the capability sandboxed; omission preserves the explicit unsandboxed
+path. The v1 profile shape is:
+
+```json
+{
+  "version": 1,
+  "workspace": "/absolute/existing/directory",
+  "workspace_mode": "read_only",
+  "protected_paths": ["/absolute/existing/path/inside/workspace"],
+  "network": "isolated_loopback",
+  "home": "hidden",
+  "private_tmp": true,
+  "process_namespace": "isolated",
+  "seccomp": {"mode": "none"}
+}
+```
+
+`workspace_mode` is `read_only` or `read_write`; `network` is
+`isolated_loopback` or `inherit`; `home` is `hidden` or `read_only`; and
+`process_namespace` is `isolated` or `shared`. Unknown fields, non-v1 profiles,
+named seccomp, a missing workspace, or a missing protected path fail closed.
+Sandboxed PTY execution preserves terminal semantics and applies an internal
+`TIOCSTI`-denying seccomp filter; the profile's `seccomp:none` value does not
+disable that adapter hardening.
+
+`SECURITY_PRINCIPAL_REVOKE.severity` is `administrative`, `freeze`, or
+`terminate`; omission defaults to `freeze`. Freeze grace defaults to 60000 ms
+and is capped at 300000 ms. Expiry escalates to termination. Administrative
+revocation and `hold: true` require a high-trust Principal. The single local
+root bootstrap token is written by qwed to
+`<socket>.runtime/security.bootstrap` with mode `0600`.
+
+Authorization failures use:
+
+`capability_missing`, `capability_invalid`, `capability_expired`,
+`capability_revoked`, `capability_epoch_stale`, `capability_scope_denied`,
+`principal_revoked`, and `insufficient_trust`.
+
+Sandbox failures use `sandbox_backend_unavailable`,
+`sandbox_profile_unsupported`, and `unsupported_platform`. `AGENT_EXEC` rejects
+a client-supplied
+`sandbox_profile` with `sandbox_profile_not_client_selectable`; a request
+cannot enable, replace, or remove the capability's enforced profile.
+
+### Agent Command Control
+
+Stages 9.1-9.5 add the following capability-protected control operations.
+Command IDs are UUIDv7 text values and are stable across qwed restart while the
+owning worker survives.
+
+| Operation | Required payload |
+|---|---|
+| `AGENT_EXEC` | `pane_id`, `program`, `args[]`; optional `cwd`, absolute `deadline_ms`, `owner`, `credential` |
+| `AGENT_COMMAND_STATUS` | `command_id` |
+| `AGENT_COMMAND_EVENTS` | `command_id`; optional `cursor`, `limit` |
+| `AGENT_COMMAND_WAIT_IDLE` | `command_id`; optional `timeout_ms`, maximum 30000 |
+| `AGENT_COMMAND_TERMINATE` | `command_id` |
+| `AGENT_COMMAND_OBSERVE` | `command_id`; optional `cursor`, `timeout_ms`, maximum 30000 |
+
+`AGENT_EXEC` and `AGENT_COMMAND_TERMINATE` are mutating operations and require an
+idempotency key. `program` is one executable name or path; QWE does not interpret
+`args` as shell syntax. `cwd` must name an existing directory for spawn to
+succeed. The caller must start a shell explicitly when shell syntax is wanted.
+`sandbox_profile` is not an accepted `AGENT_EXEC` request field; qwed injects
+the internal profile from the capability only after authorization.
+
+`AGENT_EXEC` requires an `agent_exec` capability for the exact Pane. The returned
+command records the creating capability and Principal. That same `agent_exec`
+capability may read, wait for, query events from, or terminate only commands it
+created. A separate command-scoped `agent_command_read` or
+`agent_command_terminate` capability may be issued to another Principal.
+
+`pty:true` produces one merged `pty` stream and accepts optional `rows` and
+`columns`; omitting `pty` produces separate stdout/stderr streams. Supplying
+`rows` or `columns` without `pty:true` is invalid. `env` mutation fails
+explicitly with `unsupported_capability`.
+
+`credential` names an existing private provider credential. qwed replaces it
+before worker dispatch with a one-shot `credential_socket` and
+`redaction_policy=credential_exact`; these are internal worker fields. The
+secret is transferred as a Unix `SCM_RIGHTS` descriptor, mapped to child FD3,
+and exposed only through `QWE_CREDENTIAL_FD=3`. Missing, empty, oversized, or
+unreadable credentials fail closed.
+
+Output is redacted before event retention on each stdout/stderr or merged PTY
+stream. Matching is exact and streaming, including secrets split across chunks;
+replacements use `[REDACTED]` and the first match emits `redaction_applied`. Raw credential
+values never enter argv, environment values, command metadata, idempotency
+responses, SQLite, event data, or logs.
+
+`AGENT_EXEC` returns the command handle immediately. The handle contains
+`command_id`, Session/Pane identity, owner, worker and optional process
+identities, state, output mode, timestamps, exit result, cursors, and replay
+start. States are `starting`, `running`, `idle`, `done`, `failed`, and `lost`.
+
+`AGENT_COMMAND_WAIT_IDLE` returns `idle`, `done`, `failed`, `lost`, or `unknown`.
+Timeout returns `unknown`, never `idle`. A terminal state takes precedence over a
+timeout. Interactive shell PTY commands are idle when the shell's own process
+group is the PTY foreground group; one-shot and command-string modes do not
+claim idle.
+
+`AGENT_COMMAND_EVENTS` returns events after the supplied cursor. Output events
+carry `stream` (`stdout`, `stderr`, or `pty`), a byte `cursor`, and `data_hex`. Event
+order is guaranteed within a stream. Retention is approximately 1 MiB per
+command; reading an evicted cursor returns an object in `replay_gap` and never
+renumbers retained events.
+
+`AGENT_COMMAND_OBSERVE` is the push projection. It requires
+`agent_command_read` for the exact command, or the creating `agent_exec`
+capability. The server writes one or more frames with the same request ID:
+`{"type":"batch",...}` followed by `{"type":"end",...}`. Each loop rechecks the
+current Principal ancestry. The server keeps a bounded 32-frame queue; a slow
+observer is disconnected instead of forcing unbounded buffering. The observer
+has no input, resize, signal, lifecycle, or mutation authority.
+
+The current qwed persistence stores command metadata only. Program arguments,
+environment values, credentials, output bytes, and replay events are not stored
+in SQLite. If the worker is confirmed absent, nonterminal commands become
+`lost`; temporary worker unreachability is returned as a transport error.
+Capability, revocation, credential/redaction, observer push, PTY output, and
+foreground shell idle are implemented. `shell_exec`, sandbox backends,
+cross-Pane orchestration, and environment mutation remain deferred and are
+tracked in [Agent Execution Model](agent-execution-model.md).
+
 ### Channel Profiles
 
 The accepted profiles are `human_interactive`, `human_observer`, `agent_exec`,

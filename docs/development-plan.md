@@ -528,8 +528,8 @@ matrix.
 
 ### Next: Agent Execution Model
 
-Status: [ADR 0032](adr/0032-agent-execution-model.md) accepted; implementation
-not started.
+Status: [ADR 0032](adr/0032-agent-execution-model.md) accepted; first delivery
+complete through Stage 9.5.
 
 The first delivery is a fresh-process `exec` primitive with command handles and
 `wait_idle`, bounded command events and replay, read-only observation,
@@ -537,6 +537,28 @@ capability and revocation enforcement, per-command credentials, and explicit
 recovery/lost states. It reuses Pane workers and ResourceScopes. `shell_exec`,
 external sandbox integration, cross-Pane orchestration, persistent semantic
 history, and host management remain deferred.
+
+Stages 9.1-9.5 provide command handles, bounded replay, qwed-restart recovery,
+explicit worker-loss state, Pane-scope inheritance, Principal-bound
+capabilities, revocation enforcement, descriptor credentials, redaction,
+read-only observer push, merged PTY output, and foreground shell idle.
+The remaining accepted scope is tracked in
+[Agent Execution Model](agent-execution-model.md).
+
+### Next: Bubblewrap Sandbox Adapter
+
+Status: [ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md) accepted; the
+Linux `AGENT_EXEC` pipe-split and PTY slice is implemented and passes
+[Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
+
+The first slice applies capability-authorized workspace/network/home/tmp/PID
+profiles to Linux `AGENT_EXEC`. It preserves FD3 credentials, Pane cgroups,
+fail-closed behavior, PTY terminal semantics, and internal `TIOCSTI` denial.
+Sandboxed restart recovery and Pane-teardown qualification pass locally and on
+Ubuntu 22.04/Debian 12 real VMs. Ubuntu 24.04 fails closed under the tested
+AppArmor/userns policy. Session/Pane startup-program sandboxing, Landlock
+fallback, additional platform qualification, and VM/OCI backends remain later
+decisions.
 
 ## Test and Delivery Gates
 
@@ -560,6 +582,11 @@ just protocol-check
 just attach-e2e
 just service-config-check
 just stage8-check
+just stage9-agent-exec
+just stage9-check
+just stage10-check
+just sandbox-container-matrix
+just sandbox-vm-matrix
 just stage4-capabilities
 just stage4-check
 just credential-smoke
@@ -568,6 +595,11 @@ just cross-uid-smoke
 
 Stage 7 adds `just stage7-check` for profiles, controller failure handling,
 Pane scope cleanup, and the long-run resource gate.
+
+Stages 9.1-9.5 add `just stage9-agent-exec` for real-process command execution,
+bounded replay, recovery, worker-loss state, capability scope, revocation,
+descriptor credentials, redaction, observer push, PTY output, and foreground
+shell idle.
 
 Post-V0:
 

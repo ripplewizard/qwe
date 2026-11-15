@@ -1,10 +1,11 @@
-# Storage Migration: Pane Layout Schema v13
+# Storage Migration: Pane Layout, Agent Security, and Sandbox Profiles
 
-Status: Implemented in Stage 8; schema v13 is current
-Date: 2026-11-11
+Status: Implemented through Stage 10.3; schema v16 is current
+Date: 2026-11-14
 Authority: [ADR 0021](adr/0021-shared-prerequisites.md) and the v11 schema in
 `crates/qwe-storage`; Pane layout metadata is governed by
-[ADR 0023](adr/0023-durable-pane-layout.md).
+[ADR 0023](adr/0023-durable-pane-layout.md); command metadata is governed by
+[ADR 0032](adr/0032-agent-execution-model.md).
 
 ## 1. Purpose
 
@@ -93,6 +94,7 @@ order and indexes are defined by `crates/qwe-storage`.
 - Stable opaque `id`.
 - Optional `parent_id`, monotonic `epoch`, `created_at_ms`, and optional
   `revoked_at_ms`.
+- v15 adds `high_trust`, revocation severity/deadline, and security-hold state.
 - Principals are tombstoned. They are not hard-deleted while descendants or
   durable audit references may exist.
 - The migration creates or maps a local root Principal. Existing logical
@@ -161,8 +163,10 @@ history.
 ## 8. Non-Goals
 
 - Freeform Pane geometry, split trees, and floating-overlay persistence.
-- `exec` versus `shell_exec` semantics or command-handle storage.
-- Capability-token encoding, AuthContext internals, or revocation severity.
+- `exec` versus `shell_exec` semantics or command-handle storage in the v11
+  migration; Stage 9.1 adds metadata-only command storage in v14.
+- Raw capability-token storage. v15 stores token hashes and epoch snapshots;
+  raw capabilities remain in mode-600 capability files or response memory.
 - Sandbox, namespace, UID, filesystem, or network isolation.
 - Terminal replay persistence or disk-backed scrollback.
 
@@ -198,6 +202,68 @@ Schema v13 adds nullable `floating_x`, `floating_y`, `floating_rows`, and
 
 - All four values are null or all are present.
 - Only floating Panes may store nonzero bounds.
+
+## 11. v13 to v14: Agent Command Metadata
+
+Schema v14 adds `agent_commands` without changing Session, Pane, Task, Lease,
+attachment authority, layout, or idempotency identities.
+
+Each row stores:
+
+- stable `AgentCommandId`, Session, Pane, and logical owner;
+- worker process identity;
+- optional process identity, which is null only while start is pending;
+- command state and output mode;
+- creation/update timestamps; and
+- optional exit code or signal.
+
+Command rows cascade with their Session or Pane history. `process_pid`,
+`process_pgid`, and `process_start_token` are null together or populated
+together. Program arguments, environment values, credentials, output bytes, and
+event replay are not stored in this table.
+
+The migration is transactional and sets `PRAGMA user_version = 14`. A v13
+binary must refuse a v14 database. Existing databases are backed up before the
+upgrade using the current migration procedure.
+
+## 12. v14 to v15: Capability and Revocation State
+
+Schema v15 adds:
+
+- `principals.high_trust`;
+- `principals.revocation_severity`;
+- `principals.revocation_deadline_ms`;
+- `principals.revocation_hold`;
+- `agent_commands.principal_id`;
+- `agent_commands.creator_capability_id`;
+- `agent_capabilities`, containing capability ID, token hash, Principal,
+  complete ancestor epoch snapshot, operation, scope, timestamps, expiry, and
+  revocation time.
+
+`local-root` migrates as high-trust. Existing agent command rows are attributed
+to `local-root` with no creator capability because they predate enforcement.
+New commands retain the exact creating Principal and capability.
+
+Capability scope columns are mutually exclusive by kind: global, Session, Pane,
+or command. A command scope includes both Pane and command identity. Raw tokens
+and Principal epoch chains are never placed in idempotency responses.
+
+The migration is transactional and sets `PRAGMA user_version = 15`. A v14
+binary must refuse a v15 database.
+
+## 13. v15 to v16: Capability Sandbox Profile
+
+Schema v16 adds nullable `agent_capabilities.sandbox_profile_json`.
+
+- `NULL` preserves the explicit unsandboxed capability path.
+- A present value stores the complete versioned `SandboxProfile`.
+- Existing v15 capabilities migrate with `NULL`; they never gain sandboxing
+  implicitly.
+- The pre-migration backup is named `.pre-v16-*`.
+
+The migration is transactional and sets `PRAGMA user_version = 16`. A v15
+binary must refuse a v16 database.
+
 - Bounds are clamped to the current usable viewport at render time.
 - Migration leaves every existing floating Pane with null bounds, preserving
   the centered popup default.

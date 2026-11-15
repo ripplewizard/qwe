@@ -579,6 +579,9 @@ command channel.
 
 Verdict: **Defer; prefer external third-party integration**
 
+Follow-up: [ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md) accepts Bubblewrap
+as the first Linux external backend.
+
 `normal / sandboxed / network-isolated` is a major security feature, not a
 variant of resource policy. It requires an ADR covering:
 
@@ -1072,7 +1075,7 @@ experiments, branches, test evidence, release notes, and issue discussions.
 |---|---|---|
 | Stage 6: cgroup resource isolation/monitoring | Stage 7 / D6 Resource Governance | Complete |
 | Stage 7: tmux operations | Stage 8 Session Layout | Complete |
-| Stage 8: agent runtime features | Agent Execution Model | ADR 0032 accepted; implementation not started |
+| Stage 8: agent runtime features | Agent Execution Model | ADR 0032 accepted; first delivery complete |
 | Stage 9: small UX features | no current milestone | Not accepted |
 
 Use stable names in new documents, for example "Resource Governance",

@@ -1,0 +1,301 @@
+# ADR 0033: Bubblewrap Sandbox Adapter
+
+Status: Accepted
+Date: 2026-11-15
+Extends: [ADR 0021](0021-shared-prerequisites.md),
+[ADR 0032](0032-agent-execution-model.md)
+Implementation state: Core Bubblewrap contract PoC complete; production
+Linux `AGENT_EXEC` slice implemented and locally qualified for pipe-split and
+PTY commands, including qwed restart, worker loss, and Pane teardown. Broader
+platform qualification remains open.
+
+## Context
+
+QWE agent execution is now complete through Stage 9.5. Commands run in the Pane
+`workload` cgroup, PTY commands preserve foreground-idle semantics, and
+credentials arrive on inherited FD3. Linux cgroup v2 remains resource
+governance, not an isolation boundary.
+
+Bubblewrap is selected as the first external sandbox backend because it:
+
+- is unprivileged on supported Linux systems;
+- requires no daemon or container image;
+- creates mount, user, PID, network, IPC, and UTS namespaces;
+- preserves the existing Pane cgroup and process-tree model;
+- supports explicit filesystem bind policy;
+- can retain FD3 for command credentials; and
+- can expose structured startup and exit status.
+
+Bubblewrap is a policy executor, not a complete sandbox. QWE remains
+responsible for profiles, path policy, network policy, capability authorization,
+credential exposure, lifecycle, and fail-closed behavior.
+
+## Decision
+
+### 1. External Linux-only backend
+
+The first sandbox backend is an external `bwrap` executable. QWE does not
+implement mount or namespace setup itself.
+
+- The backend is Linux-only.
+- macOS reports `unsupported_platform`.
+- A requested sandbox never falls back to unsandboxed execution.
+- Bubblewrap absence, incompatible flags, or disabled unprivileged user
+  namespaces return `sandbox_backend_unavailable`.
+- Profile fields that cannot be enforced return `sandbox_profile_unsupported`.
+
+Backend failure reasons must use observable failed-stage evidence, not stderr
+guessing; container context does not by itself prove seccomp blocked namespace
+creation. See Experiment 0049.
+
+### 2. Existing execution topology remains authoritative
+
+The Pane worker remains the command owner and direct Bubblewrap parent:
+
+```text
+qwe-worker
+  -> qwe-session-exec
+       -> bwrap
+            -> sandboxed command
+```
+
+The worker is already inside the Pane scope. Bubblewrap and all descendants
+inherit the `workload` cgroup before the command is released. QWE does not use
+`clone3(CLONE_INTO_CGROUP)`, post-spawn cgroup migration, or Bubblewrap-managed
+cgroups.
+
+Pane cgroup cleanup remains the final process-tree cleanup authority.
+`--die-with-parent` is defense in depth, not a replacement for worker or scope
+cleanup.
+
+### 3. Sandbox profile v1
+
+The first profile is versioned and deny-unknown-fields:
+
+```text
+SandboxProfileV1
+  workspace: { path, mode: readonly | read_write }
+  protected_paths: [path]
+  network: isolated_loopback | inherit
+  home: hidden | readonly
+  tmp: private
+  process_namespace: isolated | shared
+  setuid: denied
+  seccomp: none | named-profile
+```
+
+`workspace:readonly` is the default. `workspace:read_write` is explicit.
+`protected_paths` are re-mounted read-only after the workspace bind. This is a
+risk reduction, not a claim that a writable workspace is trusted by host-side
+processes.
+
+Bubblewrap's `--unshare-net` provides an isolated network namespace containing
+an UP loopback interface on the tested Bubblewrap 0.5, 0.6.1, 0.8, and 0.9
+versions. QWE calls this `isolated_loopback`; there is no separate
+`network:none` promise in v1. Stage 10 verifies both a real `127.0.0.1`
+listen/connect pair and the absence of a default route.
+
+Setuid privilege gain is denied by Bubblewrap's no-new-privileges state.
+Sandbox status reports `setuid_denied:true` and `no_new_privs:true`; Stage 10
+verifies `NoNewPrivs: 1` inside `/proc/self/status` on all tested versions.
+
+### 4. Capability controls profile choice
+
+The optional profile on an `agent_exec` capability is the enforced profile, not
+a client-selectable menu.
+
+- A capability with `sandbox_profile` always executes through Bubblewrap.
+- A capability without a profile retains the explicit unsandboxed legacy path.
+- A `sandbox_profile` supplied in a client `AGENT_EXEC` payload is rejected
+  with `sandbox_profile_not_client_selectable`.
+- Profile choice occurs when a management capability issues `agent_exec`; it is
+  not an ambient client setting.
+
+The first delivery stores one profile per capability. Multiple allowed profiles
+or a request-time selector require a later compatible protocol extension.
+
+### 5. Process identity and PTY
+
+QWE invokes Bubblewrap with `--json-status-fd` and requires the structured
+`child-pid` record before treating startup as successful. QWE does not parse
+human-readable stderr for state.
+
+The current `portable-pty` path establishes QWE's controlling terminal. The
+core PoC showed:
+
+- with `--new-session`, the PTY foreground group maps to outer Bubblewrap, but
+  bash reports “no job control in this shell”;
+- without `--new-session`, `stty size`, resize, SIGINT, SIGTSTP, `jobs`, and
+  foreground-job interruption all work;
+- without `--new-session`, the PTY foreground group differs from outer
+  Bubblewrap and must be mapped separately; and
+- structured `child-pid` identifies the actual command in the parent PID
+  namespace and differs from the outer PID.
+
+An interactive sandbox command distinguishes:
+
+- wrapper PID used for command ownership and cgroup inspection;
+- sandbox child PID reported by Bubblewrap; and
+- `signal_pgid`, initialized from the child PID and refreshed from the current
+  PTY foreground group for signals and idle.
+
+`--new-session` is not used for interactive PTY sandbox commands. Disconnecting
+the controlling terminal breaks shell job control. The production adapter
+preserves the portable-pty controlling terminal and loads an internal cBPF
+seccomp filter that rejects `ioctl(TIOCSTI)` with `EPERM`. The filter is adapter
+hardening and does not change the user profile's `seccomp:none` meaning.
+
+`portable-pty` closes inherited descriptors above stdio before exec. Sandbox
+status and seccomp inputs are therefore connected by `qwe-session-exec` after
+PTY setup: a mode-0600 status socket maps to FD4, and a mode-0600 compiled
+filter file maps to FD5 before Bubblewrap starts.
+
+### 6. Credentials
+
+FD3 remains the only credential transport. QWE preserves FD3 through
+Bubblewrap and keeps redaction outside the sandbox.
+
+Sandboxing cannot guarantee credential confidentiality:
+
+- `network:inherit` permits direct exfiltration;
+- writable workspace permits a command to persist the secret itself; and
+- output redaction does not inspect files written to the workspace.
+
+Profiles carrying credentials must declare this limitation. Stronger credential
+guarantees require `network:isolated_loopback`, an ephemeral workspace, or a
+future broker design.
+
+### 7. Lifecycle synchronization
+
+`--die-with-parent` depends on the thread that creates Bubblewrap remaining
+alive through sandbox setup. The implementation must:
+
+- spawn from a dedicated command lifetime thread;
+- wait for the structured startup record before considering the command
+  running; and
+- keep the creator thread alive until the command reaches a terminal state.
+
+The Pane cgroup and Pane teardown remain the final cleanup fallback.
+
+### 8. First delivery
+
+The first production slice applies to Linux `AGENT_EXEC` only:
+
+- workspace read-only or read-write profiles;
+- hidden or read-only home;
+- private `/tmp`;
+- isolated-loopback or inherited network;
+- PID namespace isolation;
+- FD3 credentials and existing redaction;
+- pipe-split and PTY commands;
+- fail-closed backend/profile errors.
+
+Capability issue validates the profile, requires the workspace to be an
+existing absolute directory, requires protected paths to be existing absolute
+paths inside that workspace, and probes Bubblewrap before returning a token.
+The probe is fresh on every capability issue; qwed does not cache a previous
+success or failure. qwed's capability-issue lock serializes these probes.
+Repairing AppArmor, namespace sysctls, or Bubblewrap installation is therefore
+visible to the next issue request without restarting qwed or the Pane worker.
+An already-issued capability is authorization, not a permanent health claim:
+if the backend becomes unavailable later, the actual Bubblewrap spawn fails
+closed.
+
+The worker repeats capability-independent profile checks and requires the
+structured startup record before reporting `running`.
+
+Session and Pane startup-program sandboxing follows after the agent command
+path is qualified. Seccomp policy packaging, Landlock fallback, shim-based init,
+external sandbox providers, and untrusted multi-tenant isolation require
+separate decisions.
+
+### 9. Parallel workstreams and dependencies
+
+Two follow-on routes are deliberately separate:
+
+1. **Sandboxed Pane startup**
+
+   This remains a product decision. The current recommended shape is default
+   unsandboxed Panes plus an explicit, capability-authorized sandboxed Pane
+   mode; `SESSION_CREATE.sandbox_profile` is not accepted as ambient selection.
+   Before acceptance, qualification must cover:
+
+   - controlling-terminal, resize, SIGINT/SIGTSTP, and job control for a
+     long-lived wrapped shell;
+   - dedicated creator-thread lifetime and `--die-with-parent`;
+   - qwed restart, Attach reconnect, worker loss, and Pane teardown;
+   - whether an `AGENT_EXEC` sandbox nested inside a Pane sandbox can only
+     tighten, never broaden, the effective policy; and
+   - an explicit capability boundary for the sandboxed Pane operation.
+
+   The current direct-Bubblewrap, no-shim conclusion applies only to
+   `AGENT_EXEC`. It must not be extrapolated to an interactive Pane shell.
+   `qwe-sandbox-init` remains a reserve design pending those experiments.
+
+2. **Backend hardening for `AGENT_EXEC`**
+
+   Named seccomp profiles and Landlock defense-in-depth do not depend on the
+   Pane product decision and can be developed independently. Any Landlock-only
+   mode must use a distinct backend type and must never be reported as a
+   Bubblewrap sandbox.
+
+## Validation
+
+Core Rust contract probes live in
+`apps/qwe-worker/tests/bubblewrap_contract.rs` and run with:
+
+```sh
+just bubblewrap-poc
+```
+
+The probes require Linux and `bwrap`; otherwise they skip. Current PoC results:
+
+- FD3 reaches the target unchanged;
+- Bubblewrap descendants inherit the QWE cgroup;
+- `--json-status-fd` reports a host child PID distinct from outer Bubblewrap;
+- `--die-with-parent` terminates the sandbox after a synchronized parent-thread
+  exit;
+- non-PTY commands preserve FD3/cgroup/startup/exit semantics;
+- PTY resize, SIGINT, SIGTSTP, and shell job control pass without
+  `--new-session`; and
+- `--new-session` maps foreground pgrp to outer Bubblewrap but loses shell job
+  control.
+- `just sandbox-container-matrix` verifies Ubuntu 22.04, Ubuntu 24.04, and
+  Debian 12 fail closed when Podman prevents Bubblewrap from establishing its
+  nested mount/PID environment. This is a fail-closed deployment check, not a
+  successful sandbox qualification inside containers.
+- `just sandbox-vm-matrix` passes the complete Stage 10 probe on Ubuntu 22.04
+  and Debian 12. Ubuntu 24.04 rejects user-ID mapping under its tested
+  AppArmor/userns policy and qwed returns `sandbox_backend_unavailable`.
+
+Remaining qualification before production:
+
+- explicit user-namespace-disabled configurations on additional distributions;
+- a successful Ubuntu 24.04 AppArmor/userns configuration;
+- Bubblewrap minimum-version/feature matrix;
+- named user seccomp profiles;
+- broader network escape and filesystem escape probes;
+- credential/file-exfiltration cases;
+- interactive Agent PTY input/resize protocol, if that becomes a product
+  requirement.
+
+Stage 10.1-10.3 evidence is recorded in
+[Experiment 0049](../experiments/0049-stage10-sandbox-integration.md).
+
+## Consequences
+
+- QWE gains a practical Linux sandbox without a daemon or registry/image
+  dependency.
+- Fail-closed semantics may reject usable environments where user namespaces
+  are disabled.
+- A writable workspace remains an intentional trust-transfer channel.
+- Bubblewrap version and feature probing become part of startup and capability
+  reporting.
+- No production path may silently relabel cgroup resource limits as sandboxing.
+
+## References
+
+- [Bubblewrap](https://github.com/containers/bubblewrap)
+- [Landlock: unprivileged access control](https://docs.kernel.org/userspace-api/landlock.html)
+- [Feature Assessment: Sandbox tiers](../feature-assessment-agent-runtime-and-ux.md)
+- [Agent Execution Model](../agent-execution-model.md)

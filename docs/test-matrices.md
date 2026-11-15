@@ -136,6 +136,45 @@ workers and Pane-targeted Attach channels.
 | LAYOUT-016 | Copy mode scrolls client VT scrollback and copies selected history while excluding newer off-screen lines |
 | LAYOUT-017 | Mouse press/motion/release in copy mode selects only focused-Pane text and writes the clipboard |
 
+## Agent Execution
+
+The accepted Agent Execution first delivery covers all rows below.
+
+| ID | Case |
+|---|---|
+| AGENT-001 | Start explicit non-PTY `exec` and verify a stable command handle reaches `done` with the exact exit code |
+| AGENT-002 | Retain output beyond the replay window and verify bounded retention, stable sequence numbers, and an explicit gap |
+| AGENT-003 | Run `exec` from a hard-limited Pane and verify the worker control cgroup and shared PTY/command workload cgroup remain under one Pane scope |
+| AGENT-004 | Restart qwed, re-adopt live commands, then prove confirmed worker loss produces `lost` rather than false success |
+| AGENT-005 | Emit stdout and stderr separately and recover exact bytes from monotonic per-stream cursors |
+| AGENT-006 | Verify wait timeout returns `unknown` and a signaled command returns `failed` with signal identity |
+| AGENT-007 | Deny missing, cross-Pane, expired, and ancestor-revoked command capabilities in real time |
+| AGENT-008 | Cover administrative, freeze, and terminate revocation severity, including finite freeze escalation |
+| AGENT-009 | Inject a command credential and prove output, events, logs, and SQLite are redacted or fail closed |
+| AGENT-010 | Verify a read-only observer receives committed events but cannot input, resize, signal, or mutate |
+| AGENT-011 | Run a PTY command and verify one merged stream preserves terminal control semantics |
+| AGENT-012 | Verify foreground `idle` is distinct from task exit and that `done` takes precedence |
+
+## Bubblewrap Sandbox
+
+Rows 001-007 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
+foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown.
+Ubuntu 22.04 and Debian 12 real VMs pass the complete matrix; Ubuntu 24.04
+returns `sandbox_backend_unavailable` under its tested AppArmor/userns policy.
+Loopback UP/connect and `NoNewPrivs: 1` pass on Bubblewrap 0.5, 0.6.1, 0.8,
+and 0.9.
+Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
+
+| ID | Case |
+|---|---|
+| SANDBOX-001 | Preserve FD3 and Pane workload cgroup while reading structured Bubblewrap child PID |
+| SANDBOX-002 | Compare Bubblewrap PTY modes and verify resize, Ctrl-C, Ctrl-Z, job control, foreground mapping, and idle |
+| SANDBOX-003 | Verify synchronized `--die-with-parent` cleanup after the command creator thread exits |
+| SANDBOX-004 | Fail closed when Bubblewrap or unprivileged user namespaces are unavailable |
+| SANDBOX-005 | Authorize only capability-declared sandbox profiles and reject unsandboxed downgrade |
+| SANDBOX-006 | Enforce workspace protected paths, hidden home, private tmp, and network policy |
+| SANDBOX-007 | Recover or terminate sandboxed commands across qwed/worker restart and Pane teardown |
+
 ## Core Object Model
 
 | ID | Case |

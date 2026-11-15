@@ -255,6 +255,34 @@ dimensions. LAYOUT-015 verifies click-to-raise on overlapping floating Panes.
 LAYOUT-016 verifies bounded scrollback copy and LAYOUT-017 verifies mouse
 selection in copy mode.
 
+Stages 9.1-9.5 add `just stage9-agent-exec`. It starts explicit non-PTY and PTY
+commands in a real Pane worker and verifies exit codes, split stdout/stderr,
+signals, spawn failure, deadlines, wait timeout, bounded replay gaps, CLI
+access, qwed restart, Pane-cgroup inheritance, explicit `lost` after worker
+loss, capability scope,
+expiry and ancestor invalidation, administrative preservation, freeze
+escalation, low-trust denial, token non-persistence, descriptor credential
+delivery, split-chunk redaction, credential failure closure, read-only
+multi-frame observer push, merged PTY output, and interactive-shell foreground
+idle. The recipe is the current evidence for AGENT-001 through AGENT-012.
+
+ADR 0033 adds `just bubblewrap-poc`, a Linux-only Rust contract test suite. It
+skips when Bubblewrap is unavailable and currently covers SANDBOX-001 through
+SANDBOX-003: FD3/cgroup/structured child PID, PTY resize/signal/job-control
+semantics, and synchronized `--die-with-parent`. `just stage10-sandbox` covers
+SANDBOX-004 through SANDBOX-007 through qwed, worker, and Bubblewrap, including
+capability authorization, backend failure, workspace, protected paths, home,
+tmp, network policy, sandboxed PTY, `TIOCSTI` denial, qwed restart, worker loss,
+and Pane teardown. It also verifies that a backend failure followed by repair is
+observed by the next capability issue without restarting qwed or the worker.
+`just sandbox-container-matrix` verifies fail-closed behavior on Ubuntu 22.04,
+Ubuntu 24.04, and Debian 12 when Podman disallows Bubblewrap's nested mount/PID
+setup.
+
+`just sandbox-vm-matrix` uses the existing rootless QEMU lab. Ubuntu 22.04 and
+Debian 12 pass the complete Stage 10 probe. Ubuntu 24.04 currently rejects user
+ID mapping under the tested AppArmor/userns policy, and qwed must fail closed.
+
 ## ADR 0012-0015 Contract Matrices
 
 The corresponding ADRs are accepted. Every row has a stable ID in

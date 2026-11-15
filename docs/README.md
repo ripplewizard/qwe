@@ -7,8 +7,9 @@
 - [Technical Architecture](technical-architecture.md): process model, crate
   graph, state ownership, persistence, and security.
 - [IPC Protocol](ipc-protocol.md): field-level client, Host, and worker protocol.
-- [Storage Migration](storage-migration.md): v10-to-v11 shared prerequisites and
-  current v11-to-v13 Pane layout, focus, and floating bounds.
+- [Storage Migration](storage-migration.md): v10-to-v11 shared prerequisites,
+  Pane layout through v13, command metadata in v14, capability/revocation state
+  in v15, and the current v16 sandbox-profile field.
 - [Protocol Schema](../protocol/schema/qwe-v1.schema.json): canonical Attach
   frames, payloads, limits, state machines, and stable test-ID manifest.
 - [Extension Architecture](extension-architecture.md): deferred capabilities
@@ -58,6 +59,9 @@
   focused-Pane mouse selection.
 - [ADR 0032](adr/0032-agent-execution-model.md): accepted fresh-process agent
   execution, command handles, bounded events, observer, and capability model.
+- [ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md): accepted external
+  Bubblewrap sandbox adapter, fail-closed capability profiles, and non-PTY and
+  PTY Linux command integration.
 
 ## Development
 
@@ -73,6 +77,11 @@
   [Experiment 0041](experiments/0041-linux-vm-qualification.md).
 - [Stage 8 Session Layout](stage8-session-layout.md): Pane-targeted Attach,
   compositor controls, durable layout, copy/menu, and fixed floating Panes.
+- [Agent Execution Model](agent-execution-model.md): Stages 9.1-9.5 and the
+  completed accepted first delivery:
+  fresh-process exec, bounded events, Principal capabilities, revocation,
+  descriptor credentials, redaction, observer push, PTY output, and foreground
+  shell idle.
 - [Readiness](development-readiness.md): known gaps and start gate.
 - [Roadmap](development-roadmap.md): implementation milestones.
 - [Testing Strategy](testing-strategy.md): layers, commands, and acceptance.
@@ -172,6 +181,21 @@
   long-run attempts.
 - [Experiment 0042](experiments/0042-stage7-8-closure.md): final Stage 7/8
   gates, interactive/observer coexistence, and Agent Execution ADR acceptance.
+- [Experiment 0043](experiments/0043-stage9-agent-exec.md): Stage 9.1 real
+  process exec, replay, recovery, worker-loss, and Pane-scope inheritance.
+- [Experiment 0044](experiments/0044-stage9-agent-security.md): Stage 9.2
+  capability scope, ancestor revocation, severity, and token redaction.
+- [Experiment 0045](experiments/0045-stage9-command-credentials.md): Stage 9.3
+  descriptor credentials and streaming command-output redaction.
+- [Experiment 0046](experiments/0046-stage9-observer-pty.md): Stage 9.4
+  read-only observer push and PTY-merged command output.
+- [Experiment 0047](experiments/0047-stage9-foreground-idle.md): Stage 9.5
+  interactive-shell foreground idle and first-delivery closure.
+- [Experiment 0048](experiments/0048-bubblewrap-contract-poc.md): Bubblewrap
+  FD3/cgroup/PTY/parent-death contract probes for ADR 0033.
+- [Experiment 0049](experiments/0049-stage10-sandbox-integration.md): first
+  capability-controlled Linux pipe-split and PTY sandbox execution through
+  qwed, worker, `qwe-session-exec`, and Bubblewrap.
 
 ## Reading Order
 

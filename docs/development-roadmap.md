@@ -162,12 +162,35 @@ Exit: the Stage 8 gates in [Session Layout](stage8-session-layout.md) pass.
 
 ## Next Feature Track: Agent Execution Model
 
-Status: ADR accepted; implementation not started. The stable name for this
-track is Agent Execution Model; it is not a renumbering of historical Stage 8.
+Status: Accepted first delivery complete through Stage 9.5. The stable name for
+this track is Agent Execution Model; it is not a renumbering of historical
+Stage 8.
 
 [ADR 0032](adr/0032-agent-execution-model.md) selects fresh-process `exec`,
 command handles with `wait_idle`, bounded command events and replay, read-only
 observation, capability and real-time revocation checks, per-command
 credentials, and explicit recovery/lost states. It defers `shell_exec`,
-sandbox implementation, cross-Pane orchestration, persistent history, and host
-management.
+cross-Pane orchestration, persistent history, and host management; ADR 0033
+supplies the first sandbox adapter slice.
+
+Stages 9.1-9.5 deliver `exec`, handles, wait timeout semantics, split
+streams, bounded replay, Pane-scope inheritance, qwed-restart recovery, worker
+loss, CLI access, Principal-bound capabilities, revocation severity, descriptor
+credentials, redaction, read-only observer/push, merged PTY output, and
+interactive-shell foreground idle.
+See [Agent Execution Model](agent-execution-model.md).
+
+## Next Feature Track: Bubblewrap Sandbox Adapter
+
+Status: [ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md) accepted; the
+Linux `AGENT_EXEC` pipe-split and PTY slice is implemented and passes
+[Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
+
+The first production slice applies workspace/network/home/tmp/PID profiles to
+Linux `AGENT_EXEC`, preserves FD3 credentials and Pane cgroups, and uses
+Bubblewrap `--json-status-fd`, internal `TIOCSTI` seccomp, and
+`--die-with-parent`. Sandboxed restart recovery and Pane-teardown qualification
+pass locally and on Ubuntu 22.04/Debian 12 real VMs. Ubuntu 24.04 currently
+fails closed under the tested AppArmor/userns policy. Session/Pane
+startup-program sandboxing, Landlock fallback, init shims, additional platform
+qualification, and stronger VM/OCI backends remain deferred.

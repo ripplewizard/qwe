@@ -214,6 +214,143 @@ Consult `qwe session create --help` and `CONTROL_STATUS.capabilities` for
 supported fields. Unsupported requests return `unsupported_capability`; they
 are never silently ignored.
 
+## Security capabilities
+
+Stages 9.1-9.5 authorize agent operations with expiring, Principal-bound
+capabilities. The local root bootstrap token is created by qwed at
+`<QWE_SOCKET>.runtime/security.bootstrap` with mode `0600`.
+
+Create a child Principal and an `agent_exec` capability for one Pane. The token
+is written only to the requested capability file:
+
+```sh
+qwe --socket "$QWE_SOCKET" security bootstrap
+PRINCIPAL_ID="$(
+  qwe --socket "$QWE_SOCKET" security principal-create local-root |
+    jq -r .principal_id
+)"
+qwe --socket "$QWE_SOCKET" security capability-issue "$PRINCIPAL_ID" \
+  agent_exec --pane-id "$PANE_ID" \
+  --output "$HOME/.config/qwe/agent.capability"
+chmod 600 "$HOME/.config/qwe/agent.capability"
+```
+
+To issue a sandboxed `agent_exec` capability on Linux, provide a v1
+profile JSON file:
+
+```json
+{
+  "version": 1,
+  "workspace": "/absolute/path/to/workspace",
+  "workspace_mode": "read_only",
+  "protected_paths": ["/absolute/path/to/workspace/.git"],
+  "network": "isolated_loopback",
+  "home": "hidden",
+  "private_tmp": true,
+  "process_namespace": "isolated",
+  "seccomp": {"mode": "none"}
+}
+```
+
+```sh
+qwe --socket "$QWE_SOCKET" security capability-issue "$PRINCIPAL_ID" \
+  agent_exec --pane-id "$PANE_ID" \
+  --sandbox-profile /path/to/sandbox.json \
+  --output "$HOME/.config/qwe/agent-sandboxed.capability"
+```
+
+The capability file alone controls sandboxing. `agent exec` rejects a
+client-supplied `sandbox_profile`; missing Bubblewrap fails closed. Sandboxed
+PTY commands preserve FD3 credentials and terminal semantics while denying
+`TIOCSTI`.
+
+Revoke a Principal subtree:
+
+```sh
+qwe --socket "$QWE_SOCKET" security revoke "$PRINCIPAL_ID" \
+  --severity freeze --grace-ms 60000
+```
+
+Omitted severity defaults to `freeze`. Freeze stops running command groups and
+escalates to termination after a maximum five-minute grace period.
+`administrative` invalidates capabilities but preserves running work;
+`terminate` kills affected command groups. Administrative revocation and
+security holds require a high-trust Principal.
+
+## Agent execution
+
+Start a fresh non-PTY process in a Pane without injecting a shell command into
+the interactive PTY:
+
+```sh
+qwe --socket "$QWE_SOCKET" --owner agent \
+  --capability-file "$HOME/.config/qwe/agent.capability" \
+  agent exec "$PANE_ID" /usr/bin/printf '%s\n' hello
+```
+
+The command handle is returned immediately. Program arguments are passed
+directly; use an explicit shell only when shell syntax is required:
+
+```sh
+qwe --socket "$QWE_SOCKET" \
+  --capability-file "$HOME/.config/qwe/agent.capability" \
+  agent exec "$PANE_ID" /bin/sh -c \
+  'printf "out\n"; printf "err\n" >&2; exit 7'
+```
+
+Inspect, wait for, replay, or terminate the command:
+
+```sh
+qwe --socket "$QWE_SOCKET" \
+  --capability-file "$HOME/.config/qwe/agent.capability" \
+  agent status "$COMMAND_ID"
+qwe --socket "$QWE_SOCKET" \
+  --capability-file "$HOME/.config/qwe/agent.capability" \
+  agent wait "$COMMAND_ID" --timeout-ms 5000
+qwe --socket "$QWE_SOCKET" \
+  --capability-file "$HOME/.config/qwe/agent.capability" \
+  agent events "$COMMAND_ID" --cursor 0
+qwe --socket "$QWE_SOCKET" \
+  --capability-file "$HOME/.config/qwe/agent.capability" \
+  agent observe "$COMMAND_ID" --cursor 0
+qwe --socket "$QWE_SOCKET" \
+  --capability-file "$HOME/.config/qwe/agent.capability" \
+  agent terminate "$COMMAND_ID"
+```
+
+Inject a private provider credential into one command. The secret is delivered
+on inherited FD3, and exact matches are redacted from stdout/stderr before
+events are retained:
+
+```sh
+qwe --socket "$QWE_SOCKET" \
+  --capability-file "$HOME/.config/qwe/agent.capability" \
+  agent exec "$PANE_ID" --credential EXAMPLE_KEY /usr/local/bin/use-key
+```
+
+Run a fresh terminal-backed command with one merged PTY stream:
+
+```sh
+qwe --socket "$QWE_SOCKET" \
+  --capability-file "$HOME/.config/qwe/agent.capability" \
+  agent exec "$PANE_ID" --pty --rows 30 --columns 100 /usr/bin/top
+```
+
+`agent wait` returns `done`, `failed`, `lost`, `idle`, or `unknown`. A timeout
+returns `unknown`, not success or idle. Interactive shell PTY commands return
+`idle` when the shell process group is back in the PTY foreground; one-shot
+commands remain `running` until a terminal state. `agent events` exposes
+`stdout`/`stderr` or merged `pty` events as bounded JSON with hex-encoded data.
+A replay gap is explicit.
+
+The creating `agent_exec` capability can inspect and terminate only the commands
+it created. Capability tokens are not passed to child processes. Secrets never
+enter argv or environment values; only `QWE_CREDENTIAL_FD=3` is visible.
+`agent observe` consumes a command-scoped read capability or the creating
+`agent_exec` capability and emits bounded read-only batch frames. It cannot
+input, resize, signal, or mutate the command. See
+[Agent Execution Model](docs/agent-execution-model.md).
+
 ## Credentials
 
 The Linux service can use systemd credentials. Create a Session with a named
@@ -228,6 +365,9 @@ qwe --socket "$QWE_SOCKET" session create api-job \
 The secret is delivered through inherited file descriptor 3. The child sees
 `QWE_CREDENTIAL_FD=3`; secret bytes do not appear in argv, the environment,
 database, logs, or terminal output.
+
+Per-command credentials use the same FD3 contract and additionally enable
+streaming `[REDACTED]` substitution in agent stdout/stderr events.
 
 Credential setup is documented in [Packaging](packaging/README.md).
 

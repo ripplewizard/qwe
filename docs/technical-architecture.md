@@ -13,13 +13,13 @@ Client
 qwed supervisor ------------ SQLite WAL
   |
   +-- Session
-        +-- Pane worker
-        |     +-- PTY and VT state
-        |     +-- qwe-session-exec -> systemd scope (Linux) / task process group
-        |     +-- bounded output journal
+        +-- Pane ResourceScope (Linux systemd user scope)
+        |     +-- control cgroup: Pane worker and bounded metadata
+        |     +-- workload cgroup: PTY task and fresh-process agent commands
         |
-        +-- Pane worker
-              +-- ...
+        +-- Pane ResourceScope
+              +-- Pane worker
+                    +-- ...
 ```
 
 The diagram shows the implemented multi-Pane topology from
@@ -78,10 +78,16 @@ and liveness matrix work is tracked in
 - Provides the stable public local API.
 - Authorizes clients and manages leases.
 - Stores metadata, topology, and task history in SQLite.
+- Authorizes security operations and agent requests against hashed,
+  Principal-bound capabilities; reloads ancestor epochs on every request and
+  runs the freeze-expiry invigilator.
 - Reconciles persisted state against worker inventory before accepting clients.
 - Starts and re-adopts Pane workers, observes `SIGCHLD`/`waitpid` events and
   persistent control EOF, and runs the bounded safety scan. Inventory,
   recovery, health, and control routing are keyed by Pane.
+- On Linux, starts each Pane worker inside its transient systemd user scope so
+  the worker's `control` child and the PTY/command `workload` child remain in
+  one Pane ResourceScope.
 - Authenticates and proxies the dedicated Attach socket to the selected Pane
   worker. Attach may select an optional Pane; omission preserves the default
   Pane. Observer access is a qwed-owned read-only projection.
@@ -90,9 +96,15 @@ and liveness matrix work is tracked in
 ### qwe-worker
 
 - One process per Pane. It owns the PTY, process group, VT state, and journal.
-- Starts the session process through the internal `qwe-session-exec` launcher.
-- On Linux, starts `qwe-session-exec` inside a transient systemd user scope.
-  The launcher reports the final task PID and cgroup path before exec.
+- Starts the session process as a child of the worker. In the production
+  Linux path, qwed has already placed the worker inside the Pane scope; the
+  worker moves its task and agent commands into the delegated `workload`
+  cgroup.
+- Starts Stages 9.1-9.5 agent commands in the same worker process tree with
+  separate stdout/stderr pipes or one merged PTY stream, bounded semantic event
+  replay, and streaming credential redaction.
+- Reads the PTY foreground process group for interactive shells so
+  `wait_idle` can distinguish prompt idle from a foreground child.
 - Serves a persistent request/response control channel and a typed Attach
   channel over owner-only Unix sockets.
 - Survives qwed crashes; qwed re-adopts it by socket path, SessionId, PaneId,
@@ -380,10 +392,15 @@ The process start token is mandatory. PID alone is never sufficient.
   boundary is already Pane-level. `memory.max`, `memory.swap.max`, `pids.max`,
   and `cpu.max` are hard limits; cumulative CPU time is monitored.
   `memory.oom.group=1` treats the selected ResourceScope as one OOM unit.
+- Inside that scope, the worker uses delegated `control` and `workload`
+  children. Resource limits apply to `workload`, which contains the PTY task
+  and agent commands; worker threads remain in `control` and do not consume
+  the user's task allowance.
 - The topology acknowledgement blocks command exec until the worker owns the
   cgroup, has installed its event watch, and has applied the initial policy.
-  This preserves final PID/PGID and event ownership for very short-lived
-  programs.
+  The production Linux path starts the worker itself inside the scope; the
+  legacy nested `qwe-session-exec` topology remains available to worker-only
+  probes.
 - macOS traverses the task tree with `proc_listchildpids` and samples
   `proc_pid_rusage` every 100 ms. Memory, task-count, and CPU limits are
   `monitored`; a breach terminates the process group.
@@ -432,6 +449,26 @@ reported only when a reliable platform identifier exists.
   are never reported as successful copies.
 - Principal records use monotonic epochs and tombstones. They do not elevate
   the V0 same-UID owner string into an authenticated identity.
+- Capability tokens are random, expiring values stored as SHA-256 hashes.
+  Capability scope is global, Session, Pane, or command, and each record pins
+  the complete Principal ancestor epoch snapshot. Every agent request reloads
+  that chain and fails on stale epochs or any revoked ancestor.
+- The local-root bootstrap management capability is written to a mode-0600
+  runtime file; agent tokens are read from explicit mode-0600 capability files.
+  Raw capability values are never stored in SQLite or passed to child argv or
+  environment.
+- Revocation is explicit. Administrative revocation invalidates authorization
+  while preserving running work; freeze stops affected command groups and
+  expires into termination; terminate kills them. Missing severity fails safe
+  to freeze.
+- Per-command credentials travel from the private provider through a one-shot
+  mode-0600 broker using Unix `SCM_RIGHTS`, then map to child FD3. The worker
+  keeps the same secret only in `Zeroizing` memory for streaming redaction
+  before event retention. Secret values never enter JSON, argv, environment
+  values, SQLite, event data, or logs.
+- Command observer subscriptions are qwed read-only projections over committed
+  worker events. They carry a bounded queue, recheck the live capability on
+  every poll, and have no command mutation operation.
 
 ## 12. Concurrency and Latency
 

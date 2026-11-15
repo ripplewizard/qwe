@@ -48,6 +48,7 @@ history rather than versioned filenames.
 | D081 | Agent execution reuses Pane workers and ResourceScopes; PTY output is merged while non-PTY exec exposes separate stdout/stderr event streams. |
 | D082 | Agent capabilities are scoped and checked against real-time ancestor revocation epochs; unspecified revocation severity fails safe to freeze. |
 | D083 | Agent event history is a bounded semantic log separate from the diagnostic journal; replay gaps and lost recovery states are explicit. |
+| D084 | The first Linux sandbox backend is external Bubblewrap; QWE profiles stay fail closed and Pane cgroups remain the sole resource authority. |
 
 ADRs [0011](adr/0011-consolidate-control-plane.md) through
 [0015](adr/0015-worker-liveness-reconciliation.md) are accepted. qwed is the
@@ -172,5 +173,7 @@ events.
   [ADR 0031](adr/0031-scrollback-and-mouse-copy.md). Stage 8 implementation
   and supported-platform qualification are complete under
   [Session Layout](stage8-session-layout.md). Agent Execution Model is
-  accepted under [ADR 0032](adr/0032-agent-execution-model.md); implementation
-  has not started.
+  accepted under [ADR 0032](adr/0032-agent-execution-model.md); the accepted
+  first delivery is complete through Stage 9.5. Boundaries and deferred
+  follow-ons are tracked in
+  [Agent Execution Model](agent-execution-model.md).

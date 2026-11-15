@@ -203,9 +203,29 @@ click-to-raise, scrollback, and mouse copy. The supported macOS, Linux,
 Podman, and installed-systemd matrices pass.
 
 Agent Execution Model is accepted under
-[ADR 0032](adr/0032-agent-execution-model.md). Implementation has not started;
-the accepted first delivery is fresh-process `exec`, command handles,
-`wait_idle`, bounded command events and replay, read-only observation,
-capability/revocation enforcement, per-command credentials, and explicit
-recovery/lost states. `shell_exec`, sandbox implementation, cross-Pane
-orchestration, persistent history, and host management remain deferred.
+[ADR 0032](adr/0032-agent-execution-model.md). The accepted first delivery is
+complete through Stage 9.5. `shell_exec`, cross-Pane orchestration beyond the
+first Bubblewrap Agent Execution slice, persistent history, environment
+mutation, and host management remain deferred.
+
+Stages 9.1-9.5 provide `exec`, command handles, timeout-aware `wait_idle`,
+split stdout/stderr events, bounded replay, qwed-restart recovery, worker-loss
+`lost`, Pane-scope inheritance, Principal-bound hashed capabilities, ancestor
+epoch checks, administrative/freeze/terminate revocation, descriptor
+credentials, streaming redaction, read-only observer/push, and merged PTY
+output. Interactive-shell foreground idle and explicit terminal/lost recovery
+semantics are implemented.
+
+Bubblewrap is accepted as the first external sandbox backend under
+[ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md). Core Rust probes pass for
+FD3, Pane-cgroup inheritance, structured child identity, PTY
+resize/signal/job-control behavior, and synchronized parent-death cleanup. The
+capability/profile, backend failure, workspace, protected-path, home, tmp,
+network, sandboxed PTY, `TIOCSTI`, FD3, and cleanup checks pass locally in
+[Experiment 0049](experiments/0049-stage10-sandbox-integration.md). Sandboxed
+restart recovery, worker loss, and Pane teardown pass locally. Broader
+deployment-matrix qualification remains open; the container matrix currently
+proves fail-closed behavior on Ubuntu 22.04, Ubuntu 24.04, and Debian 12 rather
+than successful nested sandbox execution. The real-VM matrix passes the full
+Stage 10 probe on Ubuntu 22.04 and Debian 12; Ubuntu 24.04 fails closed under the
+tested AppArmor/userns policy.

@@ -480,6 +480,10 @@ Headless SSH Server 不能假设它一定可用。
 
 7. E04 — Security Sandbox
 
+Current decision: external Bubblewrap is the first Linux backend under
+[ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md). Sandbox profile enforcement
+remains outside resource governance and fails closed.
+
 7.1 Objective
 
 未来为 TaskInstance 提供隔离执行能力。
