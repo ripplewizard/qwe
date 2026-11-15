@@ -24,10 +24,11 @@ pub use layout::{
     tile_panes,
 };
 pub use sandbox::{
-    MAX_ORPHANED_SANDBOXED_PANES, SANDBOX_PROFILE_VERSION, SANDBOX_SECCOMP_STRICT_PROFILE,
-    SANDBOXED_PANE_ORPHAN_TTL_MS, SANDBOXED_PANE_SHUTDOWN_GRACE_MS, SandboxHomeMode,
-    SandboxLandlockMode, SandboxNetworkMode, SandboxProcessMode, SandboxProfile,
-    SandboxSeccompMode, SandboxWorkspaceMode, find_hardlinked_protected_path,
+    MAX_ORPHANED_SANDBOXED_PANES, RefinedSandboxProfile, SANDBOX_PROFILE_VERSION,
+    SANDBOX_SECCOMP_STRICT_PROFILE, SANDBOXED_PANE_ORPHAN_TTL_MS, SANDBOXED_PANE_SHUTDOWN_GRACE_MS,
+    SandboxHomeMode, SandboxLandlockMode, SandboxNetworkMode, SandboxProcessMode, SandboxProfile,
+    SandboxRefinementError, SandboxSeccompMode, SandboxWorkspaceMode,
+    find_hardlinked_protected_path,
 };
 pub use security::{
     CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,

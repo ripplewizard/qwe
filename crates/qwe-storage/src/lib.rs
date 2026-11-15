@@ -3927,6 +3927,7 @@ mod tests {
                 probe_time_ms: 23,
                 seccomp_profile_hash: Some("seccomp-hash".into()),
                 landlock_abi: Some(1),
+                fd_bind: Some(true),
             }),
         };
         store.install_capability(&capability).unwrap();

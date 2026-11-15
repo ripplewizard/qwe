@@ -21,6 +21,7 @@ pub struct BubblewrapSupport {
     pub path: PathBuf,
     pub probe_time_ms: i64,
     pub landlock_abi: Option<u32>,
+    pub fd_bind: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +113,9 @@ pub fn probe_bubblewrap(
             &evidence,
         ));
     }
+    let has_fd_bind = bubblewrap_supports_option(&help_text, "--bind-fd")
+        && bubblewrap_supports_option(&help_text, "--ro-bind-fd");
+    let fd_bind = has_fd_bind && probe_fd_bind(&executable).unwrap_or(false);
     let landlock_abi = match landlock {
         SandboxLandlockMode::Off => None,
         SandboxLandlockMode::BestEffort => match qwe_runtime::landlock_abi_version() {
@@ -215,6 +219,7 @@ pub fn probe_bubblewrap(
                     path: executable,
                     probe_time_ms: evidence.probe_time_ms,
                     landlock_abi,
+                    fd_bind,
                 });
             }
             Ok(Some(status)) => {
@@ -325,6 +330,89 @@ fn missing_bubblewrap_options(help: &str) -> Vec<&'static str> {
             })
         })
         .collect()
+}
+
+fn bubblewrap_supports_option(help: &str, option: &str) -> bool {
+    help.split_whitespace().any(|token| {
+        token == option
+            || token
+                .strip_prefix(option)
+                .is_some_and(|suffix| suffix.starts_with('='))
+    })
+}
+
+fn probe_fd_bind(executable: &Path) -> io::Result<bool> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let root =
+        std::env::temp_dir().join(format!("qwe-bwrap-fd-bind-{}-{nonce}", std::process::id()));
+    fs::create_dir(&root)?;
+    fs::write(root.join("marker"), b"QWE_FD_BIND_OK")?;
+    let root_c = std::ffi::CString::new(root.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains NUL"))?;
+    let descriptor = unsafe {
+        libc::open(
+            root_c.as_ptr(),
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if descriptor < 0 {
+        let failure = io::Error::last_os_error();
+        let _ = fs::remove_dir_all(&root);
+        return Err(failure);
+    }
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0
+    {
+        let failure = io::Error::last_os_error();
+        unsafe {
+            libc::close(descriptor);
+        }
+        let _ = fs::remove_dir_all(&root);
+        return Err(failure);
+    }
+    let fd_arg = descriptor.to_string();
+    let output = Command::new(executable)
+        .args([
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--symlink",
+            "usr/bin",
+            "/bin",
+            "--ro-bind-try",
+            "/lib",
+            "/lib",
+            "--symlink",
+            "usr/lib64",
+            "/lib64",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--unshare-user",
+            "--unshare-pid",
+            "--as-pid-1",
+            "--die-with-parent",
+            "--ro-bind-fd",
+            &fd_arg,
+            "/qwe-fd-bind",
+            "--",
+            "/bin/cat",
+            "/qwe-fd-bind/marker",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+    unsafe {
+        libc::close(descriptor);
+    }
+    let _ = fs::remove_dir_all(&root);
+    Ok(output.is_ok_and(|output| output.status.success() && output.stdout == b"QWE_FD_BIND_OK"))
 }
 
 #[derive(Debug, Clone)]

@@ -3842,6 +3842,7 @@ fn probe_sandbox_worker(
         .get("landlock_abi")
         .and_then(Value::as_u64)
         .and_then(|value| u32::try_from(value).ok());
+    let fd_bind = result.get("fd_bind").and_then(Value::as_bool);
     let profile_json =
         serde_json::to_vec(profile).map_err(|failure| error("internal", failure.to_string()))?;
     Ok(SandboxAuditRecord {
@@ -3851,6 +3852,7 @@ fn probe_sandbox_worker(
         probe_time_ms,
         seccomp_profile_hash: Some(seccomp_profile_hash.into()),
         landlock_abi,
+        fd_bind,
     })
 }
 

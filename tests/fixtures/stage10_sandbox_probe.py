@@ -288,6 +288,7 @@ def run_positive_probe(
     assert len(audit["profile_hash"]) == 64, audit
     assert audit["probe_time_ms"] > 0, audit
     assert len(audit["seccomp_profile_hash"]) == 64, audit
+    assert isinstance(audit.get("fd_bind"), bool), audit
     landlock_expected = landlock_available()
     if landlock_expected:
         assert audit.get("landlock_abi", 0) >= 1, audit
@@ -1414,6 +1415,7 @@ def run_positive_probe(
 
     return {
         "profile_authorization": "pass",
+        "fd_bind_probe": "pass",
         "strict_seccomp": "pass",
         "nested_bubblewrap": "pass",
         "nested_bubblewrap_landlock_denied": "pass",

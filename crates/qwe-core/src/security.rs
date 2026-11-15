@@ -204,6 +204,8 @@ pub struct SandboxAuditRecord {
     pub seccomp_profile_hash: Option<String>,
     #[serde(default)]
     pub landlock_abi: Option<u32>,
+    #[serde(default)]
+    pub fd_bind: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
