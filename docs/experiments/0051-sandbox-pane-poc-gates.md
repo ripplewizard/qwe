@@ -138,6 +138,11 @@ reuses the inherited controlling terminal, creates the shell process group,
 assigns it as the PTY foreground group, forwards TERM/INT/HUP, reaps children,
 and terminates a background namespace process after shell exit.
 
+The same real-PTY contract connects to a versioned, bounded Pane control
+channel through `qwe-session-exec`. The shim forwards permitted control signals,
+rejects malformed frames, and marks the control FD close-on-exec so the shell
+cannot access it.
+
 ## P5: Landlock ABI Distribution
 
 Status: pass.

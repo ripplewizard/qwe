@@ -127,12 +127,16 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   namespace init, it explicitly handles SIGTERM, SIGINT, SIGHUP, and SIGCHLD.
   Default-ignored signals are not
   acceptable.
-- **D21 adopted:** the shim applies no-new-privileges, dumpability suppression,
-  and seccomp denial of ptrace. It never passes its control-channel FD to the
-  target shell.
-- **D22 adopted:** the shim control channel has a version, bounded messages, and
-  unknown-message failure. It is inaccessible from inside the sandbox and is a
-  fuzz target.
+- **D21 adopted; initial control-FD path implemented:** the shim applies
+  no-new-privileges and dumpability suppression. Bubblewrap seccomp hardens the
+  policy path, and the shim marks its control FD close-on-exec before spawning
+  the target shell.
+- **D22 adopted; initial protocol implemented:** the shim control channel uses
+  protocol version 1, a four-byte header, an eight-byte payload bound, and a
+  1024-byte decoder bound. Unknown versions or message kinds, oversized frames,
+  malformed signal payloads, and signals outside INT/TERM/HUP/QUIT fail closed.
+  A same-UID launcher broker transfers the FD after `portable-pty` cleanup; the
+  target shell does not inherit it. The parser corpus remains a fuzz target.
 - **D23 adopted:** seccomp/Landlock/control-channel setup failure terminates
   before target exec and is surfaced as `sandbox_setup_failed`.
 - **D24 decided:** replacing the shell with `exec bash`, `exec zsh`, or another

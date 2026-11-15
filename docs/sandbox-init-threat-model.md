@@ -16,12 +16,13 @@ before the requested command. It is trusted computing base code because it:
 - replaces itself with the requested program.
 - in the hidden `--pane-init` mode, remains as PID namespace init, owns the
   inherited controlling terminal, assigns the foreground process group,
-  forwards TERM/INT/HUP, and reaps descendants before exiting.
+  forwards TERM/INT/HUP, consumes a versioned signal control channel, and
+  reaps descendants before exiting.
 
 It does not load the Bubblewrap seccomp program. Bubblewrap applies seccomp
-before executing the init helper. The initial terminal/signal behavior from
-ADR 0034 has a dedicated real-PTY contract test; the private control channel
-and production sandboxed-Pane integration remain unimplemented.
+before executing the init helper. The initial terminal/signal and private
+control-channel behavior from ADR 0034 has a dedicated real-PTY contract test;
+production sandboxed-Pane integration remains unimplemented.
 
 ## 2. Trusted inputs
 
@@ -70,6 +71,9 @@ No credential, environment secret, or host configuration file is an init input.
 | Pane-init terminated as PID namespace init | Explicit TERM/INT/HUP handlers forward to the PTY foreground process group |
 | Orphaned descendants become zombies | SIGCHLD wakeups drain `waitpid(-1)` inside the PID namespace |
 | Detached process survives shell exit | PID-1 cleanup sends TERM, waits the frozen grace period, then KILL |
+| Control channel leaks into the target shell | The shim sets `FD_CLOEXEC` before spawning the shell; the real-PTY contract checks the FD is absent |
+| Malformed or excessive control traffic | Versioned four-byte header, eight-byte payload cap, 1024-byte decoder cap, unknown-kind rejection, and signal whitelist |
+| Arbitrary signal injection through the control channel | Only INT, TERM, HUP, and QUIT are accepted; KILL remains outside this channel |
 
 The same-UID host process remains outside the threat model under ADR 0034.
 
@@ -104,9 +108,9 @@ Before accepting terminal responsibilities:
   each path rule, after dumpability hardening, and immediately before exec;
 - verify every injected failure exits 125 and never executes a sentinel target;
 - run differential tests with Bubblewrap 0.5 and current releases;
-- fuzz the private Pane-init control channel before sandboxed Pane is enabled;
-  keep terminal signal and winsize coverage in real-PTY contract tests and
-  avoid sleep-based assertions where event oracles are available.
+- fuzz the implemented Pane-init control parser before sandboxed Pane is
+  enabled; keep terminal signal and winsize coverage in real-PTY contract
+  tests and avoid sleep-based assertions where event oracles are available.
 
 ## 7. Dependency policy
 
@@ -125,14 +129,14 @@ implements the terminal responsibilities below:
 - explicitly handle SIGHUP as PID namespace init;
 - assign the spawned shell its own process group and make it the PTY foreground
   group;
+- transfer a private control FD through the same-UID launcher broker, mark the
+  shim copy close-on-exec, and accept only bounded, versioned control frames;
 - leave window-size handling to qwed because PTY-master `TIOCSWINSZ` plus
   kernel `SIGWINCH` is sufficient; and
 - terminate remaining namespace processes after shell exit.
 
 The following controls remain required before production sandboxed Pane:
 
-- keep a private shim control-channel FD, never inherit it into the shell;
-- bound and version control messages; reject unknown messages;
 - use inherited descriptors or `SCM_RIGHTS` for command credentials and close
   the shim's copy after delivery.
 
