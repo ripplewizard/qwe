@@ -121,6 +121,21 @@ Session, Pane, and TaskInstance. The response includes `session_id`, `pane_id`,
 and `task_id`. `TASK_START` is absent from the public protocol, and the CLI
 `task start` command was removed during the Stage 1 clean cutover.
 
+`SESSION_CREATE` and `PANE_CREATE` accept `sandboxed: true` when the caller
+wants a sandboxed Pane. The request must carry a matching Session-scoped
+`sandboxed_pane` capability in `auth_context`; the profile and audit come only
+from that capability. A client-supplied `sandbox_profile` is rejected, and
+sandboxed creation rejects `credential` because long-lived Panes do not expose
+FD3 authority. Supplying a `sandboxed_pane` capability without
+`sandboxed:true` fails with `sandbox_capability_requires_sandboxed_pane`; the
+capability cannot be downgraded into ordinary Pane creation. Responses and
+persisted Pane status expose `sandbox.enforced`, `profile`, `audit`, and
+`capability_id`.
+Until the restricted terminal-output filter is enabled, `PANE_ATTACH` /
+`SESSION_ATTACH` and PTY `SESSION_INPUT` against a sandboxed Pane fail with
+`sandbox_terminal_filter_unavailable`. Status and lifecycle operations remain
+available.
+
 `CONTROL_STATUS` computes reconciliation from current durable and worker state.
 It returns `sessions`, `panes`, `tasks`, `workers`, and a `reconciliation`
 object containing current lost/unreachable and task terminal counts,
@@ -136,6 +151,7 @@ The credential name selects a private credential-directory entry or a macOS
 Keychain item named `<prefix>.<name>`. Secret bytes never appear in the
 request, response, environment, argv, logs, or SQLite. The final PTY child sees
 the secret through inherited descriptor 3 and `QWE_CREDENTIAL_FD=3`.
+`credential` is incompatible with `sandboxed: true`.
 
 `resource_policy` accepts:
 
@@ -354,10 +370,11 @@ Capability operations and scopes:
 | `pane_resize` | `{"kind":"pane","pane_id":"..."}` |
 
 `pane_input` is code-execution authority for the target Pane, not an
-observation permission. Until Pane sandbox metadata exists, capability issue
-requires a high-trust issuer for this operation. `pane_exec` and `pane_resize`
-remain distinct. Capability delegation cannot broaden the active operation or
-target scope.
+observation permission. Target-type grading uses persisted Pane sandbox
+metadata: a sandboxed Pane may accept an ordinary management delegation, while
+`pane_input` for an unsandboxed Pane requires a high-trust issuer. `pane_exec`
+and `pane_resize` remain distinct. Capability delegation cannot broaden the
+active operation or target scope.
 
 Capability issue is non-idempotent so the raw token is never copied into the
 durable idempotency response table. Tokens default to 24 hours and are capped at
@@ -394,6 +411,9 @@ issue fails with `sandbox_backend_unavailable` and reason
 `process_namespace` is `isolated` or `shared`. Unknown fields, non-v1 profiles,
 named seccomp values other than the exact profile name `strict`, a missing
 workspace, or a missing protected path fail closed.
+`sandboxed_pane` v1 currently requires `process_namespace:isolated`; Pane
+creation rejects `shared` until non-PID-1 descendant tracking provides the same
+bounded tree teardown guarantee.
 Protected paths containing multi-link files also fail closed because a
 writable hardlink alias can bypass path-scoped read-only mounts.
 Workspace-relative protected-path symlinks are accepted; absolute symlinks are

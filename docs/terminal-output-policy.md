@@ -1,7 +1,8 @@
 # Terminal Output Policy
 
 Date: 2026-11-15
-Status: Design accepted by ADR 0034; implementation pending
+Status: Design accepted by ADR 0034; implementation pending. Sandboxed Pane
+Attach and PTY input are currently rejected rather than bypassing this policy.
 
 ## Scope
 

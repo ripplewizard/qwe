@@ -1,7 +1,7 @@
 # Storage Migration: Pane Layout, Agent Security, and Sandbox Profiles
 
-Status: Implemented through Stage 10.4; schema v17 is current
-Date: 2026-11-14
+Status: Implemented through sandboxed Pane creation; schema v18 is current
+Date: 2026-11-16
 Authority: [ADR 0021](adr/0021-shared-prerequisites.md) and the v11 schema in
 `crates/qwe-storage`; Pane layout metadata is governed by
 [ADR 0023](adr/0023-durable-pane-layout.md); command metadata is governed by
@@ -276,6 +276,23 @@ Schema v17 adds:
 
 Existing rows migrate with null audit metadata. The migration is transactional
 and sets `PRAGMA user_version = 17`. A v16 binary must refuse a v17 database.
+
+## 15. v17 to v18: Pane Sandbox Metadata
+
+Schema v18 adds `pane_sandboxes`, keyed by Pane ID:
+
+- `profile_json` stores the exact capability-enforced v1 profile;
+- `audit_json` stores the backend, profile hash, seccomp hash, optional
+  Landlock ABI, and probe timestamp;
+- `capability_id` links the Pane to the `sandboxed_pane` capability that
+  authorized creation; and
+- `created_at_ms` records when creation committed.
+
+The row is inserted in the same transaction as the Session/Pane/Task or
+Pane/worker/Task records. A missing sandbox row therefore means an unsandboxed
+Pane, never an unknown downgrade. Deleting a Pane cascades its sandbox metadata.
+The migration is transactional and sets `PRAGMA user_version = 18`. A v17
+binary must refuse a v18 database.
 
 - Bounds are clamped to the current usable viewport at render time.
 - Migration leaves every existing floating Pane with null bounds, preserving

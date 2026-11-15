@@ -147,6 +147,20 @@ channel through `qwe-session-exec`. The shim forwards permitted control signals,
 rejects malformed frames, and marks the control FD close-on-exec so the shell
 cannot access it.
 
+## Production Slice Evidence
+
+`just stage10-sandbox` now creates and recovers a long-lived sandboxed Pane
+through qwed. The observed path is:
+
+- Session-scoped `sandboxed_pane` capability issue with profile/audit;
+- `SESSION_CREATE` and `PANE_CREATE` capability consumption without client
+  profile or long-lived credential input;
+- launcher-pinned workspace/protected/HOME descriptors, Bubblewrap PID
+  namespace, internal seccomp, `--pane-init`, and private control channel;
+- atomic Pane sandbox metadata persistence and post-restart status recovery;
+- capability-downgrade rejection, target-graded `pane_input`, and temporary
+  fail-closed Attach/input until terminal filtering lands.
+
 ## P5: Landlock ABI Distribution
 
 Status: pass.

@@ -219,3 +219,10 @@ workspace persistence when the profile and command permit them.
 Landlock ABI 1+ adds an optional ABI-aware write-focused layer inside mandatory
 Bubblewrap confinement; it is not a standalone sandbox backend. Capability
 issue fails closed if the required init helper is missing.
+
+Sandboxed Pane creation is now implemented for Linux: `SESSION_CREATE` and
+`PANE_CREATE` consume a Session-scoped `sandboxed_pane` capability, launch a
+long-lived FD-pinned Bubblewrap shell through the PID-1 shim, persist profile
+and audit metadata atomically, and recover that metadata after qwed restart.
+Sandboxed Attach and PTY input remain fail closed until the restricted terminal
+output policy is implemented.

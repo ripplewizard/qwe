@@ -46,10 +46,14 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   P1 found upstream 0.10.0 as the first observed release with FD binding.
   Runtime qualification uses a help check plus a harmless FD mount; the result
   is stored as `sandbox_audit.fd_bind`. `sandboxed_pane` capability issue now
-  rejects a false result with reason `fd_bind_unavailable`.
+  rejects a false result with reason `fd_bind_unavailable`. Workspace,
+  protected-path, and read-only HOME sources are opened by the launcher and
+  passed to Bubblewrap through `--bind-fd` / `--ro-bind-fd`.
 - **D2 adopted:** see capability model below. `sandboxed_pane` issue requires a
   Session-scoped v1 profile and probes it before a Session exists; it never
-  falls back to the unsandboxed Pane path.
+  falls back to the unsandboxed Pane path. `SESSION_CREATE` and `PANE_CREATE`
+  consume the capability, reject client-selected profiles, and persist the
+  effective profile/audit with the Pane.
 - **D3 adopted:** restricted terminal output uses a whitelist, not an OSC 52
   blacklist. Filtering occurs before every Attach client and is defined in
   [Terminal Output Policy](../terminal-output-policy.md).
@@ -65,9 +69,8 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 
 ### B. Capability model
 
-- **D6 adopted; operation/scope scaffold implemented:** `sandboxed_pane`
-  authorizes only creation of a sandboxed
-  Pane. It grants no operation on an existing Pane.
+- **D6 adopted; creation implemented:** `sandboxed_pane` authorizes only
+  creation of a sandboxed Pane. It grants no operation on an existing Pane.
 - **D7 adopted; operation/scope scaffold implemented:** `pane_exec` authorizes
   injecting an `AGENT_EXEC` request into
   an existing Pane and is constrained by D14 refinement.
@@ -76,8 +79,9 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   target Pane. Authorization and UI text must state this explicitly.
 - **D9 adopted:** input to a sandboxed Pane is ordinary delegated authority.
   Input to an unsandboxed Pane is a separate high-trust capability and is not
-  issued by default. Until Pane sandbox metadata exists, all `pane_input`
-  issuance requires a high-trust management Principal.
+  issued by default. Persisted Pane sandbox metadata now selects the trust
+  floor: sandboxed targets may use an ordinary management delegation, while
+  unsandboxed targets still require high trust.
 - **D10 adopted; operation/scope scaffold implemented:** `pane_resize` is
   separate from `pane_input`; it still carries terminal-control authority.
 - **D11 adopted:** capability delegation is monotonic. A holder cannot issue a
@@ -124,6 +128,10 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
   It handles signal forwarding, child reaping, and stacked policy for a
   sandboxed Pane. It does not forward winsize. Ordinary `AGENT_EXEC` keeps its
   current non-terminal path.
+- **D18 production path implemented:** a sandboxed worker launches Bubblewrap
+  with a PID namespace, FD-pinned mutable mounts, internal seccomp,
+  `qwe-session-exec`, and the PID-1 shim. `SESSION_CLOSE`/`SESSION_KILL` retain
+  cgroup-backed teardown authority.
 - **D19 resolved by P3:** `TIOCSWINSZ` on the qwed-owned PTY master delivers
   SIGWINCH to the foreground process group without shim involvement.
 - **D20 adopted; P4 pass and initial shim implemented:** when the shim is PID
@@ -160,7 +168,8 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 
 - **D26 adopted:** restricted output permits display-oriented sequences and
   drops other sequences by default. Policy is shared by all human Attach
-  clients.
+  clients. Until the filter is implemented, qwed rejects sandboxed Pane Attach
+  and PTY input with `sandbox_terminal_filter_unavailable`.
 - **D27 adopted:** terminal query responses are disabled by default. CSI 6n,
   CSI 21t, DECRQSS, and OSC 10/11 are covered as output-to-input injection
   risks; any enabled response has type and length bounds.
@@ -175,7 +184,8 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 
 ### F. Credentials and audit
 
-- **D32 adopted:** a long-lived Pane never retains FD3.
+- **D32 adopted and enforced:** a long-lived Pane never retains FD3; qwed and
+  the worker both reject credentials for `sandboxed: true`.
 - **D33 adopted:** nested `AGENT_EXEC` credentials use inherited descriptors or
   `SCM_RIGHTS`, never filesystem paths or Pane-visible sockets. The shim closes
   its copy after delivery.
@@ -254,7 +264,8 @@ P1-P6 evidence is recorded in
 2. P1-P6 are complete; nested refinement, shim behavior, Landlock distribution,
    and current strict runtime compatibility are fixed.
 3. Add `landlock` to the typed profile and enforce effective-level audit.
-4. Implement sandboxed Pane capability, shim, lifecycle, and nested refinement.
+4. Sandboxed Pane capability, shim, creation, persistence, and lifecycle are
+   implemented. Nested refinement and terminal filtering remain.
 5. Implement `pane_input`, `pane_resize`, bounded audit, and terminal filtering.
 6. Resolve D12, D25, and D48 before their dependent behavior ships.
 

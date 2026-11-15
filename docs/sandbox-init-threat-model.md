@@ -22,7 +22,9 @@ before the requested command. It is trusted computing base code because it:
 It does not load the Bubblewrap seccomp program. Bubblewrap applies seccomp
 before executing the init helper. The initial terminal/signal and private
 control-channel behavior from ADR 0034 has a dedicated real-PTY contract test;
-production sandboxed-Pane integration remains unimplemented.
+production creation now runs this path for isolated-process-namespace
+sandboxed Panes. Restricted terminal Attach/input and parser fuzzing remain
+open release gates.
 
 ## 2. Trusted inputs
 
@@ -89,8 +91,8 @@ The same-UID host process remains outside the threat model under ADR 0034.
   final host resolution and Bubblewrap mount setup remains residual risk.
 - ADR 0034 terminal duties will materially increase this TCB.
 - The Pane-init contract currently has local Linux PTY coverage only. Before
-  sandboxed Pane is enabled, it must run in the supported-distribution matrix
-  and the private control-channel parser must enter the fuzz corpus.
+  release, it must run in the supported-distribution matrix and the private
+  control-channel parser must enter the fuzz corpus.
 - The Landlock adapter is custom syscall code, not a crate compatibility layer.
   It fails hard when a required ruleset operation is unsupported.
 
@@ -135,10 +137,11 @@ implements the terminal responsibilities below:
   kernel `SIGWINCH` is sufficient; and
 - terminate remaining namespace processes after shell exit.
 
-The following controls remain required before production sandboxed Pane:
+The following control remains required for nested credentials inside a
+sandboxed Pane:
 
 - use inherited descriptors or `SCM_RIGHTS` for command credentials and close
   the shim's copy after delivery.
 
 The control-channel parser and message state machine enter the fuzz corpus
-before sandboxed Pane is enabled.
+before the sandboxed-Pane release gate.

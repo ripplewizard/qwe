@@ -160,10 +160,11 @@ The accepted Agent Execution first delivery covers all rows below.
 
 Rows 001-034 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown. Rows
-035-037 pass local real-PTY/PID-namespace shim, control-channel, and standalone
-probe contracts; they are not yet part of production sandboxed Pane or the
-remote distribution matrix. Ubuntu 22.04 and Debian 12 real VMs pass the
-complete `AGENT_EXEC` matrix. Default Ubuntu
+035-041 pass local real-PTY/PID-namespace shim, control-channel, standalone
+probe, long-lived sandboxed worker, and qwed creation/lifecycle contracts; the
+new runtime rows are not yet part of the remote distribution matrix. Ubuntu
+22.04 and Debian 12 real VMs pass the complete `AGENT_EXEC` matrix. Default
+Ubuntu
 24.04 returns `sandbox_backend_unavailable`; with the packaged path-scoped
 AppArmor profile and the global userns restriction still enabled, its complete
 matrix passes.
@@ -210,6 +211,10 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-035 | Run the PID-1 shim under a real PTY, inherit the controlling terminal, forward TERM/INT/HUP, deliver resize SIGWINCH, reap children, and terminate background namespace processes after shell exit |
 | SANDBOX-036 | Transfer a private Pane control FD through the same-UID launcher broker, keep it hidden from the shell, accept only bounded versioned safe signals, and reject malformed or unknown control messages |
 | SANDBOX-037 | Probe a `sandboxed_pane` profile through the standalone worker before a Session exists, returning backend and seccomp audit evidence without requiring a live Pane |
+| SANDBOX-038 | Start a long-lived QWE sandboxed Pane through the worker with FD-pinned workspace mounts, Bubblewrap PID namespace, `--pane-init`, a private control channel, terminal output, workspace writes, and forced teardown |
+| SANDBOX-039 | Require a matching `sandboxed_pane` capability for `SESSION_CREATE` / `PANE_CREATE`, reject client profiles and long-lived credentials, persist profile/audit metadata atomically, and recover it through Pane status |
+| SANDBOX-040 | Fail closed on sandboxed Pane Attach and PTY input with `sandbox_terminal_filter_unavailable` until the restricted output policy is enabled |
+| SANDBOX-041 | Grade `pane_input` capability issuance by persisted target metadata: ordinary management delegation for a sandboxed Pane, high-trust issuer for an unsandboxed Pane |
 
 ## Core Object Model
 
@@ -348,7 +353,7 @@ measurements pass.
 | MAC-001 | Create, use, expose, and remove the temporary local signing identity | Dedicated Keychain signs all four executables; package records `local-self-signed` and `public_trust: false`; public gate rejects it; cleanup removes Keychain/trust and restores the user search list |
 | PACK-001 | Build a native release package | All four executables report the manifest version; payload paths are portable; a safely extractable archive, SHA-256 checksums, and `qwe-release/v1` metadata are present |
 | PACK-002 | Verify and install a package into an isolated prefix | Checksums pass, executable modes are correct, native service assets are rendered without a checkout path, and no service is started |
-| PACK-003 | Reinstall while preserving state, restart qwed, and migrate v9 state | SQLite is preserved during install; the same worker/task are adopted; startup migrates schema v9 through the current schema v17 |
+| PACK-003 | Reinstall while preserving state, restart qwed, and migrate v9 state | SQLite is preserved during install; the same worker/task are adopted; startup migrates schema v9 through the current schema v18 |
 | PACK-004 | Sign, notarize, and assess the public macOS artifact | Developer ID signatures are verified, notarization is accepted, and Gatekeeper assessment passes |
 | PACK-005 | Exercise the installed Linux service through systemd | The installed unit starts qwed; binary reinstall preserves state; SIGKILL restarts the service; the same worker/task are adopted; stop cleans processes and persists closed/stopped state |
 | PERF-001 | Run release-mode Attach and soak | Eight independent Sessions complete real Attach/snapshot/detach cycles within configured latency and aggregate-RSS limits throughout the soak |
