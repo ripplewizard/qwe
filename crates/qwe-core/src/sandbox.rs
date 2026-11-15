@@ -11,6 +11,15 @@ pub const SANDBOXED_PANE_ORPHAN_TTL_MS: i64 = 15 * 60 * 1_000;
 pub const MAX_ORPHANED_SANDBOXED_PANES: usize = 16;
 pub const SANDBOXED_PANE_SHUTDOWN_GRACE_MS: u64 = 5_000;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneSandboxRecord {
+    pub pane_id: crate::PaneId,
+    pub profile: SandboxProfile,
+    pub audit: crate::SandboxAuditRecord,
+    pub capability_id: crate::CapabilityId,
+    pub created_at_ms: i64,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxWorkspaceMode {

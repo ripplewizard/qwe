@@ -1,17 +1,18 @@
 use qwe_core::{
     AgentCommandId, AgentCommandRecord, AgentCommandState, AgentOutputMode, AttachmentAuthority,
     AttachmentAuthorityState, CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
-    LeaseRecord, PaneId, PaneRecord, PaneWorkerRecord, PrincipalEpoch, PrincipalId,
-    PrincipalRecord, ProcessIdentity, ResourceBackend, ResourcePolicy, ResourceScopeId,
-    ResourceScopeRecord, ResourceScopeState, ResourceScopeTargetKind, RevocationSeverity,
-    SandboxAuditRecord, SandboxRiskRecord, SessionRecord, TaskId, TaskRecord, TaskState,
+    LeaseRecord, PaneId, PaneRecord, PaneSandboxRecord, PaneWorkerRecord, PrincipalEpoch,
+    PrincipalId, PrincipalRecord, ProcessIdentity, ResourceBackend, ResourcePolicy,
+    ResourceScopeId, ResourceScopeRecord, ResourceScopeState, ResourceScopeTargetKind,
+    RevocationSeverity, SandboxAuditRecord, SandboxRiskRecord, SessionRecord, TaskId, TaskRecord,
+    TaskState,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::json;
 use std::str::FromStr;
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 17;
+pub const SCHEMA_VERSION: i64 = 18;
 pub const IDEMPOTENCY_RETENTION_MS: i64 = 24 * 60 * 60 * 1_000;
 pub const HISTORY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 pub const HISTORY_MAX_TERMINAL_SESSIONS: i64 = 10_000;
@@ -551,6 +552,10 @@ impl Store {
         }
         if current == 16 {
             self.migrate_v16_to_v17()?;
+            current = 17;
+        }
+        if current == 17 {
+            self.migrate_v17_to_v18()?;
         }
         Ok(())
     }
@@ -581,6 +586,10 @@ impl Store {
 
     fn migrate_v16_to_v17(&mut self) -> Result<(), StorageError> {
         migrate_v16_to_v17(self)
+    }
+
+    fn migrate_v17_to_v18(&mut self) -> Result<(), StorageError> {
+        migrate_v17_to_v18(self)
     }
 
     #[must_use]
@@ -971,6 +980,16 @@ impl Store {
         pane: &PaneRecord,
         task: &TaskRecord,
     ) -> Result<(), StorageError> {
+        self.insert_created_session_with_sandbox(session, pane, task, None)
+    }
+
+    pub fn insert_created_session_with_sandbox(
+        &mut self,
+        session: &SessionRecord,
+        pane: &PaneRecord,
+        task: &TaskRecord,
+        sandbox: Option<&PaneSandboxRecord>,
+    ) -> Result<(), StorageError> {
         validate_pane_layout(pane)?;
         if task.session_id != session.id {
             return Err(StorageError::Invariant(
@@ -1113,6 +1132,7 @@ impl Store {
                 ],
             )?;
         }
+        insert_pane_sandbox(&transaction, pane, sandbox)?;
         transaction.commit()?;
         Ok(())
     }
@@ -1194,6 +1214,42 @@ impl Store {
             )
             .optional()
             .map_err(StorageError::from)
+    }
+
+    pub fn find_pane_sandbox(
+        &self,
+        pane_id: &PaneId,
+    ) -> Result<Option<PaneSandboxRecord>, StorageError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT profile_json, audit_json, capability_id, created_at_ms
+                 FROM pane_sandboxes WHERE pane_id = ?1",
+                [pane_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        row.map(|(profile_json, audit_json, capability_id, created_at_ms)| {
+            Ok(PaneSandboxRecord {
+                pane_id: pane_id.clone(),
+                profile: serde_json::from_str(&profile_json)
+                    .map_err(|failure| StorageError::Invariant(failure.to_string()))?,
+                audit: serde_json::from_str(&audit_json)
+                    .map_err(|failure| StorageError::Invariant(failure.to_string()))?,
+                capability_id: capability_id
+                    .parse()
+                    .map_err(|failure: uuid::Error| StorageError::Invariant(failure.to_string()))?,
+                created_at_ms,
+            })
+        })
+        .transpose()
     }
 
     pub fn list_panes(&self) -> Result<Vec<PaneRecord>, StorageError> {
@@ -1378,6 +1434,16 @@ impl Store {
         worker: &PaneWorkerRecord,
         task: &TaskRecord,
     ) -> Result<(), StorageError> {
+        self.insert_created_pane_with_sandbox(pane, worker, task, None)
+    }
+
+    pub fn insert_created_pane_with_sandbox(
+        &mut self,
+        pane: &PaneRecord,
+        worker: &PaneWorkerRecord,
+        task: &TaskRecord,
+        sandbox: Option<&PaneSandboxRecord>,
+    ) -> Result<(), StorageError> {
         validate_pane_layout(pane)?;
         if pane.id != worker.pane_id
             || pane.id != task.pane_id
@@ -1507,6 +1573,7 @@ impl Store {
                 task.ended_at_ms
             ],
         )?;
+        insert_pane_sandbox(&transaction, pane, sandbox)?;
         transaction.commit()?;
         Ok(())
     }
@@ -3256,6 +3323,26 @@ fn migrate_v16_to_v17(store: &mut Store) -> Result<(), StorageError> {
     Ok(())
 }
 
+fn migrate_v17_to_v18(store: &mut Store) -> Result<(), StorageError> {
+    let transaction = store.connection.transaction()?;
+    transaction.execute_batch(
+        "
+        CREATE TABLE pane_sandboxes (
+            pane_id TEXT PRIMARY KEY
+                REFERENCES panes(id) ON DELETE CASCADE,
+            profile_json TEXT NOT NULL,
+            audit_json TEXT NOT NULL,
+            capability_id TEXT NOT NULL
+                REFERENCES agent_capabilities(id) ON DELETE RESTRICT,
+            created_at_ms INTEGER NOT NULL
+        );
+        PRAGMA user_version = 18;
+        ",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn unix_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -3664,6 +3751,36 @@ fn pane_from_row(row: &Row<'_>) -> rusqlite::Result<PaneRecord> {
     })
 }
 
+fn insert_pane_sandbox(
+    transaction: &rusqlite::Transaction<'_>,
+    pane: &PaneRecord,
+    sandbox: Option<&PaneSandboxRecord>,
+) -> Result<(), StorageError> {
+    let Some(sandbox) = sandbox else {
+        return Ok(());
+    };
+    if sandbox.pane_id != pane.id {
+        return Err(StorageError::Invariant(
+            "Pane sandbox metadata belongs to a different Pane".into(),
+        ));
+    }
+    transaction.execute(
+        "INSERT INTO pane_sandboxes (
+            pane_id, profile_json, audit_json, capability_id, created_at_ms
+         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            sandbox.pane_id.to_string(),
+            serde_json::to_string(&sandbox.profile)
+                .map_err(|failure| StorageError::Invariant(failure.to_string()))?,
+            serde_json::to_string(&sandbox.audit)
+                .map_err(|failure| StorageError::Invariant(failure.to_string()))?,
+            sandbox.capability_id.to_string(),
+            sandbox.created_at_ms
+        ],
+    )?;
+    Ok(())
+}
+
 fn lease_from_row(row: &Row<'_>) -> rusqlite::Result<LeaseRecord> {
     Ok(LeaseRecord {
         session_id: row.get(0)?,
@@ -3744,8 +3861,18 @@ mod tests {
     }
 
     #[test]
-    fn v17_schema_stores_sandbox_audit_metadata() {
+    fn current_schema_stores_sandbox_audit_and_pane_metadata() {
         let store = Store::open_in_memory().unwrap();
+        let pane_sandbox_exists: i64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'pane_sandboxes'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pane_sandbox_exists, 1);
         let capability_columns = store
             .connection
             .prepare("PRAGMA table_info(agent_capabilities)")
@@ -3887,6 +4014,62 @@ mod tests {
         assert_eq!(stored.principal_id, record.principal_id);
         assert_eq!(stored.creator_capability_id, Some(creator));
         assert_eq!(stored.state, AgentCommandState::Running);
+    }
+
+    #[test]
+    fn persists_pane_sandbox_profile_and_audit_atomically() {
+        let mut store = Store::open_in_memory().unwrap();
+        let root = store.local_root_principal().unwrap();
+        let capability = CapabilityRecord {
+            id: CapabilityId::new(),
+            token_hash: qwe_core::ReclaimTokenHash::from_token("sandboxed-pane-token"),
+            principal_id: root.id.clone(),
+            principal_epochs: vec![PrincipalEpoch {
+                principal_id: root.id,
+                epoch: root.epoch,
+            }],
+            operation: CapabilityOperation::SandboxedPane,
+            scope: CapabilityScope::Session {
+                session_id: "sandboxed-session".into(),
+            },
+            created_at_ms: 10,
+            expires_at_ms: 100,
+            revoked_at_ms: None,
+            sandbox_profile: Some(qwe_core::SandboxProfile::new("/tmp/workspace".into())),
+            sandbox_audit: Some(SandboxAuditRecord {
+                profile_hash: "profile-hash".into(),
+                backend_path: "/usr/bin/bwrap".into(),
+                backend_version: "bubblewrap 0.13.1".into(),
+                probe_time_ms: 11,
+                seccomp_profile_hash: Some("seccomp-hash".into()),
+                landlock_abi: Some(1),
+                fd_bind: Some(true),
+            }),
+        };
+        store.install_capability(&capability).unwrap();
+        let pane = pane("sandboxed-session");
+        let mut record = session("sandboxed-session");
+        record.worker_identity = Some(ProcessIdentity {
+            pid: 900,
+            pgid: 900,
+            start_token: "worker:900".into(),
+        });
+        let sandbox = PaneSandboxRecord {
+            pane_id: pane.id.clone(),
+            profile: capability.sandbox_profile.clone().unwrap(),
+            audit: capability.sandbox_audit.clone().unwrap(),
+            capability_id: capability.id,
+            created_at_ms: 12,
+        };
+        store
+            .insert_created_session_with_sandbox(
+                &record,
+                &pane,
+                &task(TaskId::new(), "sandboxed-session", &pane.id),
+                Some(&sandbox),
+            )
+            .unwrap();
+        assert_eq!(store.find_pane_sandbox(&pane.id).unwrap(), Some(sandbox));
     }
 
     #[test]
@@ -4660,7 +4843,7 @@ mod tests {
         assert_eq!(store.list_resource_scopes().unwrap().len(), 2);
         assert_eq!(store.local_root_principal().unwrap().epoch, 1);
 
-        let backup_prefix = format!("{}.pre-v17-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v18-", path.file_name().unwrap().to_string_lossy());
         let backup = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
             .flatten()
@@ -4679,7 +4862,7 @@ mod tests {
         drop(backup);
         drop(store);
 
-        let backup_prefix = format!("{}.pre-v17-", path.file_name().unwrap().to_string_lossy());
+        let backup_prefix = format!("{}.pre-v18-", path.file_name().unwrap().to_string_lossy());
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry
                 .file_name()
@@ -4786,7 +4969,7 @@ mod tests {
         let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry.file_name().to_string_lossy().starts_with(&format!(
-                "{}.pre-v17-",
+                "{}.pre-v18-",
                 path.file_name().unwrap().to_string_lossy()
             )) {
                 let _ = std::fs::remove_file(entry.path());
@@ -4858,7 +5041,7 @@ mod tests {
 
         for entry in std::fs::read_dir(path.parent().unwrap()).unwrap().flatten() {
             if entry.file_name().to_string_lossy().starts_with(&format!(
-                "{}.pre-v17-",
+                "{}.pre-v18-",
                 path.file_name().unwrap().to_string_lossy()
             )) {
                 let _ = std::fs::remove_file(entry.path());
