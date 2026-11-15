@@ -605,6 +605,8 @@ just sandbox-vm-matrix
 just sandbox-userns-disabled-vm-matrix
 just sandbox-apparmor-vm
 just sandbox-landlock-vm
+just sandbox-landlock-matrix
+just sandbox-pane-poc
 just sandbox-selinux-vm
 just sandbox-bubblewrap-oldest-vm-matrix
 just sandbox-systemd-properties

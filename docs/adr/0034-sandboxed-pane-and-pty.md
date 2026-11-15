@@ -170,8 +170,9 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 
 ### H. Seccomp
 
-- **D44 PoC:** test each new named profile across target glibc/musl/Rust
-  runtimes before productizing it.
+- **D44 P6 pass for current strict:** the existing denylist passes target
+  glibc/Python/Rust/shell probes. Each future allowlist or broader named
+  profile still requires its own target-runtime matrix.
 - **D45 adopted:** denied-syscall diagnosis may use TRAP/LOG only through a
   compile-time or administrator-local debug facility. It cannot be selected by
   capability or profile.
@@ -203,17 +204,17 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 | P2 | Nested Bubblewrap feasibility; sufficiency of Landlock/seccomp stacking | D15/D16 resolved; pass |
 | P3 | SIGWINCH delivery and `tcgetpgrp` under PID namespace | D18, D19; pass |
 | P4 | Shim PID-1 signal and child-reaping behavior | D20; pass |
-| P5 | Target-distribution Landlock ABI distribution | D5, D48 |
-| P6 | Named seccomp runtime compatibility | D44 |
+| P5 | Target-distribution Landlock ABI distribution | D5, D48; pass |
+| P6 | Named seccomp runtime compatibility | D44; current strict passed |
 
-P1-P4 evidence is recorded in
-[Experiment 0051](../experiments/0051-sandbox-pane-poc-gates.md). P5/P6 remain
-open.
+P1-P6 evidence is recorded in
+[Experiment 0051](../experiments/0051-sandbox-pane-poc-gates.md).
 
 ## Implementation Order
 
 1. Freeze the adopted decision register and terminal output policy.
-2. P1-P4 are complete; nested refinement and minimal shim behavior are fixed.
+2. P1-P6 are complete; nested refinement, shim behavior, Landlock distribution,
+   and current strict runtime compatibility are fixed.
 3. Add `landlock` to the typed profile and enforce effective-level audit.
 4. Implement sandboxed Pane capability, shim, lifecycle, and nested refinement.
 5. Implement `pane_input`, `pane_resize`, bounded audit, and terminal filtering.

@@ -276,5 +276,5 @@ interactive Agent input/resize is designed with the same terminal milestone.
 Implementation and qualification remain open.
 The adopted decision register and terminal output policy are frozen; product
 decisions D12, D25, and D48 remain open.
-P1-P4 are complete; P5/P6 remain open for distribution Landlock and seccomp
-compatibility.
+P1-P6 are complete. The remaining blockers are product decisions and code
+implementation, not architecture PoCs.

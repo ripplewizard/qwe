@@ -158,7 +158,7 @@ The accepted Agent Execution first delivery covers all rows below.
 
 ## Bubblewrap Sandbox
 
-Rows 001-029 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
+Rows 001-031 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
 foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown.
 Ubuntu 22.04 and Debian 12 real VMs pass the complete matrix. Default Ubuntu
 24.04 returns `sandbox_backend_unavailable`; with the packaged path-scoped
@@ -199,6 +199,8 @@ Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md).
 | SANDBOX-027 | Verify PTY-master resize delivers SIGWINCH while foreground process group identity remains stable |
 | SANDBOX-028 | Verify PID-1 default SIGTERM behavior, explicit SIGTERM/SIGINT delivery, and SIGCHLD reaping |
 | SANDBOX-029 | Verify seccomp socket-creation denial while an inherited Unix socket remains usable |
+| SANDBOX-030 | Record and verify Landlock ABI/accepted-rights behavior across target distributions |
+| SANDBOX-031 | Verify the strict seccomp denylist under Python, shell, Rust, threads, subprocess, SSL, and nested Bubblewrap runtimes |
 
 ## Core Object Model
 

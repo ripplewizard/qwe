@@ -1,7 +1,7 @@
 # Experiment 0051: Sandboxed Pane PoC Gates
 
 Date: 2026-11-15
-Status: P1-P4 pass; P5-P6 pending
+Status: P1-P6 pass
 
 Run P2-P4 contract probes with:
 
@@ -129,8 +129,45 @@ Questions:
 The first sandboxed-Pane shim must explicitly install SIGTERM, SIGINT, and
 SIGCHLD handling.
 
+## P5: Landlock ABI Distribution
+
+Status: pass.
+
+`just sandbox-landlock-matrix` runs the ABI/rights probe on the Ubuntu and
+Debian VMs. Fedora 44 is qualified separately.
+
+| Target | Kernel | Landlock ABI | `REFER` | `TRUNCATE` | `IOCTL_DEV` |
+|---|---|---:|---|---|---|
+| Fedora 35 host | 5.14 | 1 | ABI-1 conflict enforcement | no | no |
+| Ubuntu 22.04 | 5.15 | 1 | ABI-1 conflict enforcement | no | no |
+| Debian 12 | 6.1 | 2 | yes | no | no |
+| Ubuntu 24.04 | 6.8 | 4 | yes | yes | no |
+| Fedora 44 | 6.19 | 7 | yes | yes | yes |
+
+The sandboxed-Pane `required{min_abi}` default should use the filesystem ABI
+needed by its rules, not the highest observed ABI. ABI-sensitive tests remain
+mandatory when the minimum changes.
+
+## P6: Seccomp Runtime Compatibility
+
+Status: pass for the current strict denylist.
+
+Stage 10 now checks strict mode with:
+
+- Python 3.10, 3.12, and 3.14;
+- threads, subprocess, file stat/access, pipes, and SSL initialization;
+- the Rust `qwe-sandbox-init --version` startup path;
+- shell and nested Bubblewrap behavior;
+- glibc-based Ubuntu and Debian;
+- Fedora SELinux enforcing.
+
+The current profile is a small denylist, so it does not inherit the
+`clone3`/`rseq`/`statx` compatibility risk of a syscall allowlist. Any future
+allowlist or broader named profile still requires its own target-runtime matrix.
+
 ## Follow-up
 
-P1-P4 update ADR 0034. Nested Bubblewrap is not the refinement mechanism after
+P1-P6 update ADR 0034. Nested Bubblewrap is not the refinement mechanism after
 Landlock; shim stacking is adopted. Socket denial affects new sockets only.
-P5/P6 remain pending.
+The next work is code implementation: FD-bind probe, typed profile refinement,
+capability operations, and the sandboxed-Pane shim.
