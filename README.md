@@ -14,8 +14,9 @@ macOS ARM64 remains local/experimental.
   it from source, then start the systemd user service.
 - [Usage](USAGE.md): Sessions, Attach/detach, agent execution and capabilities,
   Leases, resources, credentials, and teardown.
-- [QWE 0.2.5 notes](docs/releases/v0.2.5.md): current Linux x86_64 release
-  with expanded usage documentation and sandbox test hardening.
+- [QWE 0.2.6 notes](docs/releases/v0.2.6.md): current Linux x86_64 release
+  with expanded usage documentation, sandbox hardening, and stable release CI.
+- [QWE 0.2.5 notes](docs/releases/v0.2.5.md): superseded before publication.
 - [Release](docs/release.md): supported platforms, package contract, and known
   limitations.
 
@@ -31,8 +32,8 @@ Download the current Linux x86_64 archive and checksum from
 run:
 
 ```sh
-tar -xzf qwe-0.2.5-linux-x86_64.tar.gz
-cd qwe-0.2.5-linux-x86_64
+tar -xzf qwe-0.2.6-linux-x86_64.tar.gz
+cd qwe-0.2.6-linux-x86_64
 ./install.py
 ```
 

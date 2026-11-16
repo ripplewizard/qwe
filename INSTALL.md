@@ -26,10 +26,10 @@ systemctl --user is-system-running
 
 The intended supported path is a Fedora Linux x86_64 package with its published
 checksum. Stage 6 artifact publication is still pending; the commands below
-apply after the `v0.2.5` release is published.
+apply after the `v0.2.6` release is published.
 
 ```sh
-version=0.2.5
+version=0.2.6
 base="https://github.com/ripplewizard/qwe/releases/download/v${version}"
 archive="qwe-${version}-linux-x86_64.tar.gz"
 
@@ -53,7 +53,7 @@ Clone the repository and check out the current release candidate:
 ```sh
 git clone git@github.com:ripplewizard/qwe.git
 cd qwe
-git checkout v0.2.5
+git checkout v0.2.6
 ```
 
 Gitee mirror:
@@ -72,16 +72,16 @@ just release-package
 The package is created under `dist/`:
 
 ```text
-dist/qwe-0.2.5-linux-x86_64.tar.gz
-dist/qwe-0.2.5-linux-x86_64/
+dist/qwe-0.2.6-linux-x86_64.tar.gz
+dist/qwe-0.2.6-linux-x86_64/
 ```
 
 Verify and install it:
 
 ```sh
-shasum -a 256 dist/qwe-0.2.5-linux-x86_64.tar.gz
-tar -xzf dist/qwe-0.2.5-linux-x86_64.tar.gz -C dist
-cd dist/qwe-0.2.5-linux-x86_64
+shasum -a 256 dist/qwe-0.2.6-linux-x86_64.tar.gz
+tar -xzf dist/qwe-0.2.6-linux-x86_64.tar.gz -C dist
+cd dist/qwe-0.2.6-linux-x86_64
 ./install.py
 ```
 
