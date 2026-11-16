@@ -391,13 +391,13 @@ graceful stop persistence.
 | STAGE6-003 | Publish a clean-source release | The release manifest names the tagged source commit with `source_dirty: false`; the archive hash, installation, and service recovery match the published evidence |
 | STAGE6-004 | Close the Linux pilot | Reports are triaged, no P0/P1 defect remains open, and at least one `v0.1.x` patch release path is exercised |
 
-STAGE6-001 passes at `66e05a8`. A clean Fedora control run also passed, but it
-did not execute through the dedicated repository runner, so STAGE6-002 remains
-open. The hosted run, control-run results, manifest, and archive checksum are
-recorded in
-[Experiment 0026](experiments/0026-stage6-adoption-baseline.md). STAGE6-002
-through STAGE6-004 close only when their linked runner, publication, and pilot
-evidence exists.
+STAGE6-001 passes at `66e05a8`. On 2026-11-16, a clean detached `v0.1.1`
+candidate at `0e06a538cf1f` passed the complete local Fedora x86_64 release
+gate with `source_dirty: false`. The archive SHA-256 is
+`a6cae80329191e41da915f86c9737ddb67f9c17c24f6c2ddf536455629b6a89d`.
+STAGE6-002 through STAGE6-004 remain open until the dedicated workflow runner,
+versioned publication, and real pilot evidence exist. See
+[Experiment 0026](experiments/0026-stage6-adoption-baseline.md).
 
 ## Linux Container Compatibility
 

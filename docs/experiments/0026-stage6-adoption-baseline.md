@@ -1,7 +1,8 @@
 # Experiment 0026: Stage 6 Adoption Baseline
 
-Status: In progress
+Status: Release candidate qualified locally; external distribution gates open
 Date: 2026-11-06
+Updated: 2026-11-16
 Entry commit: `7ca5ee4`
 
 ## Entry State
@@ -71,6 +72,30 @@ These results establish the Stage 6 CI and release-gate path. STAGE6-002 is
 still open because the clean Fedora gate ran through an SSH control session,
 not the dedicated repository runner. STAGE6-003 and STAGE6-004 are also open:
 no release asset has been published and no user pilot has run.
+
+## Current Release Candidate
+
+On 2026-11-16, a clean detached worktree at `0e06a538cf1f` passed the complete
+`just release-gate` on Fedora x86_64:
+
+```text
+version       0.1.1
+target        linux-x86_64
+source_commit 0e06a538cf1f
+source_dirty  false
+sha256        a6cae80329191e41da915f86c9737ddb67f9c17c24f6c2ddf536455629b6a89d
+```
+
+The candidate is tagged locally as `v0.1.1`. The gate verified the package
+manifest, isolated installation, reinstall persistence, SQLite migration,
+installed-systemd crash restart and worker adoption, release-mode performance,
+Neovim/htop, and job control. It does not close the external Stage 6 gates:
+
+- STAGE6-002 still requires the dedicated repository runner workflow.
+- STAGE6-003 still requires publication of the versioned asset.
+- STAGE6-004 still requires real pilot triage and an exercised patch release.
+
+Generated packages and raw gate logs remain under ignored local directories.
 
 ## Initial Scope
 

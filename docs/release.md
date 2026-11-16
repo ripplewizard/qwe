@@ -148,8 +148,9 @@ self-signed profiles before contacting Apple.
 ## Release Closure
 
 - Stage 5 is complete for Linux-first V0.
-- Stage 6 is complete for Linux V0 distribution, CI, feedback triage, and patch
-  release readiness.
+- Stage 6 has a clean `v0.1.1` release candidate and passing local Fedora
+  release gate. Dedicated-runner, publication, pilot, and patch-release gates
+  remain open.
 - Independent manual acceptance is recorded in
   [V0 Linux Manual Acceptance](v0-linux-manual-acceptance.md).
 - Linux V0 is published as supported; macOS remains local/experimental.

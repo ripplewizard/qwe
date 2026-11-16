@@ -24,7 +24,7 @@ systemctl --user is-system-running
 
 The intended supported path is a Fedora Linux x86_64 package with its published
 checksum. Stage 6 artifact publication is still pending; the commands below
-apply after the `v0.1.1` release exists.
+apply after the `v0.1.1` release is published.
 
 ```sh
 version=0.1.1

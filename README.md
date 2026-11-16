@@ -14,6 +14,7 @@ local/experimental.
 - [Usage](USAGE.md): Sessions, Attach/detach, agent execution and capabilities,
   Leases, resources, credentials, and teardown.
 - [QWE 0.1.1 notes](docs/releases/v0.1.1.md): current Linux x86_64 release
+  candidate; publication remains pending
   notes; artifact publication remains a Stage 6 gate.
 - [Release](docs/release.md): supported platforms, package contract, and known
   limitations.
