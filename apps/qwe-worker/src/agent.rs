@@ -13,7 +13,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(target_os = "linux")]
+use std::os::unix::net::UnixListener;
+use std::os::unix::net::UnixStream;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -1747,6 +1749,14 @@ pub(crate) fn await_bubblewrap_startup_stream(stream: UnixStream) -> std::io::Re
     await_bubblewrap_startup_reader(stream)
 }
 
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn await_bubblewrap_startup_stream(_stream: UnixStream) -> std::io::Result<u32> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Bubblewrap sandboxing is supported only on Linux",
+    ))
+}
+
 #[cfg(target_os = "linux")]
 fn await_bubblewrap_startup_reader(stream: impl Read + Send + 'static) -> std::io::Result<u32> {
     let (sender, receiver) = mpsc::channel();
@@ -1870,7 +1880,14 @@ fn build_pty_spawn_plan(request: PtySpawnRequest<'_>) -> std::io::Result<PtySpaw
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (program, arguments, cwd, credential_present);
+            let _ = (
+                runtime_dir,
+                profile,
+                program,
+                arguments,
+                cwd,
+                credential_present,
+            );
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "Bubblewrap sandboxing is supported only on Linux",
@@ -2124,6 +2141,7 @@ fn start_pty_topology_listener(
     Ok((path, receiver))
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn start_sandbox_status_listener(
     runtime_dir: &Path,
 ) -> std::io::Result<(PathBuf, SandboxStatusReceiver)> {

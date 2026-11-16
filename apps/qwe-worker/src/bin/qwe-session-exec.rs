@@ -1,9 +1,12 @@
 use clap::Parser;
+#[cfg(target_os = "linux")]
 use serde::Deserialize;
+#[cfg(target_os = "linux")]
 use std::collections::HashSet;
 use std::ffi::CString;
 use std::fs::File;
 use std::io::{Read, Write};
+#[cfg(target_os = "linux")]
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::FromRawFd;
@@ -39,11 +42,13 @@ struct Args {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(target_os = "linux")]
 struct PaneMountManifest {
     mounts: Vec<PaneMount>,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(target_os = "linux")]
 struct PaneMount {
     fd: i32,
     path: std::path::PathBuf,
@@ -128,8 +133,13 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         }
         let _ = stream.shutdown(std::net::Shutdown::Both);
     }
+    #[cfg(target_os = "linux")]
     if let Some(path) = &args.pane_mount_manifest {
         install_pane_mounts(path)?;
+    }
+    #[cfg(not(target_os = "linux"))]
+    if args.pane_mount_manifest.is_some() {
+        return Err("Pane FD mounts are supported only on Linux".into());
     }
     let program = CString::new(args.command[0].as_bytes())?;
     let arguments = args
@@ -149,6 +159,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     Err(format!("failed to exec {}: {}", args.command[0], failure).into())
 }
 
+#[cfg(target_os = "linux")]
 fn install_pane_mounts(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     let result = (|| {
         let manifest = serde_json::from_slice::<PaneMountManifest>(&std::fs::read(path)?).map_err(

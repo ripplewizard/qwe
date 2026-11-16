@@ -19,9 +19,13 @@ use qwe_runtime::{
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
-use std::fs::{self, OpenOptions};
+use std::fs;
+#[cfg(target_os = "linux")]
+use std::fs::OpenOptions;
 use std::io::{BufRead, Read, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -90,13 +94,18 @@ struct WorkerCreateOptions<'a> {
 }
 
 struct SandboxLaunch {
-    invocation: crate::sandbox::BubblewrapInvocation,
+    invocation: SandboxInvocation,
     mount_manifest: PathBuf,
     seccomp_file: PathBuf,
     status_path: PathBuf,
     status_receiver: agent::SandboxStatusReceiver,
     control_path: Option<PathBuf>,
     control_receiver: Option<mpsc::Receiver<Result<UnixStream, String>>>,
+}
+
+struct SandboxInvocation {
+    executable: PathBuf,
+    arguments: Vec<String>,
 }
 
 struct WorkerSession {
@@ -511,6 +520,7 @@ fn start_topology_listener(
     Ok((path, receiver))
 }
 
+#[cfg(target_os = "linux")]
 fn start_pane_control_listener(
     runtime_dir: &Path,
 ) -> std::io::Result<(PathBuf, mpsc::Receiver<Result<UnixStream, String>>)> {
@@ -549,6 +559,7 @@ fn start_pane_control_listener(
     Ok((path, receiver))
 }
 
+#[cfg(target_os = "linux")]
 fn prepare_sandbox_launch(
     runtime_dir: &Path,
     program: &str,
@@ -640,7 +651,10 @@ fn prepare_sandbox_launch(
             pane_fd_pins: Some(&pins),
         },
     ) {
-        Ok(invocation) => invocation,
+        Ok(invocation) => SandboxInvocation {
+            executable: invocation.executable,
+            arguments: invocation.arguments,
+        },
         Err(failure) => {
             let _ = fs::remove_file(&mount_manifest);
             let _ = fs::remove_file(&seccomp_file);
@@ -671,6 +685,17 @@ fn prepare_sandbox_launch(
         control_path,
         control_receiver,
     })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn prepare_sandbox_launch(
+    _runtime_dir: &Path,
+    _program: &str,
+    _arguments: &[String],
+    _profile: &SandboxProfile,
+    _hard_scope_available: bool,
+) -> Result<SandboxLaunch, Box<dyn std::error::Error>> {
+    Err("Bubblewrap sandboxing is supported only on Linux".into())
 }
 
 fn add_sandbox_launcher_args(command: &mut CommandBuilder, sandbox: &SandboxLaunch) {

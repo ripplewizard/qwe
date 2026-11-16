@@ -1,7 +1,11 @@
 use clap::{Parser, ValueEnum};
+#[cfg(target_os = "linux")]
 use qwe_core::SANDBOXED_PANE_SHUTDOWN_GRACE_MS;
-use qwe_runtime::{LandlockPolicy, PaneControlDecoder, PaneControlMessage, apply_landlock};
+use qwe_runtime::{LandlockPolicy, apply_landlock};
+#[cfg(target_os = "linux")]
+use qwe_runtime::{PaneControlDecoder, PaneControlMessage};
 use std::ffi::CString;
+#[cfg(target_os = "linux")]
 use std::io;
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]
