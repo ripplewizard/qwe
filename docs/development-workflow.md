@@ -1,13 +1,17 @@
 # Development Workflow
 
 Status: Active
-Date: 2026-11-04
+Date: 2026-11-16
 
 ## Branches
 
 - `poc`: unified read-only archive of POC history and evidence.
 - `dev`: integration branch for production development.
+- `main`: tested release branch and the only source of stable tags.
 - `codex/<topic>`: short-lived implementation branches.
+
+Gitee is a source mirror only. Pull requests, merge decisions, releases, and
+release assets are managed on GitHub.
 
 The POC branch is checked out separately at
 `/Users/huangjian/project/uranus/bianca-poc`. Run POC-wide discovery and
@@ -20,10 +24,11 @@ continue feature work on them.
 
 ## Change Flow
 
-1. Branch from `dev` as `codex/<topic>`.
+1. Branch from `dev` as `codex/<topic>` and open a pull request to `dev`.
 2. Keep changes within one component or decision boundary.
 3. Update tests and authoritative docs with behavior changes.
-4. Run `just check-qwe`.
+4. Require hosted Ubuntu/macOS CI, dependency policy, and sandbox fault
+   injection where applicable.
 5. Run `just protocol-check` for protocol, state, or test-contract changes.
 6. Run `just t12-host-smoke` and `just resilience-smoke` for ownership,
    persistence, concurrency, or protocol changes.
@@ -31,7 +36,11 @@ continue feature work on them.
    reconciliation changes.
 8. Update the state matrices and machine-readable protocol schema together for
    contract changes.
-9. Merge back to `dev` only after validation.
+9. Merge to `dev` only after required checks pass.
+10. Complete the release-candidate gate on `dev`, then open `dev` to `main`.
+11. Merge to `main` only after the release gate passes.
+12. Create the stable `v*` tag from the resulting `main` commit. The release
+    workflow rejects tags whose commit is not an ancestor of `main`.
 
 ## Continuous Integration
 
@@ -45,9 +54,10 @@ The complete Fedora release gate is a separate manual workflow,
 systemd user manager. Hosted Ubuntu coverage never substitutes for Fedora
 release qualification.
 
-Release artifacts must be built from a clean commit and pass the Fedora
-workflow before publication. Never upload an ignored local `dist/` archive
-whose manifest reports a different source commit or `source_dirty: true`.
+Release artifacts must be built from a clean commit reachable from `main` and
+pass the Fedora workflow before formal publication. Never upload an ignored
+local `dist/` archive whose manifest reports a different source commit or
+`source_dirty: true`.
 
 ## Commit Rules
 
