@@ -47,6 +47,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Check dependency policy
+        if: runner.os == 'Linux'
         uses: EmbarkStudios/cargo-deny-action@v2
 
       - name: Run sandbox fault injection
