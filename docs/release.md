@@ -1,6 +1,6 @@
 # V0 Release
 
-Status: Linux-first V0 released; v0.2.4 published; public macOS
+Status: Linux-first V0 released; v0.2.5 release candidate; public macOS
 deferred post-V0
 Date: 2026-11-06
 Updated: 2026-11-16
@@ -152,8 +152,8 @@ self-signed profiles before contacting Apple.
 - Stage 6 has a clean `v0.1.1` release candidate and passing local Fedora
   release gate. Dedicated-runner, publication, pilot, and patch-release gates
   remain open.
-- `dev` contains the published [QWE 0.2.4](releases/v0.2.4.md) release with
-  portable checksum metadata and hosted publication evidence.
+- `dev` is preparing [QWE 0.2.5](releases/v0.2.5.md) with expanded usage
+  documentation and completed sandbox adversarial/fault testing.
 - Independent manual acceptance is recorded in
   [V0 Linux Manual Acceptance](v0-linux-manual-acceptance.md).
 - Linux V0 is published as supported; macOS remains local/experimental.

@@ -14,23 +14,111 @@ macOS ARM64 remains local/experimental.
   it from source, then start the systemd user service.
 - [Usage](USAGE.md): Sessions, Attach/detach, agent execution and capabilities,
   Leases, resources, credentials, and teardown.
-- [QWE 0.2.4 notes](docs/releases/v0.2.4.md): current `dev` release with
-  portable checksum metadata and hosted versioned publishing.
-- [QWE 0.2.3 notes](docs/releases/v0.2.3.md): published candidate; checksum
-  filename path was not portable.
-- [QWE 0.2.2 notes](docs/releases/v0.2.2.md): superseded pre-publication
-  candidate.
-- [QWE 0.2.1 notes](docs/releases/v0.2.1.md): superseded pre-publication
-  candidate.
-- [QWE 0.2.0 notes](docs/releases/v0.2.0.md): superseded pre-publication
-  candidate.
-- [QWE 0.1.1 notes](docs/releases/v0.1.1.md): historical Stage 6 release
-  candidate; publication and pilot gates remain external.
+- [QWE 0.2.5 notes](docs/releases/v0.2.5.md): current Linux x86_64 release
+  with expanded usage documentation and sandbox test hardening.
 - [Release](docs/release.md): supported platforms, package contract, and known
   limitations.
 
 Stable releases live on the GitHub `main` branch and are tagged. The `dev`
 branch is the integration branch for the next release.
+
+## Quick Start
+
+### 1. Install
+
+Download the current Linux x86_64 archive and checksum from
+[GitHub Releases](https://github.com/ripplewizard/qwe/releases), verify it, then
+run:
+
+```sh
+tar -xzf qwe-0.2.5-linux-x86_64.tar.gz
+cd qwe-0.2.5-linux-x86_64
+./install.py
+```
+
+For source builds, Ubuntu AppArmor setup, upgrades, and uninstall instructions,
+see [INSTALL.md](INSTALL.md).
+
+### 2. Start the service
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now qwe.service
+export QWE_SOCKET="${XDG_RUNTIME_DIR}/qwe/qwe.sock"
+qwe --socket "$QWE_SOCKET" ping
+```
+
+`ping` returns `{"daemon":"ok"}` when the service is ready.
+
+### 3. Create and attach a Session
+
+```sh
+qwe --socket "$QWE_SOCKET" session create demo sh
+qwe --socket "$QWE_SOCKET" session attach demo
+```
+
+Press `Ctrl-]` to detach without stopping the Session. Re-run `session attach`
+to restore the terminal snapshot and live output.
+
+### 4. Inspect and control work
+
+```sh
+qwe --socket "$QWE_SOCKET" status
+qwe --socket "$QWE_SOCKET" session status demo
+qwe --socket "$QWE_SOCKET" task history
+qwe --socket "$QWE_SOCKET" session snapshot demo
+```
+
+`session snapshot` is diagnostic and bounded. It is not an unbounded terminal
+replay.
+
+### 5. Use multiple Panes
+
+```sh
+qwe --socket "$QWE_SOCKET" lease claim demo alice --ttl-ms 60000
+qwe --socket "$QWE_SOCKET" --owner alice pane create demo sh --generation 1
+qwe --socket "$QWE_SOCKET" session compose demo
+```
+
+Use `Ctrl-A n/p` to move focus, `Ctrl-A c` to create a Pane, `Ctrl-A x` to close
+one, and `Ctrl-A [` for copy mode. See [USAGE.md](USAGE.md) for the full
+compositor and floating-Pane controls.
+
+### 6. Run an Agent command
+
+Agent execution requires a Principal-bound capability for the target Pane:
+
+```sh
+qwe --socket "$QWE_SOCKET" security bootstrap
+PRINCIPAL_ID="$(
+  qwe --socket "$QWE_SOCKET" security principal-create local-root |
+    jq -r .principal_id
+)"
+PANE_ID="$(
+  qwe --socket "$QWE_SOCKET" session status demo |
+    jq -r .pane_id
+)"
+qwe --socket "$QWE_SOCKET" security capability-issue "$PRINCIPAL_ID" \
+  agent_exec --pane-id "$PANE_ID" \
+  --output "$HOME/.config/qwe/agent.capability"
+chmod 600 "$HOME/.config/qwe/agent.capability"
+qwe --socket "$QWE_SOCKET" \
+  --capability-file "$HOME/.config/qwe/agent.capability" \
+  agent exec "$PANE_ID" /usr/bin/printf '%s\n' hello
+```
+
+Sandbox profiles, command replay/signals, PTY mode, credentials, and revocation
+are documented in [USAGE.md](USAGE.md) and [Agent Execution Model](docs/agent-execution-model.md).
+
+### 7. Stop and clean up
+
+```sh
+qwe --socket "$QWE_SOCKET" task stop TASK_ID
+systemctl --user stop qwe.service
+```
+
+QWE preserves history until an explicit teardown. Review
+[USAGE.md](USAGE.md) before deleting state under `~/.local/state/qwe`.
 
 ## Current Phase
 
