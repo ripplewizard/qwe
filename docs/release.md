@@ -1,6 +1,7 @@
 # V0 Release
 
-Status: Linux-first V0 released; public macOS deferred post-V0
+Status: Linux-first V0 released; v0.2.0 development candidate; public macOS
+deferred post-V0
 Date: 2026-11-06
 Updated: 2026-11-16
 
@@ -151,6 +152,8 @@ self-signed profiles before contacting Apple.
 - Stage 6 has a clean `v0.1.1` release candidate and passing local Fedora
   release gate. Dedicated-runner, publication, pilot, and patch-release gates
   remain open.
+- `dev` is preparing [QWE 0.2.0](releases/v0.2.0.md) with the merged Session
+  layout, Agent Execution, and Bubblewrap sandbox slices.
 - Independent manual acceptance is recorded in
   [V0 Linux Manual Acceptance](v0-linux-manual-acceptance.md).
 - Linux V0 is published as supported; macOS remains local/experimental.
@@ -167,8 +170,8 @@ A published Linux V0 archive must be built from a clean release commit and pass
 the manual Fedora release workflow in
 `.github/workflows/release-gate.yml`. The release asset is accompanied by its
 SHA-256 and release notes. Its `release.json` must report the tagged commit,
-`source_dirty: false`, the expected version/target, and hashes for all four
-executables.
+`source_dirty: false`, the expected version/target, and hashes for every
+packaged executable.
 
 Local archives under ignored `dist/` are evidence only. Do not publish one when
 its manifest refers to a different source commit or marks the source dirty.

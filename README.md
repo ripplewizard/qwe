@@ -4,8 +4,9 @@ Quick Window Environment is a lightweight, durable developer task runtime
 built around terminal sessions, process groups, task history, and explicit
 extension boundaries.
 
-Fedora Linux x86_64 is the supported V0 target. macOS ARM64 remains
-local/experimental.
+Fedora Linux x86_64 is the supported release target. Ubuntu 22.04/24.04 and
+Debian 12 x86_64 are active development and sandbox-qualification targets.
+macOS ARM64 remains local/experimental.
 
 ## Install and Use
 
@@ -13,9 +14,10 @@ local/experimental.
   it from source, then start the systemd user service.
 - [Usage](USAGE.md): Sessions, Attach/detach, agent execution and capabilities,
   Leases, resources, credentials, and teardown.
-- [QWE 0.1.1 notes](docs/releases/v0.1.1.md): current Linux x86_64 release
-  candidate; publication remains pending
-  notes; artifact publication remains a Stage 6 gate.
+- [QWE 0.2.0 notes](docs/releases/v0.2.0.md): current `dev` release candidate
+  with Session layout, Agent Execution, and Linux sandboxing.
+- [QWE 0.1.1 notes](docs/releases/v0.1.1.md): historical Stage 6 release
+  candidate; publication and pilot gates remain external.
 - [Release](docs/release.md): supported platforms, package contract, and known
   limitations.
 
@@ -24,32 +26,27 @@ branch is the integration branch for the next release.
 
 ## Current Phase
 
-Stages 0-5 and the Linux V0 release candidate are complete. Stages 7 and 8 pass
-their resource-governance and Session-layout qualification gates.
-
-Stage 6.5 accepted the shared prerequisites for one worker per Pane,
-Pane-first ResourceScope, Pane-targeted channels, and the v10-to-v11 migration.
-Stages 9.1-9.5 complete the accepted first Agent Execution Model delivery with
-`exec`, stable command handles, bounded event replay, qwed-restart recovery,
-explicit worker-loss states, Principal-bound capabilities, and administrative,
-freeze, and terminate revocation, descriptor credentials, streaming redaction,
-read-only observer push, merged PTY output, and interactive-shell foreground
-`idle`.
+Stages 0-8 and the accepted first Agent Execution delivery are complete.
+Multi-Pane layout and resource governance pass their supported-platform gates.
+Stages 9.1-9.5 provide `exec`, stable command handles, bounded replay,
+qwed-restart recovery, explicit worker-loss states, Principal capabilities,
+revocation, descriptor credentials, redaction, read-only observation, and
+merged PTY output.
 See [ADR 0032](docs/adr/0032-agent-execution-model.md) and
 [Agent Execution Model](docs/agent-execution-model.md).
 
-[ADR 0033](docs/adr/0033-bubblewrap-sandbox-adapter.md) accepts Bubblewrap as
-the first Linux sandbox backend. Core FD3, cgroup, structured PID, interactive
-PTY, and parent-death probes pass. The capability-controlled non-PTY and PTY
-`AGENT_EXEC` slice passes real qwed/worker integration tests, including
-`TIOCSTI` denial, FD3 credentials, foreground idle, and process-tree cleanup.
-The full probe also passes on Ubuntu 22.04 and Debian 12 real VMs; Ubuntu 24.04
-fails closed under its tested AppArmor/user-namespace policy.
+[ADR 0033](docs/adr/0033-bubblewrap-sandbox-adapter.md) and
+[ADR 0034](docs/adr/0034-sandboxed-pane-and-pty.md) implement the Linux
+Bubblewrap sandbox for `AGENT_EXEC` and long-lived sandboxed Panes. The current
+x86_64 matrix includes Fedora SELinux, Ubuntu AppArmor, and Debian targets.
+See [Experiment 0051](docs/experiments/0051-sandbox-pane-poc-gates.md) for the
+current evidence and fail-closed boundaries.
 
 macOS binary distribution is deferred post-V0 under ADR 0020 and limited to
-explicitly marked local self-signed packages under ADR 0019. Fedora Linux
-x86_64 remains the only supported V0 target. Other sandbox backends, Mesh,
-plugins, and remote scheduling remain out of scope until separately accepted.
+explicitly marked local self-signed packages under ADR 0019. aarch64,
+openEuler, Kylin, and Rocky are not supported or scheduled. Other sandbox
+backends, Mesh, plugins, and remote scheduling remain out of scope until
+separately accepted.
 
 Implementation follows
 [`docs/design-baseline.md`](docs/design-baseline.md).
