@@ -183,6 +183,7 @@ release completes the same Fedora evidence path. See
 [Experiment 0026](experiments/0026-stage6-adoption-baseline.md) for the current
 entry state.
 
-Pushing a version tag matching the workspace version runs the dedicated
-Fedora release gate and publishes the archive plus SHA-256 as a versioned
-GitHub release using the workflow token.
+A version tag matching the workspace version is rebuilt and checked on a
+GitHub-hosted Linux runner, then published with its SHA-256 through the
+workflow token. The complete dedicated Fedora release gate remains a separate
+manual `workflow_dispatch` gate.

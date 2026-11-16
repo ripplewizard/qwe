@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   fedora:
+    if: github.event_name == 'workflow_dispatch'
     name: Fedora x86_64 release gate
     runs-on:
       - self-hosted
@@ -114,8 +115,58 @@ jobs:
             dist/qwe-*-linux-x86_64.tar.gz
             dist/qwe-*-linux-x86_64.tar.gz.sha256
 
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    name: Build and publish GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements-protocol.txt
+
+      - name: Install protocol validation dependency
+        run: python3 -m pip install -r scripts/requirements-protocol.txt
+
+      - name: Run workspace gate
+        run: just check-qwe
+
+      - name: Build release package
+        shell: bash
+        run: |
+          set -euo pipefail
+          just release-build
+          package_json="$(just release-package)"
+          package="$(printf '%s' "$package_json" |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["package"])')"
+          archive="$(printf '%s' "$package_json" |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["archive"])')"
+          python3 tests/fixtures/release_acceptance_probe.py \
+            --package "$package" \
+            --archive "$archive"
+          sha256sum "$archive" > "$archive.sha256"
+          printf 'package=%s\narchive=%s\n' "$package" "$archive" >> "$GITHUB_ENV"
+
+      - name: Upload release-gate evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: qwe-linux-x86_64-package-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ env.archive }}
+            ${{ env.archive }}.sha256
+
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -125,7 +176,6 @@ jobs:
             python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
           tag="${GITHUB_REF_NAME}"
           test "$tag" = "v${version}"
-          archive="dist/qwe-${version}-linux-x86_64.tar.gz"
           notes="docs/releases/${tag}.md"
           test -f "$archive"
           test -f "${archive}.sha256"
