@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import signal
 import socket
 import sqlite3
@@ -14,8 +15,18 @@ import time
 from pathlib import Path
 
 
-SCHEMA_VERSION = 17
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def current_schema_version():
+    source = (ROOT / "crates/qwe-storage/src/lib.rs").read_text(encoding="utf-8")
+    match = re.search(r"pub const SCHEMA_VERSION: i64 = (\d+);", source)
+    if match is None:
+        raise RuntimeError("could not locate qwe-storage SCHEMA_VERSION")
+    return int(match.group(1))
+
+
+SCHEMA_VERSION = current_schema_version()
 
 
 def run(arguments, *, timeout=30, check=True):
