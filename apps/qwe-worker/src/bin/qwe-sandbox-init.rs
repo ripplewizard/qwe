@@ -431,3 +431,74 @@ fn main() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(arguments: &[&str]) -> Result<Args, clap::Error> {
+        Args::try_parse_from(arguments)
+    }
+
+    #[test]
+    fn parser_preserves_target_arguments_after_double_dash() {
+        let args = parse(&[
+            "qwe-sandbox-init",
+            "--workspace",
+            "/tmp",
+            "--workspace-mode",
+            "read-only",
+            "--private-tmp",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf ok",
+            "--target-option",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.command,
+            ["/bin/sh", "-c", "printf ok", "--target-option"]
+        );
+    }
+
+    #[test]
+    fn parser_rejects_missing_and_invalid_options() {
+        assert!(
+            parse(&[
+                "qwe-sandbox-init",
+                "--workspace-mode",
+                "read-only",
+                "--",
+                "/bin/true",
+            ])
+            .is_err()
+        );
+        assert!(
+            parse(&[
+                "qwe-sandbox-init",
+                "--workspace",
+                "/tmp",
+                "--workspace-mode",
+                "invalid",
+                "--",
+                "/bin/true",
+            ])
+            .is_err()
+        );
+        assert!(
+            parse(&[
+                "qwe-sandbox-init",
+                "--workspace",
+                "/tmp",
+                "--workspace-mode",
+                "read-only",
+                "--control-fd",
+                "not-a-number",
+                "--",
+                "/bin/true",
+            ])
+            .is_err()
+        );
+    }
+}

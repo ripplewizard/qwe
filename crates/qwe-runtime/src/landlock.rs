@@ -378,4 +378,30 @@ mod tests {
         assert_ne!(v5 & LANDLOCK_ACCESS_FS_IOCTL_DEV, 0);
         assert_eq!(write_access_for_abi(10), v5);
     }
+
+    #[test]
+    fn write_mask_is_monotonic_across_all_u8_abi_values() {
+        let mut previous = write_access_for_abi(1);
+        assert_ne!(previous & LANDLOCK_ACCESS_FS_WRITE_FILE, 0);
+        assert_eq!(previous & LANDLOCK_ACCESS_FS_REFER, 0);
+        assert_eq!(previous & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+        assert_eq!(previous & LANDLOCK_ACCESS_FS_IOCTL_DEV, 0);
+
+        for abi in 2..=u8::MAX as u32 {
+            let current = write_access_for_abi(abi);
+            assert_eq!(current & previous, previous, "ABI {abi}");
+            if abi == 2 {
+                assert_ne!(current & LANDLOCK_ACCESS_FS_REFER, 0);
+                assert_eq!(current & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+            }
+            if abi == 3 {
+                assert_ne!(current & LANDLOCK_ACCESS_FS_TRUNCATE, 0);
+                assert_eq!(current & LANDLOCK_ACCESS_FS_IOCTL_DEV, 0);
+            }
+            if abi == 5 {
+                assert_ne!(current & LANDLOCK_ACCESS_FS_IOCTL_DEV, 0);
+            }
+            previous = current;
+        }
+    }
 }

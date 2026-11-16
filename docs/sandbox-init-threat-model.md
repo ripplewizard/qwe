@@ -116,6 +116,12 @@ Before accepting terminal responsibilities:
   corpus; keep terminal signal and winsize coverage in real-PTY contract tests
   and avoid sleep-based assertions where event oracles are available.
 
+Current deterministic coverage includes parser failures and trailing command
+arguments, setup-failure sentinels, ABI 1-255 Landlock mask monotonicity, and
+the `openat2` path matrix for outside paths, symlink loops, missing paths, deep
+nesting, and non-directory roots. Filesystem-tree fuzzing, fault injection, and
+additional differential matrices remain open.
+
 ## 7. Dependency policy
 
 The init binary should keep direct dependencies limited to argument parsing,

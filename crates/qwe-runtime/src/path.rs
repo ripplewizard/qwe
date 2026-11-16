@@ -135,16 +135,22 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[test]
-    fn resolves_inside_and_rejects_symlink_escape() {
+    fn temporary_root(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "qwe-resolve-beneath-{}-{nonce}",
+            "qwe-resolve-beneath-{label}-{}-{nonce}",
             std::process::id()
         ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn resolves_inside_and_rejects_symlink_escape() {
+        let root = temporary_root("link-escape");
         let inside = root.join("inside");
         fs::create_dir_all(&inside).unwrap();
         let file = inside.join("file");
@@ -158,6 +164,58 @@ mod tests {
         );
         assert!(resolve_beneath(&root, &root.join("escape")).is_err());
         assert!(resolve_beneath(&root, &root.join("../outside")).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn handles_absolute_paths_inside_and_outside_the_root() {
+        let root = temporary_root("absolute");
+        let file = root.join("inside");
+        fs::write(&file, b"inside").unwrap();
+        assert_eq!(
+            resolve_beneath(&root, &file).unwrap(),
+            fs::canonicalize(&file).unwrap()
+        );
+        assert!(resolve_beneath(&root, Path::new("/etc/passwd")).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_symlink_loops_and_missing_paths() {
+        let root = temporary_root("invalid");
+        std::os::unix::fs::symlink("loop", root.join("loop")).unwrap();
+        assert!(resolve_beneath(&root, &root.join("loop")).is_err());
+        assert!(resolve_beneath(&root, &root.join("missing")).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolves_deep_nesting_without_escaping() {
+        let root = temporary_root("deep");
+        let mut relative = PathBuf::new();
+        for index in 0..64 {
+            relative.push(format!("d{index}"));
+        }
+        let deep = root.join(&relative);
+        fs::create_dir_all(&deep).unwrap();
+        let file = deep.join("file");
+        fs::write(&file, b"deep").unwrap();
+        assert_eq!(
+            resolve_beneath(&root, &file).unwrap(),
+            fs::canonicalize(&file).unwrap()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_non_directory_root() {
+        let root = temporary_root("non-directory");
+        let file = root.join("file");
+        fs::write(&file, b"file").unwrap();
+        assert_eq!(
+            resolve_beneath(&file, Path::new(".")).unwrap_err().kind(),
+            io::ErrorKind::NotADirectory
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

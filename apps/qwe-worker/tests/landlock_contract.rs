@@ -72,6 +72,33 @@ fn sandbox_init_failure_has_a_distinct_exit_code() {
 }
 
 #[test]
+fn sandbox_init_failure_never_executes_the_target() {
+    let root = TestRoot::new();
+    let marker = root.path.join("target-executed");
+    for workspace in [
+        PathBuf::from("/definitely/missing/qwe-workspace"),
+        root.path.join("x".repeat(5000)),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_qwe-sandbox-init"))
+            .arg("--workspace")
+            .arg(&workspace)
+            .arg("--workspace-mode")
+            .arg("read-only")
+            .arg("--private-tmp")
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg("printf executed > \"$1\"")
+            .arg("qwe-sandbox-init-test")
+            .arg(&marker)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(125));
+        assert!(!marker.exists(), "workspace {}", workspace.display());
+    }
+}
+
+#[test]
 fn landlock_confines_writes_while_preserving_reads_and_private_tmp() {
     if landlock_abi_version().is_err() {
         return;
