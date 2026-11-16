@@ -105,8 +105,8 @@ ID	Extension	Priority	Current Status
 E01	QWE Mesh	High	Research
 E02	Resource Controller	High	Stage 7 complete; Linux cgroup v2 and macOS monitoring implemented
 E03	Credential Broker	High	Research
-E04	Security Sandbox	Medium	Research
-E05	Agent Runtime	Medium	ADR 0032 accepted; implementation pending
+E04	Security Sandbox	Medium	Linux x86_64 implemented under ADR 0033/0034
+E05	Agent Runtime	Medium	ADR 0032 first delivery implemented
 E06	Environment Backend	Medium	Basic Definition
 E07	Terminal Backend	High	POC Required
 

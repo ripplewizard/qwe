@@ -243,18 +243,19 @@ until an experiment supplies the missing kernel or Bubblewrap facts. A
 - **D45 adopted:** denied-syscall diagnosis may use TRAP/LOG only through a
   compile-time or administrator-local debug facility. It cannot be selected by
   capability or profile.
-- **D46 adopted:** x86_64 and aarch64 profiles and tests remain separate.
+- **D46 adopted:** seccomp profiles and tests remain architecture-specific.
+  Current support and qualification are x86_64 only.
 
 ### I. Deployment
 
 - **D47 decided:** container success is not a product requirement. Containers
   normally fail closed and user documentation names the reason code.
-- **D48 policy adopted; target scope pending product:** the matrix has separate
-  `AGENT_EXEC` and `sandboxed_pane` capability columns and is split by CPU
-  architecture. Tier 1 currently contains Ubuntu 22.04, Ubuntu 24.04 AppArmor,
-  Debian 12, and Fedora 44 SELinux enforcing. Tier 2 evaluation order is
-  openEuler, Kylin, then Rocky. No distribution is publicly claimed as
-  sandboxed-Pane supported before its evidence is archived.
+- **D48 decided:** the active sandbox qualification scope is Linux x86_64 on
+  Fedora and the Ubuntu/Debian families. Tier 1 evidence includes Fedora 44
+  SELinux enforcing, Ubuntu 22.04, Ubuntu 24.04 with the packaged AppArmor
+  path, and Debian 12. aarch64, openEuler, Kylin, and Rocky are not supported
+  or scheduled in the current milestone. Public release support still requires
+  the complete release gate for each claimed target.
 - **D49 decided:** macOS remains Linux-only sandbox unsupported.
 - **D50 decided:** VM, OCI, and external providers require separate ADRs.
 
@@ -287,8 +288,8 @@ P1-P6 evidence is recorded in
   profile, and nested refinement path are complete.
 - Sandboxed Pane capability, shim, creation, persistence, output filtering,
   audited input/resize, lifecycle, and pidfd identity are implemented.
-- D12 and D25 are resolved. aarch64 and OEM distribution expansion remain
-  outside the current product slice; D48 target scope remains a product input.
+- D12, D25, and D48 are resolved. Current scope is Fedora and Ubuntu/Debian on
+  x86_64; aarch64, openEuler, Kylin, and Rocky are not supported or scheduled.
 
 Current distribution results and release scope are maintained only in
 [Experiment 0051](../experiments/0051-sandbox-pane-poc-gates.md).
@@ -301,9 +302,8 @@ Current distribution results and release scope are maintained only in
 - The shim becomes a focused TCB with fuzzing and dependency review.
 - Restricted terminal output trades some terminal features for resistance to
   output-to-input injection.
-- D12 and D25 no longer block protocol scaffolding or Pane-exit/revocation
-  implementation. D48 target scope remains a product input to the public
-  distribution matrix.
+- D12, D25, and D48 no longer block implementation. Public distribution claims
+  remain gated per target by complete release evidence.
 
 ## References
 

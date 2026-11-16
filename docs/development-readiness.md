@@ -235,8 +235,8 @@ release boundary is:
   Panes remain available.
 - The oldest supported Bubblewrap backend keeps `AGENT_EXEC` compatibility but
   exposes sandboxed-Pane capability as unavailable.
-- aarch64 and OEM distribution expansion remain open. D48 target scope is still
-  a product input.
+- aarch64, openEuler, Kylin, and Rocky are not supported or scheduled. D48 is
+  resolved in favor of Fedora and Ubuntu/Debian on x86_64.
 
 The remaining implementation boundaries are deferred in ADR 0034: additional
 named seccomp profiles, Landlock-only fallback, VM/OCI backends, `shell_exec`,

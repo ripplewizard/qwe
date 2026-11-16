@@ -266,7 +266,7 @@ current Linux x86_64 product slice. The established invariants remain: shim
 stacking is the refinement mechanism after Landlock, and socket denial affects
 new sockets only.
 
-Further distribution and test expansion is deferred until product scope
-selects the target environments. The open candidates are aarch64,
-openEuler/Kylin/Rocky, additional named seccomp profiles, Landlock-only
-fallback, and VM/OCI backends.
+Product scope now selects Fedora and the Ubuntu/Debian families on x86_64.
+aarch64, openEuler, Kylin, and Rocky are not supported or scheduled. Further
+test expansion for additional named seccomp profiles, Landlock-only fallback,
+and VM/OCI backends remains deferred.

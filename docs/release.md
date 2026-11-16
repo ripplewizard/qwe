@@ -2,6 +2,7 @@
 
 Status: Linux-first V0 released; public macOS deferred post-V0
 Date: 2026-11-06
+Updated: 2026-11-16
 
 ## Supported Platform Matrix
 
@@ -11,8 +12,11 @@ V0 qualification currently targets these native development platforms:
 |---|---|---|---|---|
 | macOS ARM64 | Experimental local self-signed only; public release deferred post-V0 | launchd user agent | libproc monitoring, explicitly monitored | macOS Keychain |
 | Fedora Linux x86_64 | Supported for V0 | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
+| Ubuntu 22.04 / 24.04 x86_64 | Active development and sandbox qualification; promote only after the complete release gate | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
+| Debian 12 x86_64 | Active development and sandbox qualification; promote only after the complete release gate | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
 | macOS x86_64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
 | Linux ARM64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
+| openEuler, Kylin, Rocky | Not supported or scheduled in the current milestone | unsupported claim | unsupported claim | unsupported claim |
 | Other operating systems | Unsupported in V0 | unsupported claim | unsupported claim | unsupported claim |
 
 The matrix describes tested targets, not cross-compilation promises. A target

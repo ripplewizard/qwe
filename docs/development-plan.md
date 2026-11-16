@@ -557,10 +557,11 @@ profile refinement, lifecycle authority, and pidfd-backed identity.
 Current behavior, distribution evidence, and the release boundary have one
 authoritative detail page:
 [Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md). Deferred work
-includes aarch64 and OEM distribution qualification, additional named seccomp
-profiles, Landlock-only fallback, VM/OCI backends, `shell_exec`, cross-Pane
-orchestration, persistent history, environment mutation, and host management.
-D48 target scope remains a product input.
+includes additional named seccomp profiles, Landlock-only fallback, VM/OCI
+backends, `shell_exec`, cross-Pane orchestration, persistent history,
+environment mutation, and host management. D48 is resolved in favor of Fedora
+and Ubuntu/Debian on x86_64; aarch64, openEuler, Kylin, and Rocky are not
+supported or scheduled.
 
 ## Test and Delivery Gates
 

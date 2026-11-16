@@ -193,7 +193,8 @@ distribution results, and release boundary are recorded in
 [Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md) and
 [Test Matrices](test-matrices.md).
 
-Deferred work is unchanged: aarch64 and openEuler/Kylin/Rocky qualification,
-additional named seccomp profiles, Landlock-only fallback, VM/OCI backends,
-`shell_exec`, cross-Pane orchestration, persistent history, environment
-mutation, and host management. D48 target scope remains a product input.
+Deferred work is unchanged: additional named seccomp profiles, Landlock-only
+fallback, VM/OCI backends, `shell_exec`, cross-Pane orchestration, persistent
+history, environment mutation, and host management. D48 is resolved: current
+qualification is Fedora and Ubuntu/Debian on x86_64; aarch64, openEuler, Kylin,
+and Rocky are not supported or scheduled.
