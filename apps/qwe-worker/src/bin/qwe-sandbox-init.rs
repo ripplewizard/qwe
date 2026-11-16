@@ -45,6 +45,7 @@ fn run(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         private_tmp: args.private_tmp,
     })?;
     harden_process()?;
+    qwe_runtime::check_sandbox_fault("after_dumpability")?;
     unsafe {
         std::env::set_var("QWE_LANDLOCK_ABI", abi.to_string());
     }
@@ -63,6 +64,7 @@ fn run(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         .map(|value| value.as_ptr())
         .collect::<Vec<_>>();
     pointers.push(std::ptr::null());
+    qwe_runtime::check_sandbox_fault("before_exec")?;
     unsafe {
         libc::execvp(program.as_ptr(), pointers.as_ptr());
     }

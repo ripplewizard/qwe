@@ -593,6 +593,10 @@ check-qwe:
 supply-chain-check:
     cargo deny check
 
+sandbox-fault-injection-check:
+    cargo test -p qwe-worker --features sandbox-fault-injection \
+      --test sandbox_fault_injection_contract -- --nocapture
+
 stage6-shared-prerequisites-spike panes="4":
     cargo build -p qwe-worker -p qwed --bins
     python3 spikes/stage6.4/shared_prerequisites_spike.py \

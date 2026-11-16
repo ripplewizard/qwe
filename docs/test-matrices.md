@@ -230,6 +230,7 @@ for the first `AGENT_EXEC` slice and Experiment 0051 for the sandboxed Pane.
 | SANDBOX-056 | Property-test Landlock write masks for ABI 1 through 255, proving monotonic addition of `REFER`, `TRUNCATE`, and device `IOCTL` at their ABI thresholds |
 | SANDBOX-057 | Reject malformed sandbox-init options, preserve target arguments after `--`, and prove setup failures including overlong workspace paths exit 125 without executing a sentinel target |
 | SANDBOX-058 | Fuzz arbitrary non-UTF-8 path bytes through `openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)` against relative symlinks, escaping symlinks, loops, and deep trees, requiring no panic and no out-of-root result |
+| SANDBOX-059 | In a feature-gated test build, inject failures after no-new-privileges, ruleset creation, each path rule, dumpability hardening, and immediately before exec; require exit 125 and no sentinel execution at every stage |
 
 ## Core Object Model
 

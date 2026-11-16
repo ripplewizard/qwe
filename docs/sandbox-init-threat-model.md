@@ -120,8 +120,10 @@ Current deterministic coverage includes parser failures and trailing command
 arguments, setup-failure sentinels, ABI 1-255 Landlock mask monotonicity, and
 the `openat2` path matrix for outside paths, symlink loops, missing paths, deep
 nesting, and non-directory roots. `path_resolution` fuzzes arbitrary non-UTF-8
-input against a symlink/loop/deep tree. Fault injection and additional
-differential matrices remain open.
+input against a symlink/loop/deep tree. Feature-gated fault injection covers
+failure after no-new-privileges, ruleset creation, each path rule, dumpability
+hardening, and immediately before exec. Additional differential matrices
+remain open.
 
 On 2026-11-16, `path_resolution` completed 10,000 local nightly runs without a
 crash or counterexample.

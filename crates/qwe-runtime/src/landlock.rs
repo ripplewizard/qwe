@@ -217,6 +217,7 @@ pub fn apply(policy: &LandlockPolicy<'_>) -> Result<u32, LandlockError> {
             source: io::Error::last_os_error(),
         });
     }
+    inject_fault("after_no_new_privs")?;
 
     let ruleset = RulesetAttr {
         handled_access_fs: write_access,
@@ -236,13 +237,17 @@ pub fn apply(policy: &LandlockPolicy<'_>) -> Result<u32, LandlockError> {
         });
     }
     let ruleset = unsafe { std::fs::File::from_raw_fd(ruleset_fd as i32) };
+    inject_fault("after_ruleset")?;
 
     if policy.private_tmp {
         allow_write_path(&ruleset, Path::new("/tmp"), write_access)?;
+        inject_fault("after_tmp_rule")?;
     }
     allow_write_path(&ruleset, Path::new("/dev"), write_access)?;
+    inject_fault("after_dev_rule")?;
     if policy.workspace_read_write {
         allow_write_path(&ruleset, policy.workspace, write_access)?;
+        inject_fault("after_workspace_rule")?;
     }
 
     if unsafe { libc::syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset.as_raw_fd(), 0_u32) } < 0 {
@@ -304,6 +309,17 @@ fn allow_write_path(
         });
     }
     Ok(())
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn inject_fault(stage: &'static str) -> Result<(), LandlockError> {
+    crate::check_sandbox_fault(stage).map_err(|source| LandlockError::Syscall {
+        operation: stage,
+        source,
+    })
 }
 
 #[cfg(all(

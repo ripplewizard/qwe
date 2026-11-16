@@ -49,6 +49,12 @@ jobs:
       - name: Check dependency policy
         uses: EmbarkStudios/cargo-deny-action@v2
 
+      - name: Run sandbox fault injection
+        if: runner.os == 'Linux'
+        run: >
+          cargo test -p qwe-worker --features sandbox-fault-injection
+          --test sandbox_fault_injection_contract -- --nocapture
+
       - name: Run workspace tests
         run: cargo test --workspace
 

@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+sandbox-fault-injection = ["qwe-runtime/fault-injection"]
+
 [dependencies]
 clap.workspace = true
 getrandom.workspace = true

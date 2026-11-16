@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use thiserror::Error;
 
 mod cgroup;
+mod fault_injection;
 mod landlock;
 mod path;
 mod process;
@@ -15,6 +16,7 @@ pub use cgroup::{
     read_cpu_usage_microseconds, read_effective_resource_policy, read_enforcement_event,
     read_resource_usage, stop_pane_scope, stop_systemd_scope, systemd_scope_available,
 };
+pub use fault_injection::{SANDBOX_FAULT_ENV, check_sandbox_fault};
 pub use landlock::{
     LandlockError, LandlockPolicy, abi_version as landlock_abi_version, apply as apply_landlock,
 };
