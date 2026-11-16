@@ -75,7 +75,13 @@ def main() -> int:
         if not path.is_file():
             raise SystemExit(f"release input is missing: {path}")
 
-    notes = args.notes.read_text(encoding="utf-8")
+    checksum_text = args.checksum.read_text(encoding="utf-8")
+    checksum_value = checksum_text.split(maxsplit=1)[0]
+    notes = (
+        args.notes.read_text(encoding="utf-8").rstrip()
+        + "\n\n## Published archive\n\n"
+        + f"`{args.archive.name}` SHA-256: `{checksum_value}`\n"
+    )
     assets = [
         (args.archive.name, args.archive.read_bytes()),
         (args.checksum.name, args.checksum.read_bytes()),

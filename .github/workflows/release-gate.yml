@@ -157,7 +157,9 @@ jobs:
           python3 tests/fixtures/release_acceptance_probe.py \
             --package "$package" \
             --archive "$archive"
-          sha256sum "$archive" > "$archive.sha256"
+          archive_dir="$(dirname "$archive")"
+          archive_name="$(basename "$archive")"
+          (cd "$archive_dir" && sha256sum "$archive_name") > "$archive.sha256"
           printf 'package=%s\narchive=%s\n' "$package" "$archive" >> "$GITHUB_ENV"
 
       - name: Upload release-gate evidence
