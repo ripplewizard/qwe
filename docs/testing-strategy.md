@@ -1,7 +1,8 @@
 # Testing Strategy
 
-Status: Active; Stage 5 release gates in progress
-Date: 2026-11-06
+Status: Active; Stage 7 and Stage 8 gates complete; Agent Execution first
+delivery and Linux sandboxed-Pane gates complete
+Date: 2026-11-16
 
 ## Test Layers
 
@@ -73,8 +74,9 @@ Release-mode and long-duration measurements are required before V0.
 dedicated Attach channel. It checks the handshake,
 structured snapshot, exclusive-attach rejection, raw input/output framing,
 stream-offset continuity, resize ordering, immediate detach, reconnect,
-`read_only` rejection, unknown-frame rejection, and version rejection. It also
-drives the interactive CLI through the same channel.
+qwed-owned `read_only` observer acceptance and write rejection, unknown-frame
+rejection, and version rejection. It also drives the interactive CLI through
+the same channel.
 
 The gate passes on Linux x86_64 and macOS ARM64. The channel probe also opens a
 slow client, drives output past the 1 MiB queue, verifies
@@ -191,7 +193,7 @@ The release probes exercise:
 - Native service-template rendering with no checkout-path dependency.
 - In-place reinstall, SQLite preservation, qwed crash/restart, and worker/task
   adoption through the installed sibling executables.
-- SQLite v9-to-v10 startup migration without resetting state.
+- SQLite v9-to-current startup migration without resetting state.
 - Eight independent Sessions, real Attach handshakes and snapshots, aggregate
   RSS sampling, and a configurable sustained soak.
 - On Linux, the installed systemd unit, binary reinstall, supervisor
@@ -203,12 +205,119 @@ the final human gate. Public macOS distribution is a separate post-V0 strict
 gate: Developer ID signing, notary acceptance, and Gatekeeper assessment must
 pass; a local certificate or ad-hoc signature is not accepted as public trust.
 
+Stage 6 adds two continuous feedback loops. Hosted Linux and macOS jobs repeat
+formatting, Clippy, workspace tests, protocol validation, and release builds on
+every integration change. A dedicated Fedora x86_64 runner separately repeats
+the complete `just release-gate`. The hosted jobs prove portability of the
+source checks; only the Fedora runner can produce supported V0 release
+evidence.
+
+`just container-smoke` runs the same real Session/input/snapshot/restart smoke
+inside rootless Podman images. It is a compatibility probe, not a substitute
+for installed-systemd, cgroup, migration, or manual release acceptance.
+
+Stage 7 extends resource testing around the accepted Pane-first ResourceScope:
+controller availability, profile validation, Pane scope startup and cleanup
+under all crash paths, detached-job teardown, bounded enforcement events,
+8/16-Session pressure runs, and a five-hour operation-dense qualification on real
+installed-systemd Linux targets. SHARED-002 through SHARED-006 in the
+[Test Matrices](test-matrices.md) cover multi-Pane inventory, Pane-addressed
+Attach, schema v11, observer authorization, and complete scope cleanup.
+Container compatibility tests cannot substitute for these gates.
+
+The executable Stage 7 gates are `stage7-pressure`, `stage7-multi-pane`,
+`qwed-restart-volume`, `stage7-reconciliation-scale`, `stage7-teardown-scale`,
+`stage7-soak-short`, `stage7-soak`,
+`stage7-qualification-node`, and `stage7-qualification-matrix`. Qualification
+output records distribution and VM reachability explicitly; unavailable
+targets are `blocked`, never `pass`.
+
 Until Developer ID is available, ADR 0019 permits a dedicated local
 self-signed package tier. It signs all four executables through an isolated
 Keychain, records `local-self-signed` and `public_trust: false`, adds the
 `-local` package suffix, and is rejected by the public gate before any Apple
 notary submission. `just macos-local-signing-smoke` separately verifies the
 create, sign, inspect, remove, and Keychain-search-list restoration lifecycle.
+
+Stage 8 slice 1 adds `just stage8-layout`. It creates a two-Pane Session and
+checks deterministic tiling, Pane-targeted Attach, concurrent exclusive
+channels to distinct Panes, focused input, compositor rendering, focus
+switching, and terminal reset on detach. LAYOUT-006 additionally restarts qwed
+and verifies durable layout order and focus. LAYOUT-007 and LAYOUT-008 exercise
+relative split/close and focus-preserving reorder through the interactive
+compositor. LAYOUT-009 and LAYOUT-010 verify focused-Pane visible-screen copy
+with an explicit clipboard provider and confirm menu keys never reach the PTY.
+LAYOUT-011 creates a worker-backed fixed floating Pane, verifies overlay focus
+and input, and closes it through normal teardown. LAYOUT-012 verifies keyboard
+move/resize and persisted floating bounds. LAYOUT-013 injects SGR mouse
+press/motion/release into a real compositor PTY and verifies title-row dragging.
+LAYOUT-014 drags the floating bottom-right resize handle and verifies persisted
+dimensions. LAYOUT-015 verifies click-to-raise on overlapping floating Panes.
+LAYOUT-016 verifies bounded scrollback copy and LAYOUT-017 verifies mouse
+selection in copy mode.
+
+Stages 9.1-9.5 add `just stage9-agent-exec`. It starts explicit non-PTY and PTY
+commands in a real Pane worker and verifies exit codes, split stdout/stderr,
+signals, spawn failure, deadlines, wait timeout, bounded replay gaps, CLI
+access, qwed restart, Pane-cgroup inheritance, explicit `lost` after worker
+loss, capability scope,
+expiry and ancestor invalidation, administrative preservation, freeze
+escalation, low-trust denial, token non-persistence, descriptor credential
+delivery, split-chunk redaction, credential failure closure, read-only
+multi-frame observer push, merged PTY output, and interactive-shell foreground
+idle. The recipe is the current evidence for AGENT-001 through AGENT-012.
+
+ADR 0033 adds `just bubblewrap-poc`, a Linux-only Rust contract test suite. It
+skips when Bubblewrap is unavailable and currently covers SANDBOX-001 through
+SANDBOX-003: FD3/cgroup/structured child PID, PTY resize/signal/job-control
+semantics, and synchronized `--die-with-parent`. `just stage10-sandbox` covers
+SANDBOX-004 through SANDBOX-012 through qwed, worker, and Bubblewrap, including
+capability authorization, backend failure, workspace, protected paths, home,
+tmp, network policy, sandboxed PTY, `TIOCSTI` denial, qwed restart, worker loss,
+Pane teardown, the content-hashed `strict` named seccomp denylist, and rejection
+of a backend missing a production-required option. It explicitly confirms that
+a writable workspace can persist a credential and reports the corresponding
+risk. It also rejects protected-path hardlink aliases including those reached
+through a symlinked protected directory, verifies
+`/proc/<pid>/root` cannot escape the mount policy, and checks abstract Unix
+socket isolation. `just landlock-poc` separately verifies write confinement and
+read/private tmp preservation; Stage 10 confirms the ABI is applied through the
+full Bubblewrap process chain and fails capability issue when the init helper
+is missing. It also verifies that a backend failure followed by repair is
+observed by the next capability issue without restarting qwed or the worker.
+`just sandbox-container-matrix` verifies fail-closed behavior on Ubuntu 22.04,
+Ubuntu 24.04, and Debian 12 when Podman disallows Bubblewrap's nested mount/PID
+setup.
+
+`just sandbox-vm-matrix` uses the existing rootless QEMU lab. Ubuntu 22.04 and
+Debian 12 pass the complete Stage 10 probe. Default Ubuntu 24.04 rejects user
+ID mapping under the system-wide AppArmor/userns policy, and qwed must fail
+closed.
+`just sandbox-apparmor-vm` installs the packaged path-scoped Bubblewrap profile
+on Ubuntu 24.04, verifies the global restriction remains enabled, and passes
+the complete Stage 10 probe.
+`just sandbox-landlock-vm ubuntu2404` runs the init directly against Landlock
+ABI 4 and verifies `REFER` rename denial and `TRUNCATE` denial outside allowed
+write roots.
+The same recipe on Fedora 44 verifies Landlock ABI 7 `IOCTL_DEV`: `/dev/null`
+ioctls remain usable and a char-device node outside allowed write roots is
+denied.
+`just sandbox-selinux-vm` runs the complete probe on Fedora 44 and requires
+SELinux to remain `Enforcing`; the externally managed VM target and SSH config
+are supplied with `QWE_SELINUX_SSH_TARGET` and `QWE_SELINUX_SSH_CONFIG`.
+`just sandbox-bubblewrap-oldest-vm-matrix`
+builds the pinned Bubblewrap 0.5.0 source and runs the applicable probe on
+Ubuntu 22.04, Ubuntu 24.04 with AppArmor, and Debian 12. Sandboxed Pane is
+reported unavailable because Bubblewrap 0.5 has no FD bind.
+`just sandbox-userns-disabled-vm-matrix` temporarily disables userns on Ubuntu
+22.04, Ubuntu 24.04, and Debian 12, requires classified `userns_disabled`,
+restores sysctls afterward, and verifies an ordinary Pane command still
+completes.
+`just sandbox-systemd-properties` verifies Bubblewrap RW workspace mounts under
+the packaged user-service hardening properties.
+`just sandbox-systemd-service-smoke` exercises the full qwed service lifecycle:
+sandbox Agent execution, crash recovery, binary replacement, restart, and
+teardown.
 
 ## ADR 0012-0015 Contract Matrices
 

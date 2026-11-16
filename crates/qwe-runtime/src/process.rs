@@ -1,5 +1,86 @@
 use qwe_core::ProcessIdentity;
 use std::io;
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+pub struct PidFd {
+    descriptor: OwnedFd,
+}
+
+#[cfg(target_os = "linux")]
+impl PidFd {
+    pub fn open(pid: u32) -> io::Result<Self> {
+        let descriptor = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0_u32) };
+        if descriptor < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self {
+            descriptor: unsafe { OwnedFd::from_raw_fd(descriptor as i32) },
+        })
+    }
+
+    pub fn send_signal(&self, signal: libc::c_int) -> io::Result<()> {
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                self.descriptor.as_raw_fd(),
+                signal,
+                std::ptr::null::<libc::siginfo_t>(),
+                0_u32,
+            )
+        };
+        if result < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn is_running(&self) -> io::Result<bool> {
+        let mut descriptor = libc::pollfd {
+            fd: self.descriptor.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let result = unsafe { libc::poll(&mut descriptor, 1, 0) };
+        if result < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(result == 0 || descriptor.revents & libc::POLLIN == 0)
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+#[derive(Debug)]
+pub struct PidFd {
+    _private: (),
+}
+
+#[cfg(not(target_os = "linux"))]
+impl PidFd {
+    pub fn open(_pid: u32) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "pidfd is supported only on Linux",
+        ))
+    }
+
+    pub fn send_signal(&self, _signal: libc::c_int) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "pidfd is supported only on Linux",
+        ))
+    }
+
+    pub fn is_running(&self) -> io::Result<bool> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "pidfd is supported only on Linux",
+        ))
+    }
+}
 
 #[cfg(target_os = "linux")]
 pub fn process_identity(pid: u32) -> io::Result<ProcessIdentity> {
@@ -64,5 +145,20 @@ mod tests {
         assert_eq!(identity.pid, std::process::id());
         assert!(!identity.start_token.is_empty());
         assert!(process_matches(&identity));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pidfd_tracks_specific_process_lifetime_and_signal() {
+        let mut child = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pidfd = PidFd::open(child.id()).unwrap();
+        assert!(pidfd.is_running().unwrap());
+        pidfd.send_signal(libc::SIGTERM).unwrap();
+        let status = child.wait().unwrap();
+        assert!(!status.success());
+        assert!(!pidfd.is_running().unwrap());
     }
 }

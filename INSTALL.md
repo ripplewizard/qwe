@@ -1,6 +1,8 @@
 # Installing QWE
 
-QWE V0 is supported on Fedora Linux x86_64. See the
+QWE releases are supported on Fedora Linux x86_64. Ubuntu 22.04/24.04 and
+Debian 12 x86_64 are active development and sandbox-qualification targets.
+See the
 [supported-platform matrix](docs/release.md#supported-platform-matrix) before
 installing on other systems.
 
@@ -20,14 +22,38 @@ just --version
 systemctl --user is-system-running
 ```
 
-## Build and install V0
+## Install from a release archive
 
-Clone the stable branch and check out the current V0 tag:
+The intended supported path is a Fedora Linux x86_64 package with its published
+checksum. Stage 6 artifact publication is still pending; the commands below
+apply after the `v0.2.7` release is published.
+
+```sh
+version=0.2.7
+base="https://github.com/ripplewizard/qwe/releases/download/v${version}"
+archive="qwe-${version}-linux-x86_64.tar.gz"
+
+curl --fail --location --remote-name "$base/$archive"
+curl --fail --location --remote-name "$base/$archive.sha256"
+sha256sum --check "$archive.sha256"
+tar -xzf "$archive"
+cd "qwe-${version}-linux-x86_64"
+./install.py
+```
+
+The installer verifies every payload against `SHA256SUMS` before replacing
+executables or service assets. It does not start or enable the service.
+
+## Build from source
+
+The source-build path remains available for development and review.
+
+Clone the repository and check out the current release candidate:
 
 ```sh
 git clone git@github.com:ripplewizard/qwe.git
 cd qwe
-git checkout v0.1.0
+git checkout v0.2.7
 ```
 
 Gitee mirror:
@@ -46,16 +72,16 @@ just release-package
 The package is created under `dist/`:
 
 ```text
-dist/qwe-0.1.0-linux-x86_64.tar.gz
-dist/qwe-0.1.0-linux-x86_64/
+dist/qwe-0.2.7-linux-x86_64.tar.gz
+dist/qwe-0.2.7-linux-x86_64/
 ```
 
 Verify and install it:
 
 ```sh
-shasum -a 256 dist/qwe-0.1.0-linux-x86_64.tar.gz
-tar -xzf dist/qwe-0.1.0-linux-x86_64.tar.gz -C dist
-cd dist/qwe-0.1.0-linux-x86_64
+shasum -a 256 dist/qwe-0.2.7-linux-x86_64.tar.gz
+tar -xzf dist/qwe-0.2.7-linux-x86_64.tar.gz -C dist
+cd dist/qwe-0.2.7-linux-x86_64
 ./install.py
 ```
 
@@ -64,12 +90,26 @@ On Fedora, use `sha256sum` instead of `shasum`.
 The installer:
 
 - verifies every payload against `SHA256SUMS`;
-- installs `qwe`, `qwed`, `qwe-worker`, and `qwe-session-exec` into
-  `~/.local/bin`;
+- installs `qwe`, `qwed`, `qwe-worker`, `qwe-session-exec`, and
+  `qwe-sandbox-init` into `~/.local/bin`;
 - installs the systemd user unit into `~/.config/systemd/user`;
 - does not start or enable the service automatically.
 
 If `~/.local/bin` is not on `PATH`, add it in your shell configuration.
+
+## Ubuntu 24.04 AppArmor
+
+Ubuntu 24.04 restricts unprivileged user namespaces by default. Install the
+path-scoped Bubblewrap profile instead of disabling that global restriction:
+
+```sh
+sudo "$HOME/share/qwe/apparmor/install.sh"
+```
+
+The packaged profile allows user namespaces for Bubblewrap at
+`/usr/bin/bwrap`, `/usr/local/bin/bwrap`, and `/opt/local/bin/bwrap`. If QWE is
+configured with another `QWE_BWRAP_PATH`, an administrator must review and
+extend the profile for that exact path.
 
 ## Start the service
 
@@ -137,7 +177,8 @@ rm -f "$HOME/.config/systemd/user/qwe.service"
 rm -f "$HOME/.local/bin/qwe" \
   "$HOME/.local/bin/qwed" \
   "$HOME/.local/bin/qwe-worker" \
-  "$HOME/.local/bin/qwe-session-exec"
+  "$HOME/.local/bin/qwe-session-exec" \
+  "$HOME/.local/bin/qwe-sandbox-init"
 systemctl --user daemon-reload
 ```
 

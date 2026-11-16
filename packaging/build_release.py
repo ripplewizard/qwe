@@ -5,18 +5,30 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARIES = ("qwe", "qwed", "qwe-worker", "qwe-session-exec")
+BINARIES = (
+    "qwe",
+    "qwed",
+    "qwe-worker",
+    "qwe-session-exec",
+    "qwe-sandbox-init",
+)
+UTC = timezone.utc
 
 
 def run(arguments):
@@ -44,6 +56,21 @@ def normalized_target():
     if system == "Linux":
         return f"linux-{architecture}"
     raise SystemExit(f"unsupported release platform: {system} {machine}")
+
+
+def workspace_version():
+    cargo_toml = ROOT / "Cargo.toml"
+    with cargo_toml.open("rb") as stream:
+        if tomllib is not None:
+            return tomllib.load(stream)["workspace"]["package"]["version"]
+    text = cargo_toml.read_text(encoding="utf-8")
+    match = re.search(
+        r"(?ms)^\[workspace\.package\]\s*$.*?^version\s*=\s*\"([^\"]+)\"",
+        text,
+    )
+    if match is None:
+        raise SystemExit("workspace package version is missing from Cargo.toml")
+    return match.group(1)
 
 
 def sha256(path):
@@ -141,9 +168,7 @@ def main():
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    with (ROOT / "Cargo.toml").open("rb") as stream:
-        workspace = tomllib.load(stream)
-    version = args.version or workspace["workspace"]["package"]["version"]
+    version = args.version or workspace_version()
     target = args.target or normalized_target()
     is_macos = target.startswith("macos-")
     if args.sign_identity and not is_macos:
@@ -182,8 +207,10 @@ def main():
         staged_archive = scratch / f"{package_name}.tar.gz"
         bin_dir = package_root / "bin"
         service_dir = package_root / "share/qwe/service"
+        apparmor_dir = package_root / "share/qwe/apparmor"
         bin_dir.mkdir(parents=True)
         service_dir.mkdir(parents=True)
+        apparmor_dir.mkdir(parents=True)
 
         binary_records = {}
         for name in BINARIES:
@@ -229,6 +256,16 @@ def main():
             service_dir / "launchd/qwed-wrapper.sh",
             0o755,
         )
+        copy_file(
+            ROOT / "packaging/apparmor/qwe-bwrap",
+            apparmor_dir / "qwe-bwrap",
+            0o644,
+        )
+        copy_file(
+            ROOT / "packaging/apparmor/install.sh",
+            apparmor_dir / "install.sh",
+            0o755,
+        )
 
         version_report = json.loads(run([bin_dir / "qwe"]))
         if version_report.get("version") != version:
@@ -236,7 +273,7 @@ def main():
                 f"binary version {version_report.get('version')} does not match "
                 f"release version {version}"
             )
-        for name in ("qwed", "qwe-worker", "qwe-session-exec"):
+        for name in ("qwed", "qwe-worker", "qwe-session-exec", "qwe-sandbox-init"):
             report = run([bin_dir / name, "--version"])
             if f" {version}" not in report:
                 raise SystemExit(
@@ -276,6 +313,8 @@ def main():
                 "share/qwe/service/systemd/qwe.service",
                 "share/qwe/service/launchd/com.qwe.qwed.plist",
                 "share/qwe/service/launchd/qwed-wrapper.sh",
+                "share/qwe/apparmor/qwe-bwrap",
+                "share/qwe/apparmor/install.sh",
             ],
         }
         (package_root / "release.json").write_text(

@@ -13,13 +13,14 @@ use std::time::Duration;
 
 #[derive(Debug)]
 pub enum WorkerEvent {
-    ControlClosed { session_id: String },
+    ControlClosed { pane_id: String },
 }
 
 type PendingReply = Result<ResponseEnvelope, String>;
 
 pub struct WorkerClient {
     session_id: String,
+    pane_id: String,
     writer: Mutex<std::os::unix::net::UnixStream>,
     pending: Arc<Mutex<HashMap<String, Sender<PendingReply>>>>,
     events: Sender<WorkerEvent>,
@@ -31,6 +32,7 @@ impl WorkerClient {
     pub fn connect(
         socket: &Path,
         session_id: &str,
+        pane_id: &str,
         events: Sender<WorkerEvent>,
     ) -> Result<Arc<Self>, std::io::Error> {
         let stream = std::os::unix::net::UnixStream::connect(socket)?;
@@ -38,6 +40,7 @@ impl WorkerClient {
         let mut reader = stream.try_clone()?;
         let client = Arc::new(Self {
             session_id: session_id.to_string(),
+            pane_id: pane_id.to_string(),
             writer: Mutex::new(stream),
             pending: Arc::new(Mutex::new(HashMap::new())),
             events,
@@ -47,7 +50,7 @@ impl WorkerClient {
         let pending = Arc::clone(&client.pending);
         let events = client.events.clone();
         let closed = Arc::clone(&client.closed);
-        let session_id = client.session_id.clone();
+        let pane_id = client.pane_id.clone();
         thread::spawn(move || {
             loop {
                 let response = match read_frame::<_, ResponseEnvelope>(&mut reader) {
@@ -63,7 +66,7 @@ impl WorkerClient {
                             let _ = sender.send(Err(message.clone()));
                         }
                         let _ = events.send(WorkerEvent::ControlClosed {
-                            session_id: session_id.clone(),
+                            pane_id: pane_id.clone(),
                         });
                         return;
                     }
@@ -102,6 +105,7 @@ impl WorkerClient {
             idempotency_key: None,
             operation: operation.into(),
             payload,
+            auth_context: None,
         };
         let write_result = {
             let mut writer = self
@@ -147,7 +151,7 @@ impl WorkerClient {
     fn mark_closed(&self) {
         if !self.closed.swap(true, Ordering::SeqCst) {
             let _ = self.events.send(WorkerEvent::ControlClosed {
-                session_id: self.session_id.clone(),
+                pane_id: self.pane_id.clone(),
             });
         }
     }
@@ -156,6 +160,7 @@ impl WorkerClient {
         ProtocolErrorBody {
             code: "worker_unreachable".into(),
             message: message.into(),
+            details: None,
         }
     }
 }

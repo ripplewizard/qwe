@@ -439,18 +439,19 @@ dependencies = [
 
 [[package]]
 name = "qwe"
-version = "0.1.0"
+version = "0.2.7"
 dependencies = [
  "clap",
  "libc",
  "qwe-core",
  "qwe-protocol",
  "serde_json",
+ "vt100",
 ]
 
 [[package]]
 name = "qwe-core"
-version = "0.1.0"
+version = "0.2.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -461,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "qwe-protocol"
-version = "0.1.0"
+version = "0.2.7"
 dependencies = [
  "libc",
  "serde",
@@ -471,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "qwe-runtime"
-version = "0.1.0"
+version = "0.2.7"
 dependencies = [
  "libc",
  "portable-pty",
@@ -482,17 +483,18 @@ dependencies = [
 
 [[package]]
 name = "qwe-storage"
-version = "0.1.0"
+version = "0.2.7"
 dependencies = [
  "qwe-core",
  "rusqlite",
+ "serde_json",
  "thiserror 2.0.21",
  "uuid",
 ]
 
 [[package]]
 name = "qwe-worker"
-version = "0.1.0"
+version = "0.2.7"
 dependencies = [
  "clap",
  "getrandom 0.3.4",
@@ -503,13 +505,14 @@ dependencies = [
  "qwe-runtime",
  "serde",
  "serde_json",
+ "sha2",
  "vt100",
  "zeroize",
 ]
 
 [[package]]
 name = "qwed"
-version = "0.1.0"
+version = "0.2.7"
 dependencies = [
  "clap",
  "getrandom 0.3.4",

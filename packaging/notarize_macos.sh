@@ -76,7 +76,7 @@ package_root="$(
   exit 1
 }
 
-for binary in qwe qwed qwe-worker qwe-session-exec; do
+for binary in qwe qwed qwe-worker qwe-session-exec qwe-sandbox-init; do
   path="$package_root/bin/$binary"
   codesign --verify --strict --verbose=2 "$path"
   signature="$(codesign -dv --verbose=4 "$path" 2>&1)"

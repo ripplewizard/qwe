@@ -1,7 +1,8 @@
 # QWE Development Plan
 
-Status: Complete for Linux-first V0; post-V0 follow-ups listed
-Updated: 2026-11-06
+Status: Stage 6.5 accepted; Stages 7 and 8 complete; Agent Execution first
+delivery and Linux sandboxed-Pane implementation complete
+Updated: 2026-11-16
 
 ## Planning Assumptions
 
@@ -31,7 +32,8 @@ Implemented with current repository evidence:
   interactive CLI loop.
 - Persisted attachment authority, reclaim-token grace, detached holds, Lease
   release tombstones, and 24-hour durable idempotency.
-- 51 workspace tests pass, including five `vt100` capability probes.
+- Workspace unit and integration tests pass, including five `vt100`
+  capability probes.
 
 Post-V0 follow-ups:
 
@@ -322,6 +324,245 @@ Current implementation:
   are complete. macOS remains frozen at the experimental local self-signed
   tier under ADR 0019/0020.
 
+### Stage 6: Linux V0 Adoption and Stabilization
+
+Target: 2026-11-06 onward
+Status: In progress.
+
+- Publish a clean-source Fedora Linux x86_64 release artifact with a release
+  manifest, SHA-256, installation instructions, and release notes.
+- Run formatting, Clippy, workspace tests, protocol validation, and release
+  builds on hosted Linux and macOS runners.
+- Run the complete `just release-gate` on a dedicated Fedora x86_64
+  self-hosted runner before publishing or replacing a release artifact.
+- Collect real installation, service, Attach/TUI, resource-policy, and upgrade
+  feedback from Linux V0 users.
+- Triage pilot defects by severity and ship fixes through the `v0.1.x` patch
+  release process.
+- Promote another platform only after its complete release, service, resource,
+  migration, and manual acceptance gates pass.
+
+Exit: clean-source Linux V0 artifacts are published; core CI and the Fedora
+release gate are repeatable; the pilot has completed; no open Linux P0/P1
+defect remains; the supported-platform matrix matches tested evidence; and at
+least one `v0.1.x` patch-release path has been exercised.
+
+Stage 6 does not authorize public macOS distribution, QWE Mesh, sandboxing,
+plugin systems, remote scheduling, or a broader Linux support claim.
+
+### Stage 6.4: Shared-Prerequisites Spike
+
+Target: 2026-11-09 onward
+Status: Disposable spike complete; production qwed integration not exercised.
+
+This is a time-boxed design gate, not a production feature stage. It validates
+the proposed shared prerequisites in
+[ADR 0021](adr/0021-shared-prerequisites.md) before Stage 7 begins.
+
+- Create a disposable spike with 2-4 Pane workers in one Session.
+- Give each Pane its own PTY, VT parser, scrollback, journal, and
+  `ResourceScope`.
+- Verify qwed discovery, adoption, health, and cleanup for multiple workers in
+  one Session.
+- Verify per-Pane Linux cgroup v2 scope creation, effective-policy readback,
+  usage events, and teardown.
+- Exercise a storage-migration prototype from one Pane per Session to multiple
+  Panes while preserving an existing V0 database.
+- Verify Attach targeting for one Pane and a read-only observer path that does
+  not acquire write authority.
+- Record process count, memory, startup, recovery, and cleanup measurements.
+
+The spike must not merge production feature code. Its output is a short
+evidence report and a recommendation to accept, modify, or reject ADR 0021.
+
+Exit: the spike either validates the ADR 0021 topology and resource-scope
+interface or produces a concrete reason to revise the ADR. If it fails, Stage
+7 does not start.
+
+Evidence:
+[Experiment 0028](experiments/0028-stage6-shared-prerequisites-spike.md)
+passes the two- and four-Pane runs and classifies each requirement as spike
+complete or prototype only. The spike-local supervisor exercised discovery,
+adoption, health, Attach selection, and cleanup, but the production qwed
+multi-Pane inventory and public Attach path remain Stage 7 implementation and
+are not claimed by Stage 6.4. Stage 6.5 retained one worker per Pane, defined
+the observer as a qwed-owned read-only projection, and required complete scope
+teardown because process-group termination does not cover detached interactive
+job groups.
+
+### Stage 6.5: Shared-Prerequisites Decision Gate
+
+Target: after Stage 6.4
+Status: Complete on 2026-11-09. ADR 0021 accepted with the modifications from
+Experiment 0028.
+
+This is a documentation and decision gate. It converts spike evidence into an
+accepted contract or an explicit rejection; it does not add product features.
+
+- Accepted ADR 0021 with the evidence-driven modifications from Experiment
+  0028.
+- Selected Pane-level as the first `ResourceScope` implementation target while
+  retaining Session and Task targets in the interface.
+- Confirmed `ChannelProfile` and the opaque `AuthContext` boundary.
+- Confirmed the minimum `Principal` object and tombstone rule.
+- Triaged accepted, deferred, and rejected features for the next implementation
+  stage.
+- Selected Stage 7 first, Session Layout as the default next feature track,
+  and opt-in parallel Agent Execution only with an accepted ADR and adequate
+  staffing.
+- Recorded sandboxing as an external third-party integration and not a QWE core
+  prerequisite.
+- Updated the design baseline, technical architecture, IPC document, storage
+  migration plan, test matrices, roadmap, and this plan.
+
+Decision outcome:
+
+- One worker per Pane; qwed inventory, discovery, recovery, health, and cleanup
+  are addressed by Pane.
+- Linux enforcement starts at Pane-level ResourceScope. Session is the logical
+  parent, and the interface retains Task targets.
+- Interactive and observer attachment authority is Pane-scoped. Session-wide
+  Lease authority remains the lifecycle fence.
+- `human_observer` is a qwed-owned read-only projection over an exclusive
+  internal worker Attach channel. The worker does not need native `read_only`.
+- ResourceScope teardown must cover detached interactive job groups before the
+  scope is tombstoned.
+- ChannelProfile and opaque AuthContext, the minimum Principal tombstone model,
+  and the external-sandbox boundary are accepted.
+- Stage 7 is the next implementation track. Session Layout is the default next
+  feature track; Agent Execution may run in parallel only with an accepted ADR
+  and sufficient staffing.
+
+The v10-to-v11 invariants and migration procedure are in
+[Storage Migration](storage-migration.md). V0 runtime behavior and the canonical
+`qwe-v1` wire contract remain unchanged until Stage 7 implements the negotiated
+multi-Pane path.
+
+Exit: satisfied. ADR 0021 is accepted, the dependent documents are updated,
+SHARED-001 remains linked as spike evidence, and SHARED-002 through SHARED-006
+remain explicitly unimplemented until Stage 7.
+
+### Stage 7: Linux Resource Governance
+
+Target: Qualification
+Status: Complete; deterministic P0 gates, schema v11, multi-Pane inventory,
+RG-004 pressure, short soak, Fedora installed-systemd qualification, and
+Ubuntu 22.04/24.04 plus Debian 12 real KVM VM qualification pass. Two
+consecutive six-hour Ubuntu 22.04 runs pass the long-run gate.
+
+- Treat cgroup v2 as the Linux resource-control mechanism for Pane process
+  trees, not as a container runtime.
+- Implement the accepted Pane-first ResourceScope with a logical Session parent
+  and preserve Task targets in the interface.
+- Add reusable resource profiles and explicit requested/effective policy
+  reporting.
+- Harden controller detection, Pane scope startup, teardown, crash recovery,
+  detached-process cleanup, and residual-scope cleanup.
+- Expose bounded current/peak usage, pressure, and enforcement events.
+- Run installed-systemd resource qualification on Fedora, Ubuntu, and Debian
+  before making support claims.
+- Complete 8/16-Session short soak gates and a five-hour operation-dense
+  release qualification.
+
+Exit: the Stage 7 gates in
+[Linux Resource Governance](stage7-resource-governance.md)
+pass. Docker/Podman execution, namespaces, container images, and GPU isolation
+remain outside this stage.
+
+### Stage 8: Session Layout
+
+Target: Multi-Pane interactive composition
+Status: Complete; macOS/Linux/Podman and installed-systemd qualification pass.
+
+[ADR 0022](adr/0022-session-layout-compositor.md) selects Pane-targeted Attach
+and a client-side compositor over a second multiplexing daemon. Slice 1 adds
+`SESSION_LAYOUT`, deterministic normal-Pane tiling, Pane-addressed Attach
+channels, and `qwe session compose`. The existing default-Pane
+`qwe session attach` path remains compatible.
+
+Schema v12 and [ADR 0023](adr/0023-durable-pane-layout.md) add durable Pane
+kind, order, relative weight, z-index, and focus. `PANE_FOCUS` requires target
+Pane attachment authority and default Attach resolves persisted focus first.
+
+[ADR 0024](adr/0024-pane-composition-controls.md) adds relative insertion,
+authorized complete-order reorder, compositor split/close controls, and
+focus-preserving left/right moves. Closed and lost history records do not join
+the active layout.
+
+[ADR 0025](adr/0025-copy-and-quick-menu.md) adds Pane-scoped visible-screen
+copy, explicit clipboard outcomes, and a keyboard quick menu that consumes its
+keys before PTY input.
+
+[ADR 0026](adr/0026-fixed-floating-panes.md) adds real floating Pane workers,
+deterministic centered popup geometry, persisted z-order, focused input, and
+normal close semantics. Dragging and mouse hit-testing remain open.
+
+[ADR 0027](adr/0027-floating-bounds-and-keyboard-move.md) upgrades storage to
+v13, persists floating rectangles, and adds authorized keyboard move/resize.
+Mouse dragging and hit-testing are added by the following slice.
+
+[ADR 0028](adr/0028-mouse-drag-and-hit-testing.md) adds SGR mouse title drag,
+topmost-z hit-testing, click focus, and conditional child mouse-event routing.
+
+[ADR 0029](adr/0029-mouse-resize-handle.md) adds a floating bottom-right mouse
+resize handle using the same clamped draft and single-persist boundary.
+
+[ADR 0030](adr/0030-floating-z-order.md) adds left-click raise, persisted
+z-order, and client view/target reordering.
+
+[ADR 0031](adr/0031-scrollback-and-mouse-copy.md) adds bounded client
+scrollback and focused-Pane mouse selection.
+
+- Preserve one exclusive interactive writer per Pane.
+- Keep worker inventory, attachment authority, and terminal state in the
+  existing qwed/worker ownership model.
+- Add durable Pane kind, layout order, z-index, and split ratios without
+  rewriting stable Pane identities.
+- Add authorized split, close, focus, and reorder controls.
+- Add Pane-clipped copy, quick menu, and fixed then draggable floating Panes.
+- Keep client shortcuts and rendering outside qwed authorization.
+
+Exit: the Stage 8 gates in
+[Session Layout](stage8-session-layout.md) pass on the supported platform
+matrix.
+
+### Next: Agent Execution Model
+
+Status: [ADR 0032](adr/0032-agent-execution-model.md) accepted; first delivery
+complete through Stage 9.5.
+
+The first delivery is a fresh-process `exec` primitive with command handles and
+`wait_idle`, bounded command events and replay, read-only observation,
+capability and revocation enforcement, per-command credentials, and explicit
+recovery/lost states. It reuses Pane workers and ResourceScopes. `shell_exec`,
+external sandbox integration, cross-Pane orchestration, persistent semantic
+history, and host management remain deferred.
+
+Stages 9.1-9.5 provide command handles, bounded replay, qwed-restart recovery,
+explicit worker-loss state, Pane-scope inheritance, Principal-bound
+capabilities, revocation enforcement, descriptor credentials, redaction,
+read-only observer push, merged PTY output, and foreground shell idle.
+The remaining accepted scope is tracked in
+[Agent Execution Model](agent-execution-model.md).
+
+### Bubblewrap Sandbox Adapter
+
+Status: Complete for the current Linux x86_64 product slice.
+
+[ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md) provides the fail-closed
+`AGENT_EXEC` backend. [ADR 0034](adr/0034-sandboxed-pane-and-pty.md) provides
+the sandboxed Pane, restricted terminal policy, capability-audited input,
+profile refinement, lifecycle authority, and pidfd-backed identity.
+
+Current behavior, distribution evidence, and the release boundary have one
+authoritative detail page:
+[Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md). Deferred work
+includes additional named seccomp profiles, Landlock-only fallback, VM/OCI
+backends, `shell_exec`, cross-Pane orchestration, persistent history,
+environment mutation, and host management. D48 is resolved in favor of Fedora
+and Ubuntu/Debian on x86_64; aarch64, openEuler, Kylin, and Rocky are not
+supported or scheduled.
+
 ## Test and Delivery Gates
 
 Every merge:
@@ -343,11 +584,34 @@ Implemented Stage gates:
 just protocol-check
 just attach-e2e
 just service-config-check
+just stage8-check
+just stage9-agent-exec
+just stage9-check
+just stage10-check
+just sandbox-container-matrix
+just sandbox-vm-matrix
+just sandbox-userns-disabled-vm-matrix
+just sandbox-apparmor-vm
+just sandbox-landlock-vm
+just sandbox-landlock-matrix
+just sandbox-pane-poc
+just sandbox-selinux-vm
+just sandbox-bubblewrap-oldest-vm-matrix
+just sandbox-systemd-properties
+just sandbox-systemd-service-smoke
 just stage4-capabilities
 just stage4-check
 just credential-smoke
 just cross-uid-smoke
 ```
+
+Stage 7 adds `just stage7-check` for profiles, controller failure handling,
+Pane scope cleanup, and the long-run resource gate.
+
+Stages 9.1-9.5 add `just stage9-agent-exec` for real-process command execution,
+bounded replay, recovery, worker-loss state, capability scope, revocation,
+descriptor credentials, redaction, observer push, PTY output, and foreground
+shell idle.
 
 Post-V0:
 
@@ -370,7 +634,7 @@ services. They must not simulate successful behavior.
 Do not implement during V0:
 
 - Multiple TaskInstances per Session.
-- Read-only observers beyond the reserved Attach mode.
+- Implemented observer channels beyond the V0 reserved Attach mode.
 - Multi-node Mesh, remote scheduling, sandbox profiles, plugin systems, or
   distributed consensus.
 - Unbounded terminal replay or journal parsing.

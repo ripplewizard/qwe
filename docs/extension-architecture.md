@@ -103,10 +103,10 @@ Task
 
 ID	Extension	Priority	Current Status
 E01	QWE Mesh	High	Research
-E02	Resource Controller	High	Monitoring First
+E02	Resource Controller	High	Stage 7 complete; Linux cgroup v2 and macOS monitoring implemented
 E03	Credential Broker	High	Research
-E04	Security Sandbox	Medium	Research
-E05	Agent Runtime	Medium	Research
+E04	Security Sandbox	Medium	Linux x86_64 implemented under ADR 0033/0034
+E05	Agent Runtime	Medium	ADR 0032 first delivery implemented
 E06	Environment Backend	Medium	Basic Definition
 E07	Terminal Backend	High	POC Required
 
@@ -234,6 +234,13 @@ mTLS 只解决传输层身份和加密问题，不等于应用层授权。
 ⸻
 
 5. E02 — Resource Controller
+
+Implementation note: QWE does not need to implement Docker or a container
+runtime to provide Linux resource isolation. V0 already uses per-Session
+systemd transient scopes and cgroup v2 for memory, swap, task-count, and CPU
+limits. Stage 7 focuses on profiles, lifecycle hardening, observability,
+long-run qualification, and careful expansion of controller support. See
+[Stage 7 Resource Governance](stage7-resource-governance.md).
 
 5.1 Objective
 
@@ -472,6 +479,10 @@ Headless SSH Server 不能假设它一定可用。
 ⸻
 
 7. E04 — Security Sandbox
+
+Current decision: external Bubblewrap is the first Linux backend under
+[ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md). Sandbox profile enforcement
+remains outside resource governance and fails closed.
 
 7.1 Objective
 

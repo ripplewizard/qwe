@@ -590,11 +590,50 @@ check-qwe:
     cargo test --workspace
     python3 "{{ justfile_directory() }}/scripts/check_protocol_schema.py"
 
+supply-chain-check:
+    cargo deny check
+
+sandbox-fault-injection-check:
+    cargo test -p qwe-worker --features sandbox-fault-injection \
+      --test sandbox_fault_injection_contract -- --nocapture
+
+stage6-shared-prerequisites-spike panes="4":
+    cargo build -p qwe-worker -p qwed --bins
+    python3 spikes/stage6.4/shared_prerequisites_spike.py \
+      --worker target/debug/qwe-worker \
+      --qwed target/debug/qwed \
+      --panes {{panes}} \
+      --output target/stage6.4
+
 build-qwe:
     cargo build --workspace
 
 test-qwe:
     cargo test --workspace
+
+container-smoke images="ubuntu:22.04 ubuntu:24.04 debian:12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'container smoke must run on Linux\n' >&2
+      exit 2
+    }
+    command -v podman >/dev/null || {
+      printf 'podman is required for container smoke\n' >&2
+      exit 2
+    }
+    root="{{ justfile_directory() }}"
+    cd "$root"
+    cargo build --release --workspace
+    for image in {{ images }}; do
+      printf '==> %s\n' "$image"
+      podman pull "$image" >/dev/null
+      podman run --rm --network=none --security-opt=label=disable \
+        --volume "$root/target/release:/qwe-bin:ro" \
+        --volume "$root/tests/fixtures/container_smoke.sh:/qwe-smoke.sh:ro" \
+        --env "QWE_CONTAINER_IMAGE=$image" \
+        "$image" /bin/sh /qwe-smoke.sh
+    done
 
 protocol-check:
     cargo test -p qwe-core accepted_state_machines_match_protocol_schema
@@ -887,18 +926,675 @@ stage4-check:
     just --justfile "{{ justfile() }}" cross-uid-smoke
     just --justfile "{{ justfile() }}" stage3-idempotency
 
+stage7-resource-profile:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker --bins
+    run_root="$(mktemp -d "/tmp/qwe-stage7.XXXXXX")"
+    cleanup_stage7() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_stage7 EXIT
+    python3 "{{ fixtures }}/stage7_resource_probe.py" \
+      --qwed target/debug/qwed \
+      --qwe target/debug/qwe \
+      --socket "$run_root/client.sock"
+
+stage7-multi-pane:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker --bins
+    run_root="$(mktemp -d "/tmp/qwe-stage7-multi.XXXXXX")"
+    cleanup_stage7_multi() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/p" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_stage7_multi EXIT
+    python3 "{{ fixtures }}/stage7_multi_pane_probe.py" \
+      --qwed target/debug/qwed \
+      --socket "$run_root/client.sock"
+
+stage7-pressure:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker --bins
+    run_root="$(mktemp -d "/tmp/qwe-stage7-pressure.XXXXXX")"
+    cleanup_stage7_pressure() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/p" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_stage7_pressure EXIT
+    python3 "{{ fixtures }}/stage7_pressure_probe.py" \
+      --qwed target/debug/qwed \
+      --socket "$run_root/client.sock"
+
+qwed-restart-volume:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwe-worker -p qwed --bins
+    run_root="$(mktemp -d "/tmp/qwe-restart-volume.XXXXXX")"
+    cleanup_restart_volume() {
+      pkill -KILL -f -- "--worker-socket ${run_root}/client.sock.runtime/p" \
+        2>/dev/null || true
+      rm -rf -- "$run_root"
+    }
+    trap cleanup_restart_volume EXIT
+    python3 "{{ fixtures }}/qwed_restart_volume_probe.py" \
+      --qwed target/debug/qwed \
+      --socket "$run_root/client.sock"
+
+stage7-reconciliation-scale:
+    cargo build -p qwed -p qwe-worker --bins
+    python3 "{{ fixtures }}/stage7_reconciliation_scale_probe.py" \
+      --qwed target/debug/qwed
+
+stage7-teardown-scale:
+    cargo build -p qwed -p qwe-worker --bins
+    python3 "{{ fixtures }}/stage7_reconciliation_scale_probe.py" \
+      --qwed target/debug/qwed \
+      --active-panes 2 \
+      --history-panes 4000 \
+      --history-state closed \
+      --exercise-teardown
+
+stage7-soak-short:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p qwe -p qwed -p qwe-worker --bins
+    run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+    run_root="$(pwd)/target/stage7-soak/short-$run_id"
+    mkdir -p "$run_root"
+    python3 "{{ fixtures }}/stage7_soak_probe.py" \
+      --qwed target/debug/qwed \
+      --sessions 8 \
+      --panes-per-session 2 \
+      --duration-seconds 20 \
+      --restart-interval-seconds 5 \
+      --run-root "$run_root" \
+      --progress-interval 5 \
+      --output "$run_root/result.json"
+
+stage7-soak hours="5" sessions="16" panes="2" restart_minutes="30" run_id="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "{{hours}}" -le 5 ] || {
+      printf 'stage7-soak qualification duration must not exceed 5 hours\n' >&2
+      exit 2
+    }
+    cargo build --release -p qwe -p qwed -p qwe-worker --bins
+    run_id="{{run_id}}"
+    [ -n "$run_id" ] || run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+    run_root="$(pwd)/target/stage7-soak/qualification-$run_id"
+    mkdir -p "$run_root"
+    duration_seconds="$(({{hours}} * 3600))"
+    restart_seconds="$(({{restart_minutes}} * 60))"
+    python3 "{{ fixtures }}/stage7_soak_probe.py" \
+      --qwed target/release/qwed \
+      --sessions {{sessions}} \
+      --panes-per-session {{panes}} \
+      --duration-seconds "$duration_seconds" \
+      --restart-interval-seconds "$restart_seconds" \
+      --run-root "$run_root" \
+      --started-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --progress-interval 60 \
+      --output "$run_root/result.json"
+
+stage7-soak-start hours="5" sessions="16" panes="2" restart_minutes="30":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "{{hours}}" -le 5 ] || {
+      printf 'stage7-soak qualification duration must not exceed 5 hours\n' >&2
+      exit 2
+    }
+    run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+    run_root="{{ justfile_directory() }}/target/stage7-soak/qualification-$run_id"
+    unit="qwe-stage7-soak-$run_id"
+    just_bin="$(command -v just)"
+    mkdir -p "$run_root"
+    systemd-run --user \
+      --unit "$unit" \
+      --collect \
+      --working-directory "{{ justfile_directory() }}" \
+      "--setenv=PATH=$PATH" \
+      "--property=StandardOutput=append:$run_root/console.log" \
+      "--property=StandardError=append:$run_root/console.log" \
+      "$just_bin" \
+      --justfile "{{ justfile() }}" \
+      stage7-soak "{{hours}}" "{{sessions}}" "{{panes}}" "{{restart_minutes}}" "$run_id"
+    printf '{"unit":"%s","run_root":"%s"}\n' "$unit" "$run_root"
+
+stage7-qualification-node soak_seconds="60":
+    python3 "{{ justfile_directory() }}/tests/fixtures/stage7_node_gate.py" \
+      --soak-seconds {{soak_seconds}}
+
+stage7-qualification-matrix soak_seconds="60":
+    python3 "{{ justfile_directory() }}/scripts/stage7_matrix.py" \
+      --repo "{{ justfile_directory() }}" \
+      --soak-seconds {{soak_seconds}} \
+      --output "{{ justfile_directory() }}/target/stage7-qualification/matrix.json"
+
+stage7-check:
+    just --justfile "{{ justfile() }}" check-qwe
+    just --justfile "{{ justfile() }}" stage4-capabilities
+    just --justfile "{{ justfile() }}" stage7-resource-profile
+    just --justfile "{{ justfile() }}" stage7-multi-pane
+    just --justfile "{{ justfile() }}" stage7-pressure
+    just --justfile "{{ justfile() }}" qwed-restart-volume
+    just --justfile "{{ justfile() }}" stage7-reconciliation-scale
+    just --justfile "{{ justfile() }}" stage7-teardown-scale
+    just --justfile "{{ justfile() }}" stage7-soak-short
+    just --justfile "{{ justfile() }}" resilience-smoke
+
+stage8-layout:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(mktemp -d "/tmp/qwe-stage8-layout.XXXXXX")"
+    cleanup_stage8() {
+      find "$root" -depth -delete 2>/dev/null || true
+    }
+    trap cleanup_stage8 EXIT
+    cargo build -p qwe -p qwe-worker -p qwed
+    python3 "{{ fixtures }}/stage8_layout_probe.py" \
+      --cli target/debug/qwe \
+      --qwed target/debug/qwed \
+      --socket "$root/qwed.sock"
+
+stage8-check:
+    just --justfile "{{ justfile() }}" check-qwe
+    just --justfile "{{ justfile() }}" stage8-layout
+
+stage9-agent-exec:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(mktemp -d "/tmp/qwe-stage9-agent.XXXXXX")"
+    cleanup_stage9() {
+      find "$root" -depth -delete 2>/dev/null || true
+    }
+    trap cleanup_stage9 EXIT
+    cargo build -p qwe -p qwe-worker -p qwed
+    python3 "{{ fixtures }}/stage9_agent_exec_probe.py" \
+      --cli target/debug/qwe \
+      --qwed target/debug/qwed \
+      --socket "$root/qwed.sock"
+
+stage9-check:
+    just --justfile "{{ justfile() }}" check-qwe
+    just --justfile "{{ justfile() }}" stage9-agent-exec
+    just --justfile "{{ justfile() }}" stage8-layout
+    just --justfile "{{ justfile() }}" stage7-resource-profile
+    just --justfile "{{ justfile() }}" stage7-multi-pane
+    just --justfile "{{ justfile() }}" credential-smoke
+
+bubblewrap-poc:
+    cargo test -p qwe-worker --test bubblewrap_contract -- --nocapture
+
+sandbox-pane-poc:
+    cargo test -p qwe-worker --test bubblewrap_contract -- --nocapture
+    cargo test -p qwe-worker --test sandbox_pane_init_contract -- --nocapture
+    cargo test -p qwe-worker --test sandbox_probe_cli_contract -- --nocapture
+    cargo test -p qwe-worker --test sandboxed_pane_worker_contract -- --nocapture
+    cargo test -p qwe-worker --bin qwe-worker \
+      strict_seccomp_nested_bubblewrap_gate -- --nocapture
+    cargo test -p qwe-worker --bin qwe-worker \
+      seccomp_socket_denial_preserves_inherited_socket -- --nocapture
+
+fuzz-sandbox-control runs="10000":
+    cargo +nightly fuzz run sandbox_control -- -runs={{ runs }}
+
+fuzz-terminal-output runs="10000":
+    cargo +nightly fuzz run terminal_output -- -runs={{ runs }}
+
+fuzz-path-resolution runs="10000":
+    cargo +nightly fuzz run path_resolution -- -runs={{ runs }}
+
+landlock-poc:
+    cargo test -p qwe-worker --test landlock_contract -- --nocapture
+    cargo build -p qwe-worker --bin qwe-sandbox-init
+    python3 "{{ fixtures }}/landlock_abi_probe.py" \
+      --init target/debug/qwe-sandbox-init
+
+stage10-sandbox:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(mktemp -d "/tmp/qwe-stage10-sandbox.XXXXXX")"
+    cleanup_stage10() {
+      find "$root" -depth -delete 2>/dev/null || true
+    }
+    trap cleanup_stage10 EXIT
+    cargo build -p qwe-worker -p qwed
+    python3 "{{ fixtures }}/stage10_sandbox_probe.py" \
+      --qwed target/debug/qwed \
+      --socket "$root/qwed.sock"
+
+stage10-check:
+    just --justfile "{{ justfile() }}" check-qwe
+    just --justfile "{{ justfile() }}" bubblewrap-poc
+    just --justfile "{{ justfile() }}" landlock-poc
+    just --justfile "{{ justfile() }}" stage10-sandbox
+
+sandbox-container-matrix images="ubuntu:22.04 ubuntu:24.04 debian:12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'sandbox container matrix must run on Linux\n' >&2
+      exit 2
+    }
+    command -v podman >/dev/null || {
+      printf 'podman is required for sandbox container matrix\n' >&2
+      exit 2
+    }
+    root="{{ justfile_directory() }}"
+    cd "$root"
+    cargo build --release -p qwe-worker -p qwed
+    for image in {{ images }}; do
+      podman run --rm --network=host --security-opt label=disable \
+        --volume "$root/target/release:/qwe-bin:ro" \
+        --volume "$root/tests/fixtures:/qwe-fixtures:ro" \
+        --env "PYTHONPATH=/qwe-fixtures" \
+        "$image" /bin/sh -c '
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            bubblewrap python3 >/dev/null
+          python3 /qwe-fixtures/sandbox_container_fail_closed.py \
+            --qwed /qwe-bin/qwed --image "$1" \
+            --expected-reason mount_denied --expected-target /proc
+        ' sh "$image"
+    done
+
+sandbox-vm-matrix hosts="ubuntu2204 ubuntu2404 debian12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'sandbox VM matrix must run on Linux\n' >&2
+      exit 2
+    }
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="$lab/ssh_config"
+    remote_dir="/home/qwe/bianca/qwe-sandbox-vm"
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    cd "$root"
+    cargo build --release -p qwe-worker -p qwed
+    for host in {{ hosts }}; do
+      printf '==> %s\n' "$host"
+      target="qwe-$host"
+      ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+      scp -q -F "$ssh_config" \
+        target/release/qwed \
+        target/release/qwe-worker \
+        target/release/qwe-session-exec \
+        target/release/qwe-sandbox-init \
+        tests/fixtures/stage7_resource_probe.py \
+        tests/fixtures/stage10_sandbox_probe.py \
+        tests/fixtures/sandbox_container_fail_closed.py \
+        "$target:$remote_dir/"
+      if ssh -F "$ssh_config" "$target" '
+        bwrap --ro-bind /usr /usr \
+          --ro-bind-try /lib /lib \
+          --ro-bind-try /lib64 /lib64 \
+          --proc /proc --dev /dev \
+          --unshare-user --unshare-pid --as-pid-1 --die-with-parent \
+          -- /usr/bin/true
+      '; then
+        ssh -F "$ssh_config" "$target" "
+          root=\$(mktemp -d /tmp/qwe-sandbox-vm.XXXXXX)
+          PYTHONPATH=$remote_dir python3 $remote_dir/stage10_sandbox_probe.py \
+            --qwed $remote_dir/qwed --socket \"\$root/qwed.sock\"
+          rc=\$?
+          find \"\$root\" -depth -delete 2>/dev/null || true
+          exit \$rc
+        "
+      else
+        case "$host" in
+          ubuntu2404) expected_reason=uid_map_denied ;;
+          *) expected_reason=userns_disabled ;;
+        esac
+        ssh -F "$ssh_config" "$target" "
+          PYTHONPATH=$remote_dir python3 $remote_dir/sandbox_container_fail_closed.py \
+            --qwed $remote_dir/qwed --image '$host-vm' --matrix vm \
+            --expected-reason '$expected_reason'
+        "
+      fi
+    done
+
+sandbox-bubblewrap-oldest-vm-matrix hosts="ubuntu2204 ubuntu2404 debian12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="$lab/ssh_config"
+    cache_dir="${QWE_VM_CACHE:-$root/.scratch/vm-cache}"
+    archive="$cache_dir/bubblewrap-v0.5.0.tar.gz"
+    expected_sha=9910917c031bc4305e5620e53a602161fdd676de9c9f7da5c082a508a880912c
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    mkdir -p "$cache_dir"
+    if [ ! -f "$archive" ]; then
+      curl -L --fail --retry 3 \
+        -o "$archive" \
+        https://github.com/containers/bubblewrap/archive/refs/tags/v0.5.0.tar.gz
+    fi
+    printf '%s  %s\n' "$expected_sha" "$archive" | sha256sum -c -
+    cd "$root"
+    cargo build --release -p qwe-worker -p qwed
+    for host in {{ hosts }}; do
+      printf '==> %s\n' "$host"
+      target="qwe-$host"
+      remote_dir="/home/qwe/bianca/qwe-bwrap-0.5"
+      ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+      scp -q -F "$ssh_config" \
+        "$archive" \
+        target/release/qwed \
+        target/release/qwe-worker \
+        target/release/qwe-session-exec \
+        target/release/qwe-sandbox-init \
+        packaging/apparmor/qwe-bwrap \
+        packaging/apparmor/install.sh \
+        tests/fixtures/apparmor_profile_probe.py \
+        tests/fixtures/bubblewrap_oldest_probe.sh \
+        tests/fixtures/stage7_resource_probe.py \
+        tests/fixtures/stage10_sandbox_probe.py \
+        "$target:$remote_dir/"
+      ssh -F "$ssh_config" "$target" "
+        bash $remote_dir/bubblewrap_oldest_probe.sh \
+          $remote_dir/bubblewrap-v0.5.0.tar.gz \
+          $remote_dir/qwed \
+          $remote_dir/stage10_sandbox_probe.py \
+          $remote_dir/apparmor_profile_probe.py \
+          $remote_dir/qwe-bwrap \
+          $remote_dir/install.sh
+      "
+    done
+
+sandbox-selinux-vm host="fedora44":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="${QWE_SELINUX_SSH_CONFIG:-$lab/ssh_config}"
+    target="${QWE_SELINUX_SSH_TARGET:-qwe-{{ host }}}"
+    remote_dir="${QWE_SELINUX_REMOTE_DIR:-/home/qwe/bianca/qwe-selinux}"
+    [ -r "$ssh_config" ] || {
+      printf 'SELinux VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    cd "$root"
+    cargo build --release -p qwe-worker -p qwed
+    ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+    scp -q -F "$ssh_config" \
+      target/release/qwed \
+      target/release/qwe-worker \
+      target/release/qwe-session-exec \
+      target/release/qwe-sandbox-init \
+      tests/fixtures/selinux_probe.py \
+      tests/fixtures/stage7_resource_probe.py \
+      tests/fixtures/stage10_sandbox_probe.py \
+      "$target:$remote_dir/"
+    ssh -F "$ssh_config" "$target" "
+      set -e
+      sudo dnf install -y -q bubblewrap python3 policycoreutils >/dev/null
+      test \"\$(getenforce)\" = Enforcing
+      root=\$(mktemp -d /tmp/qwe-selinux-vm.XXXXXX)
+      PYTHONPATH=$remote_dir python3 $remote_dir/selinux_probe.py \
+        --qwed $remote_dir/qwed \
+        --socket \"\$root/qwed.sock\" \
+        --stage10-fixture $remote_dir/stage10_sandbox_probe.py
+      rc=\$?
+      find \"\$root\" -depth -delete 2>/dev/null || true
+      exit \$rc
+    "
+
+sandbox-apparmor-vm host="ubuntu2404":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "{{ host }}" = "ubuntu2404" ] || {
+      printf 'sandbox AppArmor qualification currently targets ubuntu2404 only\n' >&2
+      exit 2
+    }
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="$lab/ssh_config"
+    target="qwe-{{ host }}"
+    remote_dir="/home/qwe/bianca/qwe-apparmor-vm"
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    cd "$root"
+    cargo build --release -p qwe-worker -p qwed
+    ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+    scp -q -F "$ssh_config" \
+      target/release/qwed \
+      target/release/qwe-worker \
+      target/release/qwe-session-exec \
+      target/release/qwe-sandbox-init \
+      packaging/apparmor/qwe-bwrap \
+      packaging/apparmor/install.sh \
+      tests/fixtures/apparmor_profile_probe.py \
+      tests/fixtures/stage7_resource_probe.py \
+      tests/fixtures/stage10_sandbox_probe.py \
+      "$target:$remote_dir/"
+    ssh -F "$ssh_config" "$target" "
+      set -e
+      root=\$(mktemp -d /tmp/qwe-apparmor-vm.XXXXXX)
+      PYTHONPATH=$remote_dir python3 $remote_dir/apparmor_profile_probe.py \
+        --profile $remote_dir/qwe-bwrap \
+        --installer $remote_dir/install.sh \
+        --qwed $remote_dir/qwed \
+        --socket \"\$root/qwed.sock\" \
+        --stage10-fixture $remote_dir/stage10_sandbox_probe.py
+      rc=\$?
+      find \"\$root\" -depth -delete 2>/dev/null || true
+      exit \$rc
+    "
+
+sandbox-landlock-vm host="ubuntu2404":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="${QWE_LANDLOCK_SSH_CONFIG:-$lab/ssh_config}"
+    target="qwe-{{ host }}"
+    remote_dir="/home/qwe/bianca/qwe-landlock-vm"
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    cd "$root"
+    cargo build --release -p qwe-worker --bin qwe-sandbox-init
+    ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+    scp -q -F "$ssh_config" \
+      target/release/qwe-sandbox-init \
+      tests/fixtures/landlock_abi_probe.py \
+      "$target:$remote_dir/"
+    ssh -F "$ssh_config" "$target" \
+      "python3 $remote_dir/landlock_abi_probe.py --init $remote_dir/qwe-sandbox-init"
+
+sandbox-landlock-matrix hosts="ubuntu2204 ubuntu2404 debian12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="$lab/ssh_config"
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    cd "$root"
+    cargo build --release -p qwe-worker --bin qwe-sandbox-init
+    for host in {{ hosts }}; do
+      printf '==> %s\n' "$host"
+      target="qwe-$host"
+      remote_dir="/home/qwe/bianca/qwe-landlock-matrix"
+      ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+      scp -q -F "$ssh_config" \
+        target/release/qwe-sandbox-init \
+        tests/fixtures/landlock_abi_probe.py \
+        "$target:$remote_dir/"
+      ssh -F "$ssh_config" "$target" \
+        "python3 $remote_dir/landlock_abi_probe.py --init $remote_dir/qwe-sandbox-init"
+    done
+
+sandbox-userns-disabled-vm host="ubuntu2204":
+    just --justfile "{{ justfile() }}" sandbox-userns-disabled-vm-matrix "{{ host }}"
+
+sandbox-userns-disabled-vm-matrix hosts="ubuntu2204 ubuntu2404 debian12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="{{ justfile_directory() }}"
+    lab="${QWE_VM_LAB:-/home/Public/qwe-vms}"
+    ssh_config="$lab/ssh_config"
+    [ -r "$ssh_config" ] || {
+      printf 'VM ssh config is missing: %s\n' "$ssh_config" >&2
+      exit 2
+    }
+    cd "$root"
+    cargo build --release -p qwe-worker -p qwed
+    for host in {{ hosts }}; do
+      printf '==> %s\n' "$host"
+      target="qwe-$host"
+      remote_dir="/home/qwe/bianca/qwe-sandbox-userns-disabled"
+      ssh -F "$ssh_config" "$target" "mkdir -p $remote_dir"
+      scp -q -F "$ssh_config" \
+        target/release/qwed \
+        target/release/qwe-worker \
+        target/release/qwe-session-exec \
+        target/release/qwe-sandbox-init \
+        tests/fixtures/stage7_resource_probe.py \
+        tests/fixtures/sandbox_container_fail_closed.py \
+        "$target:$remote_dir/"
+      ssh -F "$ssh_config" "$target" "
+        set -e
+        orig_max=\$(cat /proc/sys/user/max_user_namespaces)
+        orig_clone=\$(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || echo absent)
+        cleanup() {
+          sudo sysctl -w user.max_user_namespaces=\"\$orig_max\" >/dev/null
+          if [ \"\$orig_clone\" != absent ]; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=\"\$orig_clone\" >/dev/null
+          fi
+        }
+        trap cleanup EXIT
+        sudo sysctl -w user.max_user_namespaces=0 >/dev/null
+        if [ \"\$orig_clone\" != absent ]; then
+          sudo sysctl -w kernel.unprivileged_userns_clone=0 >/dev/null
+        fi
+        PYTHONPATH=$remote_dir python3 $remote_dir/sandbox_container_fail_closed.py \
+          --qwed $remote_dir/qwed \
+          --image '$host-userns-disabled' \
+          --matrix vm \
+          --expected-reason userns_disabled
+      "
+    done
+
+sandbox-systemd-properties:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'systemd sandbox property probe must run on Linux\n' >&2
+      exit 2
+    }
+    bwrap_path="${QWE_BWRAP_PATH:-$(command -v bwrap)}"
+    [ -x "$bwrap_path" ] || {
+      printf 'bwrap is unavailable: %s\n' "$bwrap_path" >&2
+      exit 2
+    }
+    for base in "/run/user/$(id -u)" "$HOME"; do
+      workspace="$(mktemp -d "$base/qwe-systemd-properties.XXXXXX")"
+      unit="qwe-systemd-properties-$$-$(basename "$workspace")"
+      systemd-run --user --unit="$unit" --wait --collect --quiet \
+        --property=NoNewPrivileges=yes \
+        --property=ProtectSystem=strict \
+        --property=ProtectHome=read-only \
+        --property=PrivateTmp=yes \
+        -- "$bwrap_path" \
+          --bind "$workspace" "$workspace" \
+          --ro-bind /usr /usr \
+          --ro-bind-try /bin /bin \
+          --ro-bind-try /lib /lib \
+          --ro-bind-try /lib64 /lib64 \
+          --proc /proc --dev /dev \
+          --unshare-user --unshare-pid --as-pid-1 --die-with-parent \
+          -- /bin/sh -c "printf ok > '$workspace/marker'"
+      [ "$(cat "$workspace/marker" 2>/dev/null)" = ok ] || {
+        printf 'sandboxed workspace write failed under %s\n' "$base" >&2
+        exit 1
+      }
+      find "$workspace" -depth -delete 2>/dev/null || true
+      printf '{"case":"SANDBOX-SYSTEMD-001","base":"%s","status":"pass","bwrap":"%s"}\n' \
+        "$base" "$bwrap_path"
+    done
+
+sandbox-systemd-service-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Linux" ] || {
+      printf 'systemd service smoke must run on Linux\n' >&2
+      exit 2
+    }
+    command -v systemd-run >/dev/null || {
+      printf 'systemd-run is required for the service smoke\n' >&2
+      exit 2
+    }
+    root="$(mktemp -d "/run/user/$(id -u)/qwe-service-smoke.XXXXXX")"
+    unit="qwe-service-smoke-$$"
+    bin="$root/bin"
+    workspace="$root/workspace"
+    mkdir -p "$bin" "$workspace"
+    cleanup_service() {
+      systemctl --user stop "$unit.service" >/dev/null 2>&1 || true
+      systemctl --user reset-failed "$unit.service" >/dev/null 2>&1 || true
+      find "$root" -depth -delete 2>/dev/null || true
+    }
+    trap cleanup_service EXIT
+    cargo build --release -p qwe-worker -p qwed
+    cp target/release/qwed target/release/qwe-worker \
+      target/release/qwe-session-exec target/release/qwe-sandbox-init "$bin/"
+    bwrap_path="${QWE_BWRAP_PATH:-$(command -v bwrap)}"
+    systemd-run --user --unit="$unit" --quiet \
+      --working-directory="$root" \
+      --property=NoNewPrivileges=yes \
+      --property=ProtectSystem=strict \
+      --property=ProtectHome=read-only \
+      --property=PrivateTmp=yes \
+      --property=UMask=0077 \
+      --property=KillMode=process \
+      --property=TimeoutStopSec=10 \
+      --property=Restart=on-failure \
+      --property=RestartSec=1 \
+      --setenv="PATH=/opt/local/bin:/usr/local/bin:/usr/bin:/bin" \
+      --setenv="QWE_BWRAP_PATH=$bwrap_path" \
+      -- "$bin/qwed" \
+        --socket "$root/qwe.sock" \
+        --store "$root/qwe.sqlite"
+    python3 "{{ fixtures }}/systemd_service_probe.py" \
+      --socket "$root/qwe.sock" \
+      --unit "$unit" \
+      --workspace "$workspace" \
+      --service-bin-dir "$bin" \
+      --release-bin-dir target/release
+
 state-matrix:
     cargo test -p qwe-core authority::tests
     cargo test -p qwe-core tests::session_state_machine_rejects_resurrection
     cargo test -p qwe-core tests::task_instance_has_one_initial_transition_path
     cargo test -p qwe-storage tests::created_session_and_task_commit_atomically
-    cargo test -p qwe-storage tests::created_session_has_one_pane_and_one_task_instance
+    cargo test -p qwe-storage tests::created_session_uses_pane_keyed_tasks_and_resource_scopes
     cargo test -p qwe-storage tests::history_pruning_preserves_sessions_with_attachment_authority
     cargo test -p qwe-storage tests::history_pruning_requires_both_age_and_terminal_capacity_pressure
     cargo test -p qwe-storage tests::idempotency_records_replay_until_the_retention_deadline
     cargo test -p qwe-storage tests::lease_claim_touch_release_and_takeover
     cargo test -p qwe-storage tests::lease_renewal_does_not_shorten_deadlines_when_the_wall_clock_moves_back
     cargo test -p qwe-storage tests::migrates_version_one_database
+    cargo test -p qwe-storage tests::migrates_populated_v10_database_to_v11_with_backup
     cargo test -p qwe-storage tests::persisted_active_attachment_enters_reclaim_grace
     just --justfile "{{ justfile() }}" stage3-idempotency
     just --justfile "{{ justfile() }}" stage3-attach-authority

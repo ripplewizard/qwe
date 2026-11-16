@@ -113,11 +113,21 @@ def start_worker(binary, runtime_dir, session_id, socket_path=None):
     return process, socket_path
 
 
-def create_session(path, session_id, program="sh", require_running=True):
+def create_session(
+    path,
+    session_id,
+    program="sh",
+    arguments=None,
+    require_running=True,
+):
     created = send_control(
         path,
         "SESSION_CREATE",
-        {"session_id": session_id, "program": program, "args": []},
+        {
+            "session_id": session_id,
+            "program": program,
+            "args": arguments or [],
+        },
         key=f"create-{session_id}",
     )
     if require_running:
@@ -249,12 +259,13 @@ def main():
         qwed = start_qwed(args.qwed, args.socket, args.store)
         mismatch_created = create_session(args.socket, mismatch_id)
         mismatch_worker_pid = mismatch_created["worker_pid"]
+        mismatch_pane_id = mismatch_created["pane_id"]
         stop_qwed(qwed)
         qwed = None
         with sqlite3.connect(args.store) as connection:
             connection.execute(
-                "UPDATE sessions SET worker_start_token = ? WHERE id = ?",
-                ("stale-start-token", mismatch_id),
+                "UPDATE pane_workers SET start_token = ? WHERE pane_id = ?",
+                ("stale-start-token", mismatch_pane_id),
             )
             connection.commit()
         qwed = start_qwed(args.qwed, args.socket, args.store)
@@ -281,10 +292,15 @@ def main():
 
         duplicate_id = "duplicate-worker"
         qwed = start_qwed(args.qwed, args.socket, args.store)
-        create_session(args.socket, duplicate_id)
+        duplicate_created = create_session(args.socket, duplicate_id)
         stop_qwed(qwed)
         qwed = None
-        first_socket = runtime_socket(runtime_dir, duplicate_id)
+        compact_pane_id = "".join(
+            character
+            for character in duplicate_created["pane_id"]
+            if character in "0123456789abcdefABCDEF"
+        )
+        first_socket = runtime_dir / f"p{compact_pane_id}.sock"
         duplicate_socket = runtime_dir / "duplicate-worker.sock"
         duplicate, duplicate_socket = start_worker(
             args.worker,
@@ -308,7 +324,7 @@ def main():
         )
         assert rejected["code"] == "terminal_lost", rejected
         assert (
-            list(runtime_dir.glob(f"{duplicate_id.encode().hex()}.sock.conflict-*"))
+            list(runtime_dir.glob(f"{first_socket.name}.conflict-*"))
             and list(runtime_dir.glob("duplicate-worker.sock.conflict-*"))
         )
 
@@ -316,10 +332,11 @@ def main():
         exited_created = create_session(
             args.socket,
             exited_id,
-            program="true",
+            arguments=["-c", "sleep 0.1; exit 0"],
             require_running=False,
         )
-        exited_worker_pid = exited_created["worker_pid"]
+        exited_worker_pid = exited_created.get("worker_pid")
+        assert exited_worker_pid is not None, exited_created
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             exited_report = status(args.socket)
@@ -385,15 +402,15 @@ def main():
                 (historical_id, old_ms),
             )
             connection.execute(
-                "INSERT INTO tasks "
-                "(id, session_id, pid, pgid, start_token, state, "
-                "started_at_ms, ended_at_ms) "
-                "VALUES (?, ?, 1, 1, 'historical', 'stopped', ?, ?)",
-                (historical_task_id, historical_id, old_ms, old_ms),
-            )
-            connection.execute(
                 "INSERT INTO panes (id, session_id, updated_at_ms) VALUES (?, ?, ?)",
                 (historical_pane_id, historical_id, old_ms),
+            )
+            connection.execute(
+                "INSERT INTO tasks "
+                "(id, pane_id, pid, pgid, start_token, state, "
+                "started_at_ms, ended_at_ms) "
+                "VALUES (?, ?, 1, 1, 'historical', 'stopped', ?, ?)",
+                (historical_task_id, historical_pane_id, old_ms, old_ms),
             )
             connection.executemany(
                 "INSERT INTO sessions "

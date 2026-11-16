@@ -25,13 +25,13 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust components
         run: rustup component add rustfmt clippy
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -46,8 +46,18 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Check dependency policy
+        if: runner.os == 'Linux'
+        uses: EmbarkStudios/cargo-deny-action@v2
+
+      - name: Run sandbox fault injection
+        if: runner.os == 'Linux'
+        run: >
+          cargo test -p qwe-worker --features sandbox-fault-injection
+          --test sandbox_fault_injection_contract -- --nocapture
+
       - name: Run workspace tests
-        run: cargo test --workspace
+        run: cargo test --workspace -- --test-threads=1
 
       - name: Check canonical protocol schema
         run: python3 scripts/check_protocol_schema.py

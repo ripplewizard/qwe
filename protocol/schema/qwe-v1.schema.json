@@ -113,6 +113,10 @@
           "type": "string",
           "minLength": 1
         },
+        "pane_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "owner": {
           "type": "string",
           "minLength": 1
@@ -123,6 +127,21 @@
         },
         "lease_generation": {
           "$ref": "#/$defs/UInt64"
+        },
+        "input_auth_context": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capability"],
+          "properties": {
+            "capability": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "input_authorized": {
+          "type": "boolean",
+          "description": "Internal qwed-to-worker authorization marker; client values are ignored."
         },
         "rows": {
           "$ref": "#/$defs/Rows"
@@ -225,6 +244,10 @@
           "const": 1
         },
         "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pane_id": {
           "type": "string",
           "minLength": 1
         },
@@ -545,6 +568,29 @@
         ["held", "held"]
       ]
     },
+    "agent_command": {
+      "states": [
+        "starting",
+        "running",
+        "idle",
+        "done",
+        "failed",
+        "lost"
+      ],
+      "transitions": [
+        ["starting", "running"],
+        ["starting", "failed"],
+        ["starting", "lost"],
+        ["running", "idle"],
+        ["running", "done"],
+        ["running", "failed"],
+        ["running", "lost"],
+        ["idle", "running"],
+        ["idle", "done"],
+        ["idle", "failed"],
+        ["idle", "lost"]
+      ]
+    },
     "worker_health": [
       "healthy",
       "unreachable",
@@ -554,6 +600,21 @@
       "matched",
       "orphaned",
       "conflict"
+    ],
+    "capability_operation": [
+      "manage_principals",
+      "agent_exec",
+      "agent_command_read",
+      "agent_command_terminate",
+      "sandboxed_pane",
+      "pane_exec",
+      "pane_input",
+      "pane_resize"
+    ],
+    "revocation_severity": [
+      "administrative",
+      "freeze",
+      "terminate"
     ]
   },
   "x-qwe-test-case-ids": [
@@ -612,6 +673,107 @@
     "LIVE-014",
     "LIVE-015",
     "LIVE-016",
+    "RG-001",
+    "RG-002",
+    "RG-003",
+    "RG-004",
+    "RG-005",
+    "RG-006",
+    "SHARED-001",
+    "SHARED-002",
+    "SHARED-003",
+    "SHARED-004",
+    "SHARED-005",
+    "SHARED-006",
+    "LAYOUT-001",
+    "LAYOUT-002",
+    "LAYOUT-003",
+    "LAYOUT-004",
+    "LAYOUT-005",
+    "LAYOUT-006",
+    "LAYOUT-007",
+    "LAYOUT-008",
+    "LAYOUT-009",
+    "LAYOUT-010",
+    "LAYOUT-011",
+    "LAYOUT-012",
+    "LAYOUT-013",
+    "LAYOUT-014",
+    "LAYOUT-015",
+    "LAYOUT-016",
+    "LAYOUT-017",
+    "AGENT-001",
+    "AGENT-002",
+    "AGENT-003",
+    "AGENT-004",
+    "AGENT-005",
+    "AGENT-006",
+    "AGENT-007",
+    "AGENT-008",
+    "AGENT-009",
+    "AGENT-010",
+    "AGENT-011",
+    "AGENT-012",
+    "AGENT-013",
+    "SANDBOX-001",
+    "SANDBOX-002",
+    "SANDBOX-003",
+    "SANDBOX-004",
+    "SANDBOX-005",
+    "SANDBOX-006",
+    "SANDBOX-007",
+    "SANDBOX-008",
+    "SANDBOX-009",
+    "SANDBOX-010",
+    "SANDBOX-011",
+    "SANDBOX-012",
+    "SANDBOX-013",
+    "SANDBOX-014",
+    "SANDBOX-015",
+    "SANDBOX-016",
+    "SANDBOX-017",
+    "SANDBOX-018",
+    "SANDBOX-019",
+    "SANDBOX-020",
+    "SANDBOX-021",
+    "SANDBOX-022",
+    "SANDBOX-023",
+    "SANDBOX-024",
+    "SANDBOX-025",
+    "SANDBOX-026",
+    "SANDBOX-027",
+    "SANDBOX-028",
+    "SANDBOX-029",
+    "SANDBOX-030",
+    "SANDBOX-031",
+    "SANDBOX-032",
+    "SANDBOX-033",
+    "SANDBOX-034",
+    "SANDBOX-035",
+    "SANDBOX-036",
+    "SANDBOX-037",
+    "SANDBOX-038",
+    "SANDBOX-039",
+    "SANDBOX-040",
+    "SANDBOX-041",
+    "SANDBOX-042",
+    "SANDBOX-043",
+    "SANDBOX-044",
+    "SANDBOX-045",
+    "SANDBOX-046",
+    "SANDBOX-047",
+    "SANDBOX-048",
+    "SANDBOX-049",
+    "SANDBOX-050",
+    "SANDBOX-051",
+    "SANDBOX-052",
+    "SANDBOX-053",
+    "SANDBOX-054",
+    "SANDBOX-055",
+    "SANDBOX-056",
+    "SANDBOX-057",
+    "SANDBOX-058",
+    "SANDBOX-059",
     "ATTACH-001",
     "ATTACH-002",
     "ATTACH-003",
