@@ -257,7 +257,9 @@ def main():
                     "SELECT state FROM sessions WHERE id = 'release-service'"
                 ).fetchone()[0]
                 task_state = connection.execute(
-                    "SELECT state FROM tasks WHERE session_id = 'release-service'"
+                    "SELECT t.state FROM tasks t "
+                    "JOIN panes p ON t.pane_id = p.id "
+                    "WHERE p.session_id = 'release-service'"
                 ).fetchone()[0]
             assert session_state == "closed"
             assert task_state == "stopped"
