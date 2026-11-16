@@ -288,7 +288,7 @@ dependencies = [
 
 [[package]]
 name = "qwe-core"
-version = "0.1.1"
+version = "0.2.4"
 dependencies = [
  "serde",
  "sha2",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "qwe-runtime"
-version = "0.1.1"
+version = "0.2.4"
 dependencies = [
  "libc",
  "portable-pty",

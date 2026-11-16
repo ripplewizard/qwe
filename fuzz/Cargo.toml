@@ -26,3 +26,10 @@ path = "fuzz_targets/terminal_output.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "path_resolution"
+path = "fuzz_targets/path_resolution.rs"
+test = false
+doc = false
+bench = false

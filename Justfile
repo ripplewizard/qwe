@@ -1144,6 +1144,9 @@ fuzz-sandbox-control runs="10000":
 fuzz-terminal-output runs="10000":
     cargo +nightly fuzz run terminal_output -- -runs={{ runs }}
 
+fuzz-path-resolution runs="10000":
+    cargo +nightly fuzz run path_resolution -- -runs={{ runs }}
+
 landlock-poc:
     cargo test -p qwe-worker --test landlock_contract -- --nocapture
     cargo build -p qwe-worker --bin qwe-sandbox-init
