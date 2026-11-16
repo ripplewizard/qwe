@@ -2,19 +2,32 @@ use std::collections::VecDeque;
 use thiserror::Error;
 
 mod cgroup;
+mod landlock;
+mod path;
 mod process;
+mod sandbox_control;
 mod terminal;
+mod terminal_output;
 
 pub use cgroup::{
     CgroupStats, Pressure, ResourceSupport, apply_resource_policy, current_cgroup_path,
-    detect_resource_support, pane_scope_unit, read_cgroup_stats, read_cpu_usage_microseconds,
-    read_effective_resource_policy, read_enforcement_event, read_resource_usage, stop_pane_scope,
-    stop_systemd_scope, systemd_scope_available,
+    detect_resource_support, kill_cgroup, pane_scope_unit, read_cgroup_stats,
+    read_cpu_usage_microseconds, read_effective_resource_policy, read_enforcement_event,
+    read_resource_usage, stop_pane_scope, stop_systemd_scope, systemd_scope_available,
 };
-pub use process::{process_identity, process_matches};
+pub use landlock::{
+    LandlockError, LandlockPolicy, abi_version as landlock_abi_version, apply as apply_landlock,
+};
+pub use path::resolve_beneath;
+pub use process::{PidFd, process_identity, process_matches};
+pub use sandbox_control::{
+    CONTROL_HEADER_BYTES, CONTROL_KIND_SIGNAL, CONTROL_MAX_BUFFER, CONTROL_MAX_PAYLOAD,
+    CONTROL_VERSION, PaneControlDecoder, PaneControlMessage,
+};
 pub use terminal::{
     CursorStyle, MouseProtocolEncoding, MouseProtocolMode, TerminalScreen, TerminalSnapshot,
 };
+pub use terminal_output::RestrictedTerminalFilter;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum JournalError {

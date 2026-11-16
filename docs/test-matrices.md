@@ -1,8 +1,8 @@
 # V0 Contract Test Matrices
 
-Status: Stages 1-5 complete for Linux-first V0; Stage 7 deterministic and
-Fedora installed-systemd gates pass; Ubuntu/Debian and five-hour soak pending
-Date: 2026-11-10
+Status: Stages 1-8 complete for the current baseline; installed-systemd matrix
+and extended Linux long-run qualification pass; Agent Execution ADR accepted
+Date: 2026-11-14
 
 These IDs are stable contract identifiers. An implementation test may be
 named after an ID only after it exercises the complete row with real sockets,
@@ -103,13 +103,129 @@ Detection and startup rows are required in addition to the truth table.
 | ATTACH-006 | Explicit detach either releases authority or creates the requested hold |
 | ATTACH-007 | Connection EOF releases Active authority immediately |
 | ATTACH-008 | Per-attachment output queue overflow closes that channel with `output_backpressure` |
-| ATTACH-009 | `read_only` mode returns `unsupported_mode` in V0 |
+| ATTACH-009 | `read_only` opens a qwed-owned observer that receives snapshot/output but cannot input, resize, detach, or control |
 | ATTACH-010 | Unknown frame type closes the channel with an explicit protocol error |
 | ATTACH-011 | Unknown channel version closes the channel with `incompatible_version` |
 | ATTACH-012 | Each attachment has an independent bounded 1 MiB output queue |
 | ATTACH-013 | `SNAPSHOT` precedes every `OUTPUT` frame from its recorded next offset |
 | ATTACH-014 | Every `OUTPUT` frame is at most 64 KiB |
 | ATTACH-015 | CLI detach resets Kitty keyboard, modified-key, bracketed-paste, alternate-screen, cursor, synchronized-output, and mouse modes |
+
+## Session Layout
+
+These rows cover the first Stage 8 compositor slice. They require real Pane
+workers and Pane-targeted Attach channels.
+
+| ID | Case |
+|---|---|
+| LAYOUT-001 | `SESSION_LAYOUT` deterministically tiles two Panes into non-overlapping rectangles that cover the requested viewport |
+| LAYOUT-002 | `ATTACH_OPEN` with a `pane_id` selects that Pane and the accepted/snapshot sequence identifies the same Pane |
+| LAYOUT-003 | One client can hold distinct exclusive Attach channels to two Panes in the same Session |
+| LAYOUT-004 | Raw `INPUT` on a Pane-targeted Attach reaches only the selected Pane |
+| LAYOUT-005 | The interactive compositor renders both Panes, switches focus without leaking input, and detaches cleanly |
+| LAYOUT-006 | Focus and Pane layout order survive qwed restart without changing Pane identity |
+| LAYOUT-007 | The compositor splits after the focused Pane, attaches the new worker, and closes that Pane without disturbing survivors |
+| LAYOUT-008 | Reordering through the compositor persists the new layout order and keeps input on the focused Pane |
+| LAYOUT-009 | Copy mode selects only the focused Pane's visible screen and reports clipboard provider success or failure explicitly |
+| LAYOUT-010 | Quick-menu keys are intercepted by the client and never reach the PTY |
+| LAYOUT-011 | A floating Pane overlays tiled Panes, receives focused input, and closes with its worker and ResourceScope |
+| LAYOUT-012 | Floating move/resize saves explicit bounds and `SESSION_LAYOUT` returns the persisted rectangle |
+| LAYOUT-013 | Simulated SGR mouse press/motion/release on a floating title row persists the dragged rectangle |
+| LAYOUT-014 | Dragging the floating bottom-right resize handle persists the resized rectangle |
+| LAYOUT-015 | Clicking an exposed lower floating Pane raises it above overlapping overlays and persists z-order |
+| LAYOUT-016 | Copy mode scrolls client VT scrollback and copies selected history while excluding newer off-screen lines |
+| LAYOUT-017 | Mouse press/motion/release in copy mode selects only focused-Pane text and writes the clipboard |
+
+## Agent Execution
+
+The accepted Agent Execution first delivery covers all rows below.
+
+| ID | Case |
+|---|---|
+| AGENT-001 | Start explicit non-PTY `exec` and verify a stable command handle reaches `done` with the exact exit code |
+| AGENT-002 | Retain output beyond the replay window and verify bounded retention, stable sequence numbers, and an explicit gap |
+| AGENT-003 | Run `exec` from a hard-limited Pane and verify the worker control cgroup and shared PTY/command workload cgroup remain under one Pane scope |
+| AGENT-004 | Restart qwed, re-adopt live commands, then prove confirmed worker loss produces `lost` rather than false success |
+| AGENT-005 | Emit stdout and stderr separately and recover exact bytes from monotonic per-stream cursors |
+| AGENT-006 | Verify wait timeout returns `unknown` and a signaled command returns `failed` with signal identity |
+| AGENT-007 | Deny missing, cross-Pane, expired, and ancestor-revoked command capabilities in real time |
+| AGENT-008 | Cover administrative, freeze, and terminate revocation severity, including finite freeze escalation |
+| AGENT-009 | Inject a command credential and prove output, events, logs, and SQLite are redacted or fail closed |
+| AGENT-010 | Verify a read-only observer receives committed events but cannot input, resize, signal, or mutate |
+| AGENT-011 | Run a PTY command and verify one merged stream preserves terminal control semantics |
+| AGENT-012 | Verify foreground `idle` is distinct from task exit and that `done` takes precedence |
+| AGENT-013 | Deliver whitelisted signals to PTY foreground/non-PTY process groups, record delivery, and reject SIGKILL and arbitrary signal numbers |
+
+## Bubblewrap Sandbox
+
+Rows 001-034 pass for the Linux `AGENT_EXEC` slice, including sandboxed PTY,
+foreground idle, `TIOCSTI` denial, restart, worker loss, and teardown. Rows
+035-054 pass local real-PTY/PID-namespace shim, control-channel, standalone
+probe, long-lived sandboxed worker, and qwed creation/lifecycle contracts.
+Rows 035-052 are also covered by the current x86_64 distribution matrix; rows
+053-054 are local fuzz-toolchain gates with deterministic workspace-test
+fallbacks. Distribution versions, fail-closed exceptions, and current release
+scope are maintained in
+[Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md).
+Evidence: [Experiment 0049](experiments/0049-stage10-sandbox-integration.md)
+for the first `AGENT_EXEC` slice and Experiment 0051 for the sandboxed Pane.
+
+| ID | Case |
+|---|---|
+| SANDBOX-001 | Preserve FD3 and Pane workload cgroup while reading structured Bubblewrap child PID |
+| SANDBOX-002 | Compare Bubblewrap PTY modes and verify resize, Ctrl-C, Ctrl-Z, job control, foreground mapping, and idle |
+| SANDBOX-003 | Verify synchronized `--die-with-parent` cleanup after the command creator thread exits |
+| SANDBOX-004 | Fail closed when Bubblewrap or unprivileged user namespaces are unavailable |
+| SANDBOX-005 | Authorize only capability-declared sandbox profiles and reject unsandboxed downgrade |
+| SANDBOX-006 | Enforce workspace protected paths, hidden home, private tmp, and network policy |
+| SANDBOX-007 | Recover or terminate sandboxed commands across qwed/worker restart and Pane teardown |
+| SANDBOX-008 | Apply the content-hashed `strict` named seccomp denylist and adapter `TIOCSTI` denial in pipe-split and PTY modes, reject unknown profile names, and persist the filter hash in capability audit metadata |
+| SANDBOX-009 | Reject a Bubblewrap backend whose help output lacks a production-required option before issuing a capability token |
+| SANDBOX-010 | Confirm that a writable workspace plus FD3 credential permits credential persistence, and that the command exposes and persists the corresponding risk flags |
+| SANDBOX-011 | Apply optional Landlock write confinement inside mandatory Bubblewrap confinement, record the detected ABI, and preserve reads, execution, and private `/tmp` |
+| SANDBOX-012 | Fail capability issue closed with `sandbox_init_unavailable` when Landlock is available but the init helper is missing or non-executable |
+| SANDBOX-013 | On Ubuntu 24.04, load the path-scoped Bubblewrap AppArmor profile while preserving the global userns restriction and pass the complete sandbox matrix |
+| SANDBOX-014 | On Landlock ABI 4, enforce cross-workspace `REFER` and outside-workspace `TRUNCATE` while preserving workspace, private tmp, and read behavior |
+| SANDBOX-015 | With user namespaces globally disabled on Ubuntu 22.04, Ubuntu 24.04, and Debian 12, reject sandbox capability issue while an ordinary Pane command still completes successfully |
+| SANDBOX-016 | Run the complete Stage 10 probe while SELinux remains Enforcing on Fedora 44 |
+| SANDBOX-017 | Build Bubblewrap 0.5.0 from the pinned source archive and pass the complete Stage 10 probe on Ubuntu 22.04, Ubuntu 24.04 with AppArmor, and Debian 12 |
+| SANDBOX-018 | Reject a protected-path profile containing hardlinked files so a writable alias cannot bypass read-only protection |
+| SANDBOX-019 | Verify abstract Unix sockets are reachable with `network:inherit` and isolated with `network:isolated_loopback` |
+| SANDBOX-020 | On Landlock ABI 5+, permit device ioctls under `/dev` and reject device ioctls outside allowed write roots |
+| SANDBOX-021 | Canonicalize a symlinked protected path before hardlink inspection and reject hardlinks reachable through the target directory |
+| SANDBOX-022 | Resolve protected paths and workspace cwd with `openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)` and reject absolute symlink escapes |
+| SANDBOX-023 | Verify sandbox commands inherit only standard descriptors plus the explicit credential FD |
+| SANDBOX-024 | Confirm that a writable workspace FIFO is an intentional host IPC channel for an exposed FD3 credential |
+| SANDBOX-025 | Apply `landlock: off | best_effort | required{min_abi}` profile semantics, audit effective ABI, and fail required modes when the ABI is insufficient |
+| SANDBOX-026 | Compare nested Bubblewrap under strict seccomp with and without Landlock and prove shim stacking is the monotonic refinement path |
+| SANDBOX-027 | Verify PTY-master resize delivers SIGWINCH while foreground process group identity remains stable |
+| SANDBOX-028 | Verify PID-1 default SIGTERM behavior, explicit SIGTERM/SIGINT delivery, and SIGCHLD reaping |
+| SANDBOX-029 | Verify seccomp socket-creation denial while an inherited Unix socket remains usable |
+| SANDBOX-030 | Record and verify Landlock ABI/accepted-rights behavior across target distributions |
+| SANDBOX-031 | Verify the strict seccomp denylist under Python, shell, Rust, threads, subprocess, SSL, and nested Bubblewrap runtimes |
+| SANDBOX-032 | Detect `--bind-fd`/`--ro-bind-fd` with help plus a harmless FD mount, report the backend feature, and persist it in sandbox audit metadata |
+| SANDBOX-033 | Construct refined profiles only when fixed fields are equal and workspace/network/seccomp/Landlock fields do not broaden |
+| SANDBOX-034 | Accept the `sandboxed_pane`, `pane_exec`, `pane_input`, and `pane_resize` capability operations only with their intended scopes; require a high-trust issuer for `pane_input` |
+| SANDBOX-035 | Run the PID-1 shim under a real PTY, inherit the controlling terminal, forward TERM/INT/HUP, deliver resize SIGWINCH, reap children, and terminate background namespace processes after shell exit |
+| SANDBOX-036 | Transfer a private Pane control FD through the same-UID launcher broker, keep it hidden from the shell, accept only bounded versioned safe signals, and reject malformed or unknown control messages |
+| SANDBOX-037 | Probe a `sandboxed_pane` profile through the standalone worker before a Session exists, returning backend and seccomp audit evidence without requiring a live Pane |
+| SANDBOX-038 | Start a long-lived QWE sandboxed Pane through the worker with FD-pinned workspace mounts, Bubblewrap PID namespace, `--pane-init`, a private control channel, terminal output, workspace writes, and forced teardown |
+| SANDBOX-039 | Require a matching `sandboxed_pane` capability for `SESSION_CREATE` / `PANE_CREATE`, reject client profiles and long-lived credentials, persist profile/audit metadata atomically, and recover it through Pane status |
+| SANDBOX-040 | Apply the restricted terminal-output state machine before journal/VT/attachment retention; preserve fragmented display sequences and drop OSC title/clipboard, terminal queries, unknown CSI, and malformed escapes |
+| SANDBOX-041 | Grade `pane_input` capability issuance by persisted target metadata: ordinary management delegation for a sandboxed Pane, high-trust issuer for an unsandboxed Pane |
+| SANDBOX-042 | Require a matching `pane_input` capability for sandboxed `SESSION_INPUT`, persist bounded metadata-only input audit before forwarding, return audit metadata, and never store content or hashes |
+| SANDBOX-043 | Require `pane_input` capability in sandboxed write ATTACH_OPEN, revalidate and audit every Input frame before forwarding, and expose capability-aware CLI/compositor paths |
+| SANDBOX-044 | Implement standalone `SESSION_RESIZE`; require `pane_resize` capability for sandboxed Panes, attachment authority for ordinary Panes, and verify the worker PTY dimensions change |
+| SANDBOX-045 | Keep worker Attach input fail closed unless qwed's internal `input_authorized` marker is present, preventing a direct worker Attach from bypassing capability and audit checks |
+| SANDBOX-046 | Start a sandboxed Pane with shared PID namespace and hard Pane cgroup scope, use cgroup-only control, start a detached process, and prove cgroup.kill removes it after shell/shim exit |
+| SANDBOX-047 | Require `pane_exec` for sandboxed AGENT_EXEC, inherit the parent Pane profile by default, allow only construction-time-valid refinements, and reject fixed-field change or broadening |
+| SANDBOX-048 | Persist the first orphan-since timestamp after all operation capabilities expire, terminate after 15 minutes, and reject new sandboxed Panes at 16 orphaned Panes |
+| SANDBOX-049 | Terminate affected sandboxed Panes immediately on termination-level Principal revocation and report `affected_sandboxed_panes` |
+| SANDBOX-050 | Preserve affected sandboxed Panes on administrative Principal revocation; explicit Session kill remains available |
+| SANDBOX-051 | Track worker and sandbox shim lifetime/signals through pidfd, open pidfd only after start-token validation, and retain `/proc` identity matching as an unsupported-kernel fallback |
+| SANDBOX-052 | Filter Agent command stdout, stderr, and PTY streams before cursor advancement or event retention, after credential redaction, and prove an OSC title/clipboard payload cannot enter replay |
+| SANDBOX-053 | Share the production Pane control decoder between the shim and a `cargo-fuzz` target; reject malformed frames without panic and retain the deterministic exhaustive input test |
+| SANDBOX-054 | Fuzz the restricted terminal-output state machine with arbitrary fragmented and coalesced input without panic, while retaining deterministic allow/deny sequence vectors |
 
 ## Core Object Model
 
@@ -248,7 +364,7 @@ measurements pass.
 | MAC-001 | Create, use, expose, and remove the temporary local signing identity | Dedicated Keychain signs all four executables; package records `local-self-signed` and `public_trust: false`; public gate rejects it; cleanup removes Keychain/trust and restores the user search list |
 | PACK-001 | Build a native release package | All four executables report the manifest version; payload paths are portable; a safely extractable archive, SHA-256 checksums, and `qwe-release/v1` metadata are present |
 | PACK-002 | Verify and install a package into an isolated prefix | Checksums pass, executable modes are correct, native service assets are rendered without a checkout path, and no service is started |
-| PACK-003 | Reinstall while preserving state, restart qwed, and migrate v9 state | SQLite is preserved during install; the same worker/task are adopted; startup migrates schema v9 to v10 |
+| PACK-003 | Reinstall while preserving state, restart qwed, and migrate v9 state | SQLite is preserved during install; the same worker/task are adopted; startup migrates schema v9 through the current schema v20 |
 | PACK-004 | Sign, notarize, and assess the public macOS artifact | Developer ID signatures are verified, notarization is accepted, and Gatekeeper assessment passes |
 | PACK-005 | Exercise the installed Linux service through systemd | The installed unit starts qwed; binary reinstall preserves state; SIGKILL restarts the service; the same worker/task are adopted; stop cleans processes and persists closed/stopped state |
 | PERF-001 | Run release-mode Attach and soak | Eight independent Sessions complete real Attach/snapshot/detach cycles within configured latency and aggregate-RSS limits throughout the soak |
@@ -300,7 +416,7 @@ release targets.
 |---|---|---|
 | SHARED-001 | Validate the ADR 0021 shared prerequisites in a disposable spike | Two to four Pane workers run under one logical Session with isolated terminal state, per-Pane cgroup scopes, Attach targeting, a read-only observer, migration preservation, recovery, health, and complete teardown |
 | SHARED-002 | Integrate multiple Pane workers through production qwed | qwed inventories workers by Pane and owns discovery, adoption, health, cleanup, Attach routing, and observer channel persistence |
-| SHARED-003 | Migrate a populated v10 database to schema v11 | Sessions, Panes, Tasks, Leases, attachment authority, idempotency records, policy, and history survive with stable identities |
+| SHARED-003 | Migrate a populated v10 database through schema v12 | Sessions, Panes, Tasks, Leases, attachment authority, idempotency records, policy, layout metadata, and history survive with stable identities |
 | SHARED-004 | Recover multiple Pane workers through production qwed | qwed discovers, adopts, reports health for, and routes operations by Pane; one Pane loss does not mark unrelated Panes lost |
 | SHARED-005 | Exercise interactive and observer channels on one Pane | Interactive authority is exclusive for that Pane; the qwed-owned observer receives snapshot/output only and cannot input, resize, or control |
 | SHARED-006 | Tear down a Pane ResourceScope with detached jobs | The complete Pane scope closes without residual processes or controller state, and the cleanup tombstone records success |
@@ -309,8 +425,8 @@ The shared-prerequisites spike passes for two- and four-Pane runs on Fedora Linu
 systemd user cgroup v2 delegation in
 [Experiment 0028](experiments/0028-stage6-shared-prerequisites-spike.md). The
 result uses a spike-local supervisor and direct worker Attach. Production
-qwed multi-Pane inventory and recovery now pass through
-`just stage7-multi-pane`; observer-channel persistence remains open.
+qwed multi-Pane inventory, recovery, interactive channels, and qwed-owned
+observer channels now pass through `just stage7-multi-pane`.
 Experiment 0028 recommended the accepted observer projection and
 complete-scope-teardown rules.
 
@@ -318,8 +434,8 @@ Stage 6.5 accepted ADR 0021 on 2026-11-09 with Pane-first enforcement,
 Pane-keyed inventory and Attach, the qwed-owned observer projection, complete
 scope teardown, and the v11 migration invariants in
 [Storage Migration](storage-migration.md). The production shared-prerequisite
-rows are implemented under Stage 7; observer-channel persistence remains
-open.
+rows are implemented under Stage 7. Schema v12 adds the durable Pane layout
+metadata governed by ADR 0023.
 
 ## Stage 7 Resource Governance
 
@@ -337,6 +453,9 @@ rejection, requested/effective policy, crash-restart persistence, bounded
 events, short-lived startup acknowledgement, detached-job scope cleanup, and
 concurrent memory/CPU/task pressure with qwed latency. The short soak covers
 eight Sessions with two Panes, qwed restarts, churn, Attach cycles, and scope
-cleanup. Fedora installed-systemd qualification passes. Ubuntu 22.04, Ubuntu
-24.04, and Debian 12 remain blocked on unavailable real-VM targets; the
-five-hour operation-dense release soak remains open.
+cleanup. Fedora and the Ubuntu 22.04, Ubuntu 24.04, and Debian 12 real-VM
+targets pass the installed-systemd probes. The five-hour operation-dense
+release soak remains open. History-scale regressions cover startup and
+teardown with thousands of completed Panes; see
+[Experiment 0041](experiments/0041-linux-vm-qualification.md) for the restart
+reconciliation defect and its regression evidence.

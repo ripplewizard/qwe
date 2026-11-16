@@ -28,7 +28,7 @@ def receive_exact(stream, count):
     return b"".join(chunks)
 
 
-def send_control(path, operation, payload, timeout=10):
+def send_control(path, operation, payload, timeout=10, auth_context=None):
     request = {
         "version": PROTOCOL_VERSION,
         "request_id": f"stage7-{time.time_ns()}",
@@ -36,6 +36,8 @@ def send_control(path, operation, payload, timeout=10):
         "operation": operation,
         "payload": payload,
     }
+    if auth_context is not None:
+        request["auth_context"] = auth_context
     encoded = json.dumps(request, separators=(",", ":")).encode()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
         stream.settimeout(timeout)
@@ -51,6 +53,15 @@ def send_control(path, operation, payload, timeout=10):
 
 def request(path, operation, payload):
     return send_control(path, operation, payload)
+
+
+def request_with_capability(path, operation, payload, capability):
+    return send_control(
+        path,
+        operation,
+        payload,
+        auth_context={"capability": capability},
+    )
 
 
 def expect_error(path, operation, payload, code):
@@ -73,10 +84,14 @@ def wait_for_socket(path, process):
     raise RuntimeError(f"timed out waiting for {path}")
 
 
-def start_qwed(binary, socket_path, log_path):
+def start_qwed(binary, socket_path, log_path, credentials_dir=None, env=None):
     log = open(log_path, "ab", buffering=0)
+    command = [binary, "--socket", socket_path]
+    if credentials_dir is not None:
+        command.extend(["--credentials-dir", str(credentials_dir)])
     process = subprocess.Popen(
-        [binary, "--socket", socket_path],
+        command,
+        env=env,
         stdout=log,
         stderr=log,
         start_new_session=True,
@@ -129,7 +144,13 @@ def claim(path, session_id, owner):
 def cgroup_path(pid):
     for line in Path(f"/proc/{pid}/cgroup").read_text().splitlines():
         if line.startswith("0::"):
-            return Path("/sys/fs/cgroup") / line[3:].lstrip("/")
+            path = Path("/sys/fs/cgroup") / line[3:].lstrip("/")
+            for candidate in (path, *path.parents):
+                if candidate.name.startswith("qwe-pane-") and candidate.name.endswith(
+                    ".scope"
+                ):
+                    return candidate
+            return path
     raise RuntimeError(f"PID {pid} has no cgroup v2 path")
 
 

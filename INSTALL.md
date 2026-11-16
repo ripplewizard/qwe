@@ -88,12 +88,26 @@ On Fedora, use `sha256sum` instead of `shasum`.
 The installer:
 
 - verifies every payload against `SHA256SUMS`;
-- installs `qwe`, `qwed`, `qwe-worker`, and `qwe-session-exec` into
-  `~/.local/bin`;
+- installs `qwe`, `qwed`, `qwe-worker`, `qwe-session-exec`, and
+  `qwe-sandbox-init` into `~/.local/bin`;
 - installs the systemd user unit into `~/.config/systemd/user`;
 - does not start or enable the service automatically.
 
 If `~/.local/bin` is not on `PATH`, add it in your shell configuration.
+
+## Ubuntu 24.04 AppArmor
+
+Ubuntu 24.04 restricts unprivileged user namespaces by default. Install the
+path-scoped Bubblewrap profile instead of disabling that global restriction:
+
+```sh
+sudo "$HOME/share/qwe/apparmor/install.sh"
+```
+
+The packaged profile allows user namespaces for Bubblewrap at
+`/usr/bin/bwrap`, `/usr/local/bin/bwrap`, and `/opt/local/bin/bwrap`. If QWE is
+configured with another `QWE_BWRAP_PATH`, an administrator must review and
+extend the profile for that exact path.
 
 ## Start the service
 
@@ -161,7 +175,8 @@ rm -f "$HOME/.config/systemd/user/qwe.service"
 rm -f "$HOME/.local/bin/qwe" \
   "$HOME/.local/bin/qwed" \
   "$HOME/.local/bin/qwe-worker" \
-  "$HOME/.local/bin/qwe-session-exec"
+  "$HOME/.local/bin/qwe-session-exec" \
+  "$HOME/.local/bin/qwe-sandbox-init"
 systemctl --user daemon-reload
 ```
 

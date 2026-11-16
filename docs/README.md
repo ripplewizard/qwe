@@ -7,8 +7,11 @@
 - [Technical Architecture](technical-architecture.md): process model, crate
   graph, state ownership, persistence, and security.
 - [IPC Protocol](ipc-protocol.md): field-level client, Host, and worker protocol.
-- [Storage Migration](storage-migration.md): accepted v10-to-v11 invariants for
-  Pane workers, ResourceScope, Principal, and multi-Pane authority.
+- [Storage Migration](storage-migration.md): v10-to-v11 shared prerequisites,
+  Pane layout through v13, command metadata in v14, capability/revocation state
+  in v15, sandbox profiles in v16, capability audit metadata in v17, and
+  v18 Pane sandbox metadata, v19 bounded input audit, and current v20 orphan
+  lifecycle state.
 - [Protocol Schema](../protocol/schema/qwe-v1.schema.json): canonical Attach
   frames, payloads, limits, state machines, and stable test-ID manifest.
 - [Extension Architecture](extension-architecture.md): deferred capabilities
@@ -36,6 +39,34 @@
   macOS public distribution deferred to a later milestone.
 - [ADR 0021](adr/0021-shared-prerequisites.md): accepted ResourceScope,
   per-Pane worker topology, channel profiles, and minimum Principal model.
+- [ADR 0022](adr/0022-session-layout-compositor.md): Pane-targeted Attach,
+  deterministic layout query, and the first client compositor slice.
+- [ADR 0023](adr/0023-durable-pane-layout.md): schema v12 Pane ordering,
+  relative weight, z-index, and durable focus.
+- [ADR 0024](adr/0024-pane-composition-controls.md): relative split, close,
+  focus, and reorder controls.
+- [ADR 0025](adr/0025-copy-and-quick-menu.md): focused-Pane visible-screen copy
+  and the client-only quick menu.
+- [ADR 0026](adr/0026-fixed-floating-panes.md): worker-backed fixed floating
+  Panes and persisted overlay z-order.
+- [ADR 0027](adr/0027-floating-bounds-and-keyboard-move.md): schema v13 floating
+  rectangles and keyboard move/resize.
+- [ADR 0028](adr/0028-mouse-drag-and-hit-testing.md): SGR mouse drag,
+  topmost-z hit-testing, and child mouse-event routing.
+- [ADR 0029](adr/0029-mouse-resize-handle.md): floating bottom-right mouse
+  resize.
+- [ADR 0030](adr/0030-floating-z-order.md): floating click-to-raise and
+  persisted z-order.
+- [ADR 0031](adr/0031-scrollback-and-mouse-copy.md): bounded scrollback and
+  focused-Pane mouse selection.
+- [ADR 0032](adr/0032-agent-execution-model.md): accepted fresh-process agent
+  execution, command handles, bounded events, observer, and capability model.
+- [ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md): accepted external
+  Bubblewrap sandbox adapter, fail-closed capability profiles, and non-PTY and
+  PTY Linux command integration.
+- [ADR 0034](adr/0034-sandboxed-pane-and-pty.md): accepted sandboxed Pane,
+  restricted terminal output, profile refinement, and lifecycle decisions;
+  implemented for the current Linux x86_64 product slice.
 
 ## Development
 
@@ -48,7 +79,14 @@
 - [Stage 7 Resource Governance](stage7-resource-governance.md): cgroup v2
   profiles, lifecycle hardening, observability, long-run soak, and Linux
   qualification. This is not a container-runtime plan. Current evidence is in
-  [Experiment 0029](experiments/0029-stage7-multipane-pressure-and-qualification.md).
+  [Experiment 0041](experiments/0041-linux-vm-qualification.md).
+- [Stage 8 Session Layout](stage8-session-layout.md): Pane-targeted Attach,
+  compositor controls, durable layout, copy/menu, and fixed floating Panes.
+- [Agent Execution Model](agent-execution-model.md): Stages 9.1-9.5 and the
+  completed accepted first delivery:
+  fresh-process exec, bounded events, Principal capabilities, revocation,
+  descriptor credentials, redaction, observer push, PTY output, and foreground
+  shell idle.
 - [Readiness](development-readiness.md): known gaps and start gate.
 - [Roadmap](development-roadmap.md): implementation milestones.
 - [Testing Strategy](testing-strategy.md): layers, commands, and acceptance.
@@ -117,6 +155,62 @@
 - [Experiment 0028](experiments/0028-stage6-shared-prerequisites-spike.md):
   per-Pane workers, resource scopes, storage migration, Attach, observer,
   recovery, and cleanup spike for ADR 0021.
+- [Experiment 0029](experiments/0029-stage7-multipane-pressure-and-qualification.md):
+  Stage 7 multi-Pane pressure, soak, and Linux qualification.
+- [Experiment 0030](experiments/0030-stage8-layout-foundation.md): Pane-targeted
+  Attach, deterministic tiling, concurrent Pane channels, and the first
+  interactive compositor slice.
+- [Experiment 0031](experiments/0031-stage8-durable-layout.md): schema v12
+  migration, durable Pane metadata, focus persistence, and qwed restart.
+- [Experiment 0032](experiments/0032-stage8-composition-controls.md):
+  compositor split/close/reorder, live layout membership, and restart
+  persistence.
+- [Experiment 0033](experiments/0033-stage8-copy-and-menu.md): Pane-clamped copy,
+  explicit clipboard results, and menu-key isolation from PTY input.
+- [Experiment 0034](experiments/0034-stage8-fixed-floating-panes.md): fixed
+  floating Pane rendering, focus/input, and close semantics.
+- [Experiment 0035](experiments/0035-stage8-durable-floating-bounds.md):
+  floating bounds persistence and keyboard move/resize.
+- [Experiment 0036](experiments/0036-stage8-mouse-drag.md): simulated SGR mouse
+  drag and persisted floating bounds.
+- [Experiment 0037](experiments/0037-stage8-mouse-resize.md): SGR mouse resize
+  handle and persisted dimensions.
+- [Experiment 0038](experiments/0038-stage8-floating-z-order.md): overlapping
+  floating Panes and click-to-raise persistence.
+- [Experiment 0039](experiments/0039-stage8-scrollback-mouse-copy.md):
+  scrollback navigation, historical copy, and mouse selection.
+- [Experiment 0040](experiments/0040-stage8-cross-platform-smoke.md): native
+  macOS, Linux, and rootless Podman Stage 8 smoke results.
+- [Experiment 0041](experiments/0041-linux-vm-qualification.md): Ubuntu 22.04,
+  Ubuntu 24.04, and Debian 12 KVM qualification plus two successful six-hour
+  long-run attempts.
+- [Experiment 0042](experiments/0042-stage7-8-closure.md): final Stage 7/8
+  gates, interactive/observer coexistence, and Agent Execution ADR acceptance.
+- [Experiment 0043](experiments/0043-stage9-agent-exec.md): Stage 9.1 real
+  process exec, replay, recovery, worker-loss, and Pane-scope inheritance.
+- [Experiment 0044](experiments/0044-stage9-agent-security.md): Stage 9.2
+  capability scope, ancestor revocation, severity, and token redaction.
+- [Experiment 0045](experiments/0045-stage9-command-credentials.md): Stage 9.3
+  descriptor credentials and streaming command-output redaction.
+- [Experiment 0046](experiments/0046-stage9-observer-pty.md): Stage 9.4
+  read-only observer push and PTY-merged command output.
+- [Experiment 0047](experiments/0047-stage9-foreground-idle.md): Stage 9.5
+  interactive-shell foreground idle and first-delivery closure.
+- [Experiment 0048](experiments/0048-bubblewrap-contract-poc.md): Bubblewrap
+  FD3/cgroup/PTY/parent-death contract probes for ADR 0033.
+- [Experiment 0049](experiments/0049-stage10-sandbox-integration.md): first
+  capability-controlled Linux pipe-split and PTY sandbox execution through
+qwed, worker, `qwe-session-exec`, Bubblewrap, and the optional Landlock init.
+- [Experiment 0050](experiments/0050-agent-command-signal.md): AGENT-013
+  whitelisted signal delivery to non-PTY, sandboxed, and PTY foreground process
+  groups.
+- [`qwe-sandbox-init` Threat Model](sandbox-init-threat-model.md): trusted
+  computing base, failure invariants, and fuzz plan.
+- [Terminal Output Policy](terminal-output-policy.md): restricted escape
+  sequence filtering and output-to-input injection defenses.
+- [Experiment 0051](experiments/0051-sandbox-pane-poc-gates.md): sandboxed
+  Pane PoC gates, current x86_64 distribution evidence, and deferred release
+  scope.
 
 ## Reading Order
 

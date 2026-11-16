@@ -1,8 +1,11 @@
+mod agent;
 mod resources;
+#[cfg(target_os = "linux")]
+mod sandbox;
 
 use clap::Parser;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
-use qwe_core::{ProcessIdentity, ResourcePolicy};
+use qwe_core::{ProcessIdentity, ResourcePolicy, SandboxProcessMode, SandboxProfile};
 use qwe_protocol::{
     ATTACH_OUTPUT_QUEUE_BYTES, ATTACH_PROTOCOL_VERSION, PROTOCOL_VERSION, ProtocolErrorBody,
     RequestEnvelope, ResponseEnvelope, attach, read_frame, validate_version, verify_same_uid,
@@ -11,14 +14,14 @@ use qwe_protocol::{
 use qwe_runtime::{
     BoundedJournal, CursorStyle as RuntimeCursorStyle,
     MouseProtocolEncoding as RuntimeMouseProtocolEncoding,
-    MouseProtocolMode as RuntimeMouseProtocolMode, TerminalScreen, TerminalSnapshot,
-    process_identity,
+    MouseProtocolMode as RuntimeMouseProtocolMode, RestrictedTerminalFilter, TerminalScreen,
+    TerminalSnapshot, process_identity,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{BufRead, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::FromRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -40,9 +43,9 @@ const ATTACH_WRITE_STALL: Duration = Duration::from_secs(5);
 #[command(version, about = "QWE durable Session worker")]
 struct Args {
     #[arg(long, hide = true)]
-    worker_socket: PathBuf,
+    worker_socket: Option<PathBuf>,
     #[arg(long, hide = true)]
-    worker_session_id: String,
+    worker_session_id: Option<String>,
     #[arg(long, hide = true)]
     worker_pane_id: Option<String>,
     #[arg(long, hide = true, default_value = "sh")]
@@ -64,12 +67,42 @@ struct Args {
     #[arg(long, hide = true)]
     worker_credential_fd: Option<i32>,
     #[arg(long, hide = true)]
+    worker_sandbox_profile: Option<String>,
+    #[arg(long, hide = true)]
+    sandbox_probe_profile: Option<String>,
+    #[arg(long, hide = true)]
     worker_systemd_scope: bool,
+    #[arg(long, hide = true)]
+    worker_existing_scope: bool,
+}
+
+struct WorkerCreateOptions<'a> {
+    session_id: &'a str,
+    pane_id: &'a str,
+    program: &'a str,
+    arguments: &'a [String],
+    resource_policy: ResourcePolicy,
+    credential_fd: Option<i32>,
+    sandbox_profile: Option<SandboxProfile>,
+    runtime_dir: &'a Path,
+    use_systemd_scope: bool,
+    use_existing_scope: bool,
+}
+
+struct SandboxLaunch {
+    invocation: crate::sandbox::BubblewrapInvocation,
+    mount_manifest: PathBuf,
+    seccomp_file: PathBuf,
+    status_path: PathBuf,
+    status_receiver: agent::SandboxStatusReceiver,
+    control_path: Option<PathBuf>,
+    control_receiver: Option<mpsc::Receiver<Result<UnixStream, String>>>,
 }
 
 struct WorkerSession {
     pane_id: String,
     pid: u32,
+    sandbox_child_pid: Option<u32>,
     identity: ProcessIdentity,
     worker_identity: ProcessIdentity,
     resources: resources::ResourceController,
@@ -81,11 +114,15 @@ struct WorkerSession {
     running: AtomicBool,
     exit_code: Mutex<Option<i32>>,
     exit_signal: Mutex<Option<String>>,
+    sandbox_profile: Option<SandboxProfile>,
+    pane_control: Mutex<Option<UnixStream>>,
+    agents: agent::AgentManager,
 }
 
 struct TerminalStream {
     journal: BoundedJournal,
     terminal: TerminalScreen,
+    output_filter: Option<RestrictedTerminalFilter>,
     attachments: HashMap<u64, Arc<AttachmentQueue>>,
 }
 
@@ -128,7 +165,48 @@ fn error(code: &str, message: impl Into<String>) -> ProtocolErrorBody {
     ProtocolErrorBody {
         code: code.into(),
         message: message.into(),
+        details: None,
     }
+}
+
+#[cfg(target_os = "linux")]
+fn sandbox_probe(payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    let profile = serde_json::from_value::<qwe_core::SandboxProfile>(
+        payload
+            .get("sandbox_profile")
+            .cloned()
+            .ok_or_else(|| error("invalid_request", "missing sandbox_profile"))?,
+    )
+    .map_err(|failure| error("invalid_request", failure.to_string()))?;
+    agent::validate_sandbox_profile(&profile)?;
+    let seccomp_profile_hash = crate::sandbox::seccomp_filter_hash(&profile.seccomp)
+        .map_err(|failure| error("sandbox_profile_unsupported", failure.to_string()))?;
+    let support = crate::sandbox::probe_bubblewrap(profile.landlock).map_err(|failure| {
+        error("sandbox_backend_unavailable", failure.message)
+            .with_details(failure.details.reason, failure.details.diagnostics)
+    })?;
+    Ok(json!({
+        "available": true,
+        "version": support.version,
+        "path": support.path,
+        "probe_time_ms": support.probe_time_ms,
+        "seccomp_profile_hash": seccomp_profile_hash,
+        "landlock_abi": support.landlock_abi,
+        "fd_bind": support.fd_bind,
+        "fresh": true
+    }))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn sandbox_probe(_payload: &Value) -> Result<Value, ProtocolErrorBody> {
+    Err(error(
+        "unsupported_platform",
+        "Bubblewrap sandboxing is supported only on Linux",
+    )
+    .with_details(
+        "unsupported_platform",
+        json!({"platform": std::env::consts::OS}),
+    ))
 }
 
 fn reclaim_token() -> Result<String, std::io::Error> {
@@ -241,17 +319,28 @@ impl AttachmentQueue {
 }
 
 impl TerminalStream {
-    fn new(rows: u16, columns: u16) -> Result<Self, std::io::Error> {
+    fn new(rows: u16, columns: u16, restricted_output: bool) -> Result<Self, std::io::Error> {
         Ok(Self {
             journal: BoundedJournal::new(JOURNAL_LIMIT).map_err(|failure| {
                 std::io::Error::new(std::io::ErrorKind::InvalidInput, failure.to_string())
             })?,
             terminal: TerminalScreen::new(rows, columns, TERMINAL_SCROLLBACK_LINES),
+            output_filter: restricted_output.then(RestrictedTerminalFilter::new),
             attachments: HashMap::new(),
         })
     }
 
     fn append_output(&mut self, data: &[u8]) {
+        let filtered;
+        let data = if let Some(filter) = self.output_filter.as_mut() {
+            filtered = filter.push(data);
+            filtered.as_slice()
+        } else {
+            data
+        };
+        if data.is_empty() {
+            return;
+        }
         let stream_offset = self.journal.total_written();
         self.journal.append(data);
         self.terminal.process(data);
@@ -262,6 +351,15 @@ impl TerminalStream {
 
     fn stream_offset(&self) -> u64 {
         self.journal.total_written()
+    }
+
+    fn finish_output(&mut self) {
+        if let Some(filter) = self.output_filter.as_mut() {
+            let remaining = filter.finish();
+            if !remaining.is_empty() {
+                self.append_output(&remaining);
+            }
+        }
     }
 }
 
@@ -413,16 +511,216 @@ fn start_topology_listener(
     Ok((path, receiver))
 }
 
+fn start_pane_control_listener(
+    runtime_dir: &Path,
+) -> std::io::Result<(PathBuf, mpsc::Receiver<Result<UnixStream, String>>)> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let path = runtime_dir.join(format!("pane-control-{}-{nonce}.sock", std::process::id()));
+    let listener = UnixListener::bind(&path)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    listener.set_nonblocking(true)?;
+    let (sender, receiver) = mpsc::channel();
+    let cleanup_path = path.clone();
+    thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let result = loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let result = stream
+                        .set_nonblocking(false)
+                        .map(|()| stream)
+                        .map_err(|failure| failure.to_string());
+                    break result;
+                }
+                Err(failure) if failure.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        break Err("Pane control broker connection timed out".to_string());
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(failure) => break Err(failure.to_string()),
+            }
+        };
+        let _ = sender.send(result);
+        let _ = fs::remove_file(cleanup_path);
+    });
+    Ok((path, receiver))
+}
+
+fn prepare_sandbox_launch(
+    runtime_dir: &Path,
+    program: &str,
+    arguments: &[String],
+    profile: &SandboxProfile,
+    hard_scope_available: bool,
+) -> Result<SandboxLaunch, Box<dyn std::error::Error>> {
+    if profile.process_namespace == SandboxProcessMode::Shared && !hard_scope_available {
+        return Err(
+            "process_namespace:shared requires a hard Pane cgroup scope for descendant teardown"
+                .into(),
+        );
+    }
+    let program = agent::resolve_program(program)?;
+    let mount_paths = crate::sandbox::pane_mount_paths(profile)?;
+    let mut mounts = vec![(20_i32, mount_paths.workspace.clone())];
+    let mut protected_pins = Vec::with_capacity(mount_paths.protected_paths.len());
+    for (index, path) in mount_paths.protected_paths.iter().enumerate() {
+        let descriptor = 21_i32
+            .checked_add(i32::try_from(index)?)
+            .ok_or("Pane protected-path descriptor overflowed i32")?;
+        protected_pins.push((path.clone(), descriptor));
+        mounts.push((descriptor, path.clone()));
+    }
+    if let Some(home) = &mount_paths.home {
+        mounts.push((19, home.clone()));
+    }
+    let pins = crate::sandbox::PaneFdPins {
+        workspace: 20,
+        protected_paths: protected_pins,
+        home: mount_paths.home.as_ref().map(|_| 19),
+    };
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let mount_manifest =
+        runtime_dir.join(format!("pane-mounts-{}-{nonce}.json", std::process::id()));
+    let manifest_bytes = serde_json::to_vec(&json!({
+        "mounts": mounts
+            .iter()
+            .map(|(descriptor, path)| json!({"fd": descriptor, "path": path}))
+            .collect::<Vec<_>>()
+    }))?;
+    let mut manifest_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&mount_manifest)?;
+    manifest_file.write_all(&manifest_bytes)?;
+    manifest_file.flush()?;
+    let seccomp_file = runtime_dir.join(format!(
+        "pane-seccomp-{}-{nonce}.filter",
+        std::process::id()
+    ));
+    if let Err(failure) = crate::sandbox::write_seccomp_filter(&seccomp_file, &profile.seccomp) {
+        let _ = fs::remove_file(&mount_manifest);
+        return Err(failure.into());
+    }
+    let sandbox_init = match crate::sandbox::sandbox_init_for_landlock(profile.landlock) {
+        Ok(path) => path,
+        Err(failure) => {
+            let _ = fs::remove_file(&mount_manifest);
+            let _ = fs::remove_file(&seccomp_file);
+            return Err(failure.into());
+        }
+    };
+    let (status_path, status_receiver) = match agent::start_sandbox_status_listener(runtime_dir) {
+        Ok(listener) => listener,
+        Err(failure) => {
+            let _ = fs::remove_file(&mount_manifest);
+            let _ = fs::remove_file(&seccomp_file);
+            return Err(failure.into());
+        }
+    };
+    let control_fd = (profile.process_namespace == SandboxProcessMode::Isolated).then_some(10_i32);
+    let invocation = match crate::sandbox::bubblewrap_invocation(
+        profile,
+        &program,
+        arguments,
+        None,
+        crate::sandbox::BubblewrapOptions {
+            status_fd: Some(12),
+            seccomp_fd: Some(11),
+            credential_present: false,
+            term: Some("xterm-256color"),
+            sandbox_init: sandbox_init.as_deref(),
+            pane_init: true,
+            control_fd,
+            pane_fd_pins: Some(&pins),
+        },
+    ) {
+        Ok(invocation) => invocation,
+        Err(failure) => {
+            let _ = fs::remove_file(&mount_manifest);
+            let _ = fs::remove_file(&seccomp_file);
+            let _ = fs::remove_file(&status_path);
+            return Err(failure.into());
+        }
+    };
+    let (control_path, control_receiver) = if control_fd.is_some() {
+        let (path, receiver) = match start_pane_control_listener(runtime_dir) {
+            Ok(listener) => listener,
+            Err(failure) => {
+                let _ = fs::remove_file(&mount_manifest);
+                let _ = fs::remove_file(&seccomp_file);
+                let _ = fs::remove_file(&status_path);
+                return Err(failure.into());
+            }
+        };
+        (Some(path), Some(receiver))
+    } else {
+        (None, None)
+    };
+    Ok(SandboxLaunch {
+        invocation,
+        mount_manifest,
+        seccomp_file,
+        status_path,
+        status_receiver,
+        control_path,
+        control_receiver,
+    })
+}
+
+fn add_sandbox_launcher_args(command: &mut CommandBuilder, sandbox: &SandboxLaunch) {
+    if let Some(path) = &sandbox.control_path {
+        command.arg("--control-socket");
+        command.arg(path);
+        command.args(["--control-fd", "10"]);
+    }
+    command.arg("--sandbox-status-socket");
+    command.arg(&sandbox.status_path);
+    command.args(["--sandbox-status-fd", "12"]);
+    command.arg("--sandbox-seccomp-file");
+    command.arg(&sandbox.seccomp_file);
+    command.args(["--sandbox-seccomp-fd", "11"]);
+    command.arg("--pane-mount-manifest");
+    command.arg(&sandbox.mount_manifest);
+}
+
+fn add_launch_program(
+    command: &mut CommandBuilder,
+    sandbox: Option<&SandboxLaunch>,
+    program: &str,
+    arguments: &[String],
+) {
+    if let Some(sandbox) = sandbox {
+        command.arg(&sandbox.invocation.executable);
+        command.args(&sandbox.invocation.arguments);
+    } else {
+        command.arg(program);
+        command.args(arguments);
+    }
+}
+
 impl WorkerSession {
-    fn create(
-        pane_id: &str,
-        program: &str,
-        arguments: &[String],
-        resource_policy: ResourcePolicy,
-        credential_fd: Option<i32>,
-        runtime_dir: &Path,
-        use_systemd_scope: bool,
-    ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
+    fn create(options: WorkerCreateOptions<'_>) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
+        let WorkerCreateOptions {
+            session_id,
+            pane_id,
+            program,
+            arguments,
+            resource_policy,
+            credential_fd,
+            sandbox_profile,
+            runtime_dir,
+            use_systemd_scope,
+            use_existing_scope,
+        } = options;
+        if sandbox_profile.is_some() && credential_fd.is_some() {
+            return Err("sandboxed Panes do not accept long-lived credentials".into());
+        }
         let pair = native_pty_system().openpty(PtySize {
             rows: 24,
             cols: 80,
@@ -433,13 +731,28 @@ impl WorkerSession {
         let credential_socket = credential
             .map(|secret| start_credential_broker(runtime_dir, secret))
             .transpose()?;
-        let topology = if use_systemd_scope {
+        let topology = if use_systemd_scope || use_existing_scope {
             Some(start_topology_listener(runtime_dir)?)
         } else {
             None
         };
+        let sandbox = sandbox_profile
+            .as_ref()
+            .map(|profile| {
+                prepare_sandbox_launch(
+                    runtime_dir,
+                    program,
+                    arguments,
+                    profile,
+                    use_systemd_scope || use_existing_scope,
+                )
+            })
+            .transpose()?;
         let executable = std::env::current_exe()?.with_file_name("qwe-session-exec");
-        let mut command = if let Some((topology_socket, _)) = &topology {
+        let mut command = if use_systemd_scope {
+            let (topology_socket, _) = topology
+                .as_ref()
+                .expect("nested systemd scope has a topology listener");
             let unit = qwe_runtime::pane_scope_unit(pane_id);
             let mut command = CommandBuilder::new("/usr/bin/systemd-run");
             command.args(["--user", "--scope", "--quiet", "--unit", &unit]);
@@ -447,6 +760,7 @@ impl WorkerSession {
                 "--property=MemoryAccounting=yes",
                 "--property=TasksAccounting=yes",
                 "--property=CPUAccounting=yes",
+                "--property=Delegate=yes",
             ]);
             if let Some(bytes) = resource_policy.memory_high_bytes {
                 command.arg(format!("--property=MemoryHigh={bytes}"));
@@ -475,17 +789,25 @@ impl WorkerSession {
                 command.arg("--credential-socket");
                 command.arg(socket);
             }
-            command.arg(program);
-            command.args(arguments.iter());
+            if let Some(sandbox) = &sandbox {
+                add_sandbox_launcher_args(&mut command, sandbox);
+            }
+            add_launch_program(&mut command, sandbox.as_ref(), program, arguments);
             command
-        } else if credential_socket.is_some() {
+        } else if use_existing_scope || credential_socket.is_some() || sandbox.is_some() {
             let mut command = CommandBuilder::new(executable);
+            if let Some((socket, _)) = &topology {
+                command.arg("--topology-socket");
+                command.arg(socket);
+            }
             if let Some(socket) = &credential_socket {
                 command.arg("--credential-socket");
                 command.arg(socket);
             }
-            command.arg(program);
-            command.args(arguments.iter());
+            if let Some(sandbox) = &sandbox {
+                add_sandbox_launcher_args(&mut command, sandbox);
+            }
+            add_launch_program(&mut command, sandbox.as_ref(), program, arguments);
             command
         } else {
             let mut command = CommandBuilder::new(program);
@@ -495,6 +817,36 @@ impl WorkerSession {
         command.env("TERM", "xterm-256color");
         let child = pair.slave.spawn_command(command);
         let mut child = child?;
+        let pane_control = if let Some(sandbox) = &sandbox {
+            match &sandbox.control_receiver {
+                None => None,
+                Some(receiver) => match receiver.recv_timeout(Duration::from_secs(3)) {
+                    Ok(Ok(stream)) => Some(stream),
+                    Ok(Err(failure)) => {
+                        let _ = child.kill();
+                        if let Some(path) = &sandbox.control_path {
+                            let _ = fs::remove_file(path);
+                        }
+                        let _ = fs::remove_file(&sandbox.mount_manifest);
+                        let _ = fs::remove_file(&sandbox.seccomp_file);
+                        return Err(format!("Pane control broker failed: {failure}").into());
+                    }
+                    Err(failure) => {
+                        let _ = child.kill();
+                        if let Some(path) = &sandbox.control_path {
+                            let _ = fs::remove_file(path);
+                        }
+                        let _ = fs::remove_file(&sandbox.mount_manifest);
+                        let _ = fs::remove_file(&sandbox.seccomp_file);
+                        return Err(
+                            format!("Pane control broker handshake timed out: {failure}").into(),
+                        );
+                    }
+                },
+            }
+        } else {
+            None
+        };
         let (pid, cgroup_dir, mut topology_stream) = if let Some((_, receiver)) = topology {
             match receiver.recv_timeout(Duration::from_secs(3)) {
                 Ok(Ok((pid, cgroup, stream))) => (pid, Some(cgroup), Some(stream)),
@@ -523,7 +875,19 @@ impl WorkerSession {
         let mut reader = pair.master.try_clone_reader()?;
         let master = pair.master;
         let initial_policy = resource_policy.clone();
-        let resources = resources::ResourceController::new(resource_policy, cgroup_dir);
+        let resources = match resources::ResourceController::new(
+            resource_policy,
+            cgroup_dir,
+            use_systemd_scope,
+            std::process::id(),
+            pid,
+        ) {
+            Ok(resources) => resources,
+            Err(failure) => {
+                let _ = child.kill();
+                return Err(format!("failed to isolate Pane workload: {failure}").into());
+            }
+        };
         if let Err(failure) = resources.start_event_watcher() {
             let _ = child.kill();
             resources.cleanup_cgroup();
@@ -541,22 +905,56 @@ impl WorkerSession {
                 return Err(format!("Session topology acknowledgement failed: {failure}").into());
             }
         }
+        let sandbox_child_pid = if let Some(sandbox) = &sandbox {
+            let status_stream = match sandbox.status_receiver.recv_timeout(Duration::from_secs(3)) {
+                Ok(Some(stream)) => stream,
+                Ok(None) | Err(_) => {
+                    let _ = child.kill();
+                    resources.cleanup_cgroup();
+                    return Err("Bubblewrap Pane status channel did not connect".into());
+                }
+            };
+            match agent::await_bubblewrap_startup_stream(status_stream) {
+                Ok(pid) => Some(pid),
+                Err(failure) => {
+                    let _ = child.kill();
+                    resources.cleanup_cgroup();
+                    return Err(format!("Bubblewrap Pane startup failed: {failure}").into());
+                }
+            }
+        } else {
+            None
+        };
+        let worker_identity = process_identity(std::process::id())?;
+        let agents = agent::AgentManager::new(
+            session_id,
+            pane_id,
+            worker_identity.clone(),
+            runtime_dir.to_path_buf(),
+            resources.clone(),
+        );
         let session = Arc::new(Self {
             pane_id: pane_id.to_string(),
             pid,
+            sandbox_child_pid,
             identity,
-            worker_identity: process_identity(std::process::id())?,
+            worker_identity,
             resources,
             writer: Mutex::new(writer),
             master: Mutex::new(master),
-            stream: Mutex::new(TerminalStream::new(24, 80)?),
+            stream: Mutex::new(TerminalStream::new(24, 80, sandbox_profile.is_some())?),
             active_attachment: Mutex::new(None),
             next_attachment_id: std::sync::atomic::AtomicU64::new(1),
             running: AtomicBool::new(true),
             exit_code: Mutex::new(None),
             exit_signal: Mutex::new(None),
+            sandbox_profile,
+            pane_control: Mutex::new(pane_control),
+            agents,
         });
-        session.resources.start_monitor(pid, pgid);
+        session
+            .resources
+            .start_monitor(sandbox_child_pid.unwrap_or(pid), pgid);
         let reader_session = Arc::clone(&session);
         thread::spawn(move || {
             let mut buffer = [0_u8; 8192];
@@ -570,6 +968,11 @@ impl WorkerSession {
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .append_output(&buffer[..count]);
             }
+            reader_session
+                .stream
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .finish_output();
             if let Ok(status) = child.wait() {
                 *reader_session
                     .exit_code
@@ -643,8 +1046,43 @@ impl WorkerSession {
             "resource_policy": self.resources.policy_json(),
             "resource_metrics": self.resources.metrics_json(),
             "truncated_from": stream.journal.truncated_from(),
-            "total_written": stream.journal.total_written()
+            "total_written": stream.journal.total_written(),
+            "sandbox": self.sandbox_json()
         })
+    }
+
+    fn sandbox_json(&self) -> Value {
+        match &self.sandbox_profile {
+            Some(profile) => json!({
+                "enforced": true,
+                "backend": "bubblewrap",
+                "profile": profile,
+                "child_pid": self.sandbox_child_pid,
+                "control_channel": if profile.process_namespace == SandboxProcessMode::Isolated {
+                    "fd"
+                } else {
+                    "cgroup_only"
+                },
+                "control_protocol_version": (profile.process_namespace
+                    == SandboxProcessMode::Isolated)
+                    .then_some(1),
+                "output_policy": "restricted",
+                "input_policy": "audited_session_input"
+            }),
+            None => json!({"enforced": false, "output_policy": "full"}),
+        }
+    }
+
+    fn send_sandbox_signal(&self, signal: libc::c_int) -> std::io::Result<()> {
+        let mut control = self
+            .pane_control
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(stream) = control.as_mut() else {
+            return Ok(());
+        };
+        stream.write_all(&[1, 1, 0, 1, u8::try_from(signal).unwrap_or_default()])?;
+        stream.flush()
     }
 
     fn ping(&self, session_id: &str) -> Value {
@@ -674,7 +1112,8 @@ impl WorkerSession {
             "requested_resource_policy": self.resources.policy_json(),
             "effective_resource_policy": self.resources.effective_policy_json(),
             "resource_policy": self.resources.policy_json(),
-            "resource_metrics": self.resources.metrics_json()
+            "resource_metrics": self.resources.metrics_json(),
+            "sandbox": self.sandbox_json()
         })
     }
 
@@ -717,7 +1156,8 @@ impl WorkerSession {
             "journal_hex": hex_encode(&tail),
             "snapshot_bytes": tail.len(),
             "truncated_from": stream.journal.truncated_from(),
-            "total_written": stream.journal.total_written()
+            "total_written": stream.journal.total_written(),
+            "sandbox": self.sandbox_json()
         })
     }
 
@@ -738,6 +1178,23 @@ impl WorkerSession {
             .write_all(data.as_bytes())
             .map_err(|failure| error("internal", failure.to_string()))?;
         Ok(self.status(session_id))
+    }
+
+    fn request_resize(&self, payload: &Value) -> Result<Value, ProtocolErrorBody> {
+        let rows = payload
+            .get("rows")
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| error("invalid_request", "rows must be between 1 and 65535"))?;
+        let columns = payload
+            .get("columns")
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| error("invalid_request", "columns must be between 1 and 65535"))?;
+        let resized = self.resize(rows, columns)?;
+        Ok(json!(resized))
     }
 
     fn update_resources(
@@ -860,6 +1317,7 @@ impl WorkerSession {
             let accepted = attach::AttachAccepted {
                 protocol_version: ATTACH_PROTOCOL_VERSION,
                 session_id: open.session_id.clone(),
+                pane_id: open.pane_id.clone(),
                 owner: open.owner.clone(),
                 generation: 0,
                 reclaim_token: token,
@@ -948,7 +1406,9 @@ impl WorkerSession {
     }
 
     fn stop_task(&self, session_id: &str) -> Result<Value, ProtocolErrorBody> {
+        self.agents.terminate_all();
         if self.process_group_exists() {
+            let _ = self.send_sandbox_signal(libc::SIGTERM);
             self.signal_process_group(libc::SIGTERM)?;
             if !self.wait_for_process_group_exit(TASK_STOP_GRACE) {
                 self.signal_process_group(libc::SIGKILL)?;
@@ -983,6 +1443,7 @@ impl WorkerSession {
     }
 
     fn kill(&self, session_id: &str) -> Result<Value, ProtocolErrorBody> {
+        self.agents.terminate_all();
         if self.process_group_exists() {
             self.signal_process_group(libc::SIGKILL)?;
             if !self.wait_for_process_group_exit(TASK_STOP_WAIT) {
@@ -1106,6 +1567,7 @@ fn serve_attachment_input(
     mut stream: UnixStream,
     session: Arc<WorkerSession>,
     queue: Arc<AttachmentQueue>,
+    sandbox_input_authorized: bool,
 ) {
     loop {
         let frame = match attach::read_frame(&mut stream) {
@@ -1123,55 +1585,67 @@ fn serve_attachment_input(
                 return;
             }
         };
-        let result =
-            (|| match frame.frame_type {
-                attach::FrameType::Input => session
-                    .writer
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .write_all(&frame.payload)
-                    .map_err(|failure| attach_error("worker_protocol_error", failure.to_string())),
-                attach::FrameType::Resize => {
-                    let resize = attach::decode_json::<attach::Resize>(&frame.payload).map_err(
-                        |failure| attach_error("worker_protocol_error", failure.to_string()),
-                    )?;
-                    if resize.protocol_version != ATTACH_PROTOCOL_VERSION {
-                        return Err(attach_error(
-                            "incompatible_version",
-                            format!(
-                                "attach protocol {} is incompatible with {}",
-                                resize.protocol_version, ATTACH_PROTOCOL_VERSION
-                            ),
-                        ));
-                    }
+        let result = (|| match frame.frame_type {
+            attach::FrameType::Input => {
+                if session.sandbox_profile.is_some() && !sandbox_input_authorized {
+                    Err(attach_error(
+                        "sandbox_input_disabled",
+                        "sandboxed Pane PTY input is disabled until bounded input audit is implemented",
+                    ))
+                } else {
                     session
-                        .resize(resize.rows, resize.columns)
-                        .map(|_| ())
-                        .map_err(|failure| attach_error(&failure.code, failure.message))
+                        .writer
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .write_all(&frame.payload)
+                        .map_err(|failure| {
+                            attach_error("worker_protocol_error", failure.to_string())
+                        })
                 }
-                attach::FrameType::Ack => attach::decode_json::<attach::Ack>(&frame.payload)
+            }
+            attach::FrameType::Resize => {
+                let resize =
+                    attach::decode_json::<attach::Resize>(&frame.payload).map_err(|failure| {
+                        attach_error("worker_protocol_error", failure.to_string())
+                    })?;
+                if resize.protocol_version != ATTACH_PROTOCOL_VERSION {
+                    return Err(attach_error(
+                        "incompatible_version",
+                        format!(
+                            "attach protocol {} is incompatible with {}",
+                            resize.protocol_version, ATTACH_PROTOCOL_VERSION
+                        ),
+                    ));
+                }
+                session
+                    .resize(resize.rows, resize.columns)
                     .map(|_| ())
-                    .map_err(|failure| attach_error("worker_protocol_error", failure.to_string())),
-                attach::FrameType::Detach => {
-                    let detach = attach::decode_json::<attach::Detach>(&frame.payload).map_err(
-                        |failure| attach_error("worker_protocol_error", failure.to_string()),
-                    )?;
-                    if detach.hold_ttl_ms > 0 {
-                        return Err(attach_error(
-                            "unsupported_mode",
-                            "detached holds are scheduled for Stage 3",
-                        ));
-                    }
-                    Ok(())
+                    .map_err(|failure| attach_error(&failure.code, failure.message))
+            }
+            attach::FrameType::Ack => attach::decode_json::<attach::Ack>(&frame.payload)
+                .map(|_| ())
+                .map_err(|failure| attach_error("worker_protocol_error", failure.to_string())),
+            attach::FrameType::Detach => {
+                let detach =
+                    attach::decode_json::<attach::Detach>(&frame.payload).map_err(|failure| {
+                        attach_error("worker_protocol_error", failure.to_string())
+                    })?;
+                if detach.hold_ttl_ms > 0 {
+                    return Err(attach_error(
+                        "unsupported_mode",
+                        "detached holds are scheduled for Stage 3",
+                    ));
                 }
-                _ => Err(attach_error(
-                    "unknown_frame_type",
-                    format!(
-                        "{} is not a valid client-to-server frame",
-                        frame.frame_type.name()
-                    ),
-                )),
-            })();
+                Ok(())
+            }
+            _ => Err(attach_error(
+                "unknown_frame_type",
+                format!(
+                    "{} is not a valid client-to-server frame",
+                    frame.frame_type.name()
+                ),
+            )),
+        })();
         match result {
             Ok(()) => {
                 if frame.frame_type == attach::FrameType::Detach {
@@ -1242,6 +1716,22 @@ fn serve_worker_attachment(
         );
         return Ok(());
     }
+    if open
+        .pane_id
+        .as_deref()
+        .is_some_and(|pane_id| pane_id != session.pane_id.as_str())
+    {
+        let _ = attach::write_json_frame(
+            &mut stream,
+            attach::FrameType::Error,
+            &attach_error(
+                "pane_mismatch",
+                "attach target does not match this Pane worker",
+            ),
+        );
+        return Ok(());
+    }
+    let sandbox_input_authorized = open.input_authorized;
     let registration = match session.register_attachment(&open) {
         Ok(registration) => registration,
         Err(failure) => {
@@ -1274,7 +1764,12 @@ fn serve_worker_attachment(
     let input_session = Arc::clone(&session);
     let input_queue = Arc::clone(&registration.queue);
     thread::spawn(move || {
-        serve_attachment_input(input_stream, input_session, input_queue);
+        serve_attachment_input(
+            input_stream,
+            input_session,
+            input_queue,
+            sandbox_input_authorized,
+        );
     });
 
     loop {
@@ -1320,12 +1815,82 @@ fn worker_handle(
         "WORKER_HELLO" | "SESSION_STATUS" => Ok(session.status(session_id)),
         "SESSION_ATTACH" => Ok(session.snapshot(session_id)),
         "SESSION_INPUT" => session.input(session_id, payload),
+        "SESSION_RESIZE" => session.request_resize(payload),
         "SESSION_RESOURCE_UPDATE" => session.update_resources(session_id, payload),
         "TASK_STOP" => session.stop_task(session_id),
         "SESSION_CLOSE" => session.close(session_id),
         "TASK_KILL" | "SESSION_KILL" => session.kill(session_id),
+        "AGENT_EXEC" => session.agents.exec(payload),
+        "SANDBOX_PROBE" => sandbox_probe(payload),
+        "AGENT_COMMAND_STATUS" => {
+            let command_id = required_agent_command_id(payload)?;
+            session.agents.status(&command_id)
+        }
+        "AGENT_COMMAND_EVENTS" => {
+            let command_id = required_agent_command_id(payload)?;
+            let cursor = payload.get("cursor").and_then(Value::as_u64).unwrap_or(0);
+            let limit = payload
+                .get("limit")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(256);
+            session.agents.events(&command_id, cursor, limit)
+        }
+        "AGENT_COMMAND_WAIT_IDLE" => {
+            let command_id = required_agent_command_id(payload)?;
+            let timeout_ms = payload
+                .get("timeout_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or(qwe_core::AGENT_MAX_WAIT_MS);
+            session.agents.wait_idle(&command_id, timeout_ms)
+        }
+        "AGENT_COMMAND_TERMINATE" => {
+            let command_id = required_agent_command_id(payload)?;
+            let severity = payload
+                .get("severity")
+                .and_then(Value::as_str)
+                .unwrap_or("terminate");
+            let reason = payload
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("agent_command_terminate");
+            let deadline_ms = payload.get("deadline_ms").and_then(Value::as_i64);
+            session
+                .agents
+                .terminate_with_context(&command_id, severity, deadline_ms, reason)
+        }
+        "AGENT_COMMAND_SIGNAL" => {
+            let command_id = required_agent_command_id(payload)?;
+            let signal = payload
+                .get("signal")
+                .and_then(Value::as_str)
+                .ok_or_else(|| error("invalid_request", "missing signal"))?
+                .parse::<qwe_core::AgentSignal>()
+                .map_err(|failure| error("invalid_request", failure))?;
+            session.agents.signal(&command_id, signal)
+        }
+        "AGENT_COMMAND_FREEZE" => {
+            let command_id = required_agent_command_id(payload)?;
+            let reason = payload
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("principal_revocation");
+            let deadline_ms = payload.get("deadline_ms").and_then(Value::as_i64);
+            session.agents.freeze(&command_id, deadline_ms, reason)
+        }
         _ => Err(error("unsupported_operation", operation)),
     }
+}
+
+fn required_agent_command_id(
+    payload: &Value,
+) -> Result<qwe_core::AgentCommandId, ProtocolErrorBody> {
+    payload
+        .get("command_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("invalid_request", "missing command_id"))?
+        .parse()
+        .map_err(|failure| error("invalid_request", format!("invalid command_id: {failure}")))
 }
 
 fn serve_worker(stream: UnixStream, session: &Arc<WorkerSession>, session_id: &str) {
@@ -1381,12 +1946,22 @@ fn serve_worker(stream: UnixStream, session: &Arc<WorkerSession>, session_id: &s
 }
 
 fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
-    let socket = args.worker_socket;
-    let session_id = args.worker_session_id;
+    let socket = args
+        .worker_socket
+        .ok_or("--worker-socket is required for worker mode")?;
+    let session_id = args
+        .worker_session_id
+        .ok_or("--worker-session-id is required for worker mode")?;
     let has_explicit_pane_id = args.worker_pane_id.is_some();
     let pane_id = args
         .worker_pane_id
         .unwrap_or_else(|| format!("standalone-{}", std::process::id()));
+    let sandbox_profile = args
+        .worker_sandbox_profile
+        .as_deref()
+        .map(serde_json::from_str::<SandboxProfile>)
+        .transpose()
+        .map_err(|failure| format!("invalid worker sandbox profile: {failure}"))?;
     if UnixStream::connect(&socket).is_ok() {
         return Err(format!("session worker already running at {}", socket.display()).into());
     }
@@ -1406,11 +1981,12 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     let listener = UnixListener::bind(&socket)?;
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
-    let session = WorkerSession::create(
-        &pane_id,
-        &args.worker_program,
-        &args.worker_args,
-        ResourcePolicy {
+    let session = WorkerSession::create(WorkerCreateOptions {
+        session_id: &session_id,
+        pane_id: &pane_id,
+        program: &args.worker_program,
+        arguments: &args.worker_args,
+        resource_policy: ResourcePolicy {
             memory_high_bytes: args.worker_memory_high_bytes,
             memory_max_bytes: args.worker_memory_bytes,
             memory_swap_max_bytes: args.worker_memory_swap_max_bytes,
@@ -1418,10 +1994,12 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             cpu_quota_percent: args.worker_cpu_quota_percent,
             cpu_seconds: args.worker_cpu_seconds,
         },
-        args.worker_credential_fd,
+        credential_fd: args.worker_credential_fd,
+        sandbox_profile,
         runtime_dir,
-        args.worker_systemd_scope,
-    )?;
+        use_systemd_scope: args.worker_systemd_scope,
+        use_existing_scope: args.worker_existing_scope,
+    })?;
     let control_session = Arc::clone(&session);
     thread::spawn(move || {
         for stream in listener.incoming() {
@@ -1445,8 +2023,28 @@ fn run_worker(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn run_sandbox_probe_cli(profile_json: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let profile = serde_json::from_str::<qwe_core::SandboxProfile>(profile_json)
+        .map_err(|failure| format!("invalid sandbox probe profile: {failure}"))?;
+    let result = sandbox_probe(&json!({"sandbox_profile": profile}));
+    let response = ResponseEnvelope {
+        version: PROTOCOL_VERSION,
+        request_id: "sandbox-probe".into(),
+        result,
+    };
+    let mut stdout = std::io::stdout().lock();
+    serde_json::to_writer(&mut stdout, &response)?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    run_worker(Args::parse())
+    let args = Args::parse();
+    if let Some(profile) = args.sandbox_probe_profile.as_deref() {
+        return run_sandbox_probe_cli(profile);
+    }
+    run_worker(args)
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -1479,5 +2077,46 @@ mod tests {
                 data
             } if data == b"ok"
         ));
+    }
+
+    #[test]
+    fn restricted_terminal_stream_filters_before_journal_and_attachments() {
+        let mut stream = TerminalStream::new(5, 40, true).unwrap();
+        let queue = Arc::new(AttachmentQueue::new(1024));
+        let observer = Arc::new(AttachmentQueue::new(1024));
+        stream.attachments.insert(1, Arc::clone(&queue));
+        stream.attachments.insert(2, Arc::clone(&observer));
+        stream.append_output(b"before\x1b]0,TITLE");
+        stream.append_output(b"\x07\x1b[31mred\x1b[0m after");
+
+        let mut attached = Vec::new();
+        for _ in 0..2 {
+            let event = queue.next_event().unwrap().unwrap();
+            let AttachmentEvent::Output { data, .. } = event else {
+                panic!("expected filtered output event");
+            };
+            attached.extend_from_slice(&data);
+        }
+        assert_eq!(attached, b"before\x1b[31mred\x1b[0m after");
+        let mut observed = Vec::new();
+        for _ in 0..2 {
+            let event = observer.next_event().unwrap().unwrap();
+            let AttachmentEvent::Output { data, .. } = event else {
+                panic!("expected filtered observer event");
+            };
+            observed.extend_from_slice(&data);
+        }
+        assert_eq!(observed, attached);
+        assert_eq!(stream.journal.snapshot(), attached);
+        assert!(!stream.terminal.snapshot().screen_text.contains("TITLE"));
+        assert!(stream.terminal.snapshot().screen_text.contains("before"));
+        assert!(stream.terminal.snapshot().screen_text.contains("after"));
+    }
+
+    #[test]
+    fn full_terminal_stream_preserves_osc_for_trusted_panes() {
+        let mut stream = TerminalStream::new(5, 40, false).unwrap();
+        stream.append_output(b"\x1b]0,TITLE\x07");
+        assert_eq!(stream.journal.snapshot(), b"\x1b]0,TITLE\x07");
     }
 }

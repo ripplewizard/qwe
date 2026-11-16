@@ -1,4 +1,5 @@
 use qwe_core::ResourcePolicy;
+#[cfg(target_os = "linux")]
 use std::collections::BTreeMap;
 #[cfg(target_os = "linux")]
 use std::fs;
@@ -102,6 +103,7 @@ fn systemd_user_available() -> bool {
         })
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn parse_controllers(contents: &str) -> std::collections::BTreeSet<String> {
     contents.split_whitespace().map(str::to_string).collect()
 }
@@ -359,6 +361,32 @@ pub fn stop_pane_scope(pane_id: &str) -> io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
+pub fn kill_cgroup(cgroup: &Path) -> io::Result<()> {
+    let kill_path = cgroup.join("cgroup.kill");
+    if kill_path.exists() {
+        return fs::write(kill_path, b"1");
+    }
+    let processes = fs::read_to_string(cgroup.join("cgroup.procs"))?;
+    for pid in processes
+        .split_whitespace()
+        .filter_map(|value| value.parse::<libc::pid_t>().ok())
+    {
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn kill_cgroup(_cgroup: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "cgroup killing is only available on Linux",
+    ))
+}
+
+#[cfg(target_os = "linux")]
 pub fn read_enforcement_event(path: &Path) -> io::Result<Option<String>> {
     if let Ok(events) = fs::read_to_string(path.join("memory.events")) {
         let violated = events.lines().any(|line| {
@@ -457,6 +485,7 @@ fn read_pressure(path: &Path) -> io::Result<Option<Pressure>> {
     Ok(parse_pressure(&contents))
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn parse_pressure(contents: &str) -> Option<Pressure> {
     let some = contents.lines().find(|line| line.starts_with("some "))?;
     let mut pressure = Pressure::default();

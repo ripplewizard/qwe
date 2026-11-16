@@ -3,12 +3,38 @@ use std::fmt;
 use std::str::FromStr;
 use uuid::Uuid;
 
+mod agent;
 mod authority;
+mod layout;
+mod sandbox;
+mod security;
 
+pub use agent::{
+    AGENT_MAX_WAIT_MS, AGENT_OUTPUT_CHUNK_BYTES, AGENT_REPLAY_LIMIT_BYTES, AgentCommandId,
+    AgentCommandRecord, AgentCommandState, AgentEvent, AgentEventKind, AgentOutputMode,
+    AgentOutputStream, AgentSignal, AgentWaitState, SandboxRiskRecord,
+};
 pub use authority::{
     AttachmentAuthority, AttachmentOperation, AuthorityCredentials, AuthorityError,
     DEFAULT_DETACHED_HOLD_TTL_MS, DEFAULT_LEASE_TTL_MS, DEFAULT_RECLAIM_GRACE_MS, MAX_LEASE_TTL_MS,
     ReclaimTokenHash,
+};
+pub use layout::{
+    LayoutError, LayoutRect, MAX_LAYOUT_PANES, PaneKind, PaneLayout, PaneSpec, tile_pane_specs,
+    tile_panes,
+};
+pub use sandbox::{
+    MAX_ORPHANED_SANDBOXED_PANES, PaneSandboxRecord, RefinedSandboxProfile,
+    SANDBOX_PROFILE_VERSION, SANDBOX_SECCOMP_STRICT_PROFILE, SANDBOXED_PANE_ORPHAN_TTL_MS,
+    SANDBOXED_PANE_SHUTDOWN_GRACE_MS, SandboxHomeMode, SandboxLandlockMode, SandboxNetworkMode,
+    SandboxProcessMode, SandboxProfile, SandboxRefinementError, SandboxSeccompMode,
+    SandboxWorkspaceMode, find_hardlinked_protected_path,
+};
+pub use security::{
+    CapabilityId, CapabilityOperation, CapabilityRecord, CapabilityScope,
+    DEFAULT_CAPABILITY_TTL_MS, DEFAULT_FREEZE_GRACE_MS, MAX_CAPABILITY_TTL_MS, MAX_FREEZE_GRACE_MS,
+    MAX_PANE_INPUT_AUDIT_ROWS, PaneInputAuditRecord, PrincipalEpoch, RevocationSeverity,
+    SandboxAuditRecord,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -539,6 +565,11 @@ pub struct PaneRecord {
     pub session_id: String,
     pub resource_scope_id: ResourceScopeId,
     pub resource_policy: ResourcePolicy,
+    pub kind: PaneKind,
+    pub layout_order: u32,
+    pub layout_weight: u16,
+    pub z_index: u32,
+    pub floating_rect: Option<LayoutRect>,
     pub updated_at_ms: i64,
 }
 
@@ -661,6 +692,10 @@ pub struct PrincipalRecord {
     pub epoch: u64,
     pub created_at_ms: i64,
     pub revoked_at_ms: Option<i64>,
+    pub high_trust: bool,
+    pub revocation_severity: Option<RevocationSeverity>,
+    pub revocation_deadline_ms: Option<i64>,
+    pub revocation_hold: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -781,6 +816,12 @@ mod tests {
             AttachmentAuthorityState::as_str,
             AttachmentAuthorityState::can_transition_to,
         );
+        assert_transition_drift(
+            &machines["agent_command"],
+            &AgentCommandState::ALL,
+            AgentCommandState::as_str,
+            AgentCommandState::can_transition_to,
+        );
         assert_eq!(
             schema_strings(&machines["worker_health"]),
             WorkerHealth::ALL
@@ -797,6 +838,22 @@ mod tests {
                 .map(ReconciliationDisposition::as_str)
                 .collect::<Vec<_>>()
         );
+        assert_eq!(
+            schema_strings(&machines["capability_operation"]),
+            CapabilityOperation::ALL
+                .iter()
+                .copied()
+                .map(CapabilityOperation::as_str)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            schema_strings(&machines["revocation_severity"]),
+            RevocationSeverity::ALL
+                .iter()
+                .copied()
+                .map(RevocationSeverity::as_str)
+                .collect::<Vec<_>>()
+        );
         for state in SessionState::ALL {
             assert_eq!(serde_json::to_value(state).unwrap(), state.as_str());
         }
@@ -806,8 +863,17 @@ mod tests {
         for state in AttachmentAuthorityState::ALL {
             assert_eq!(serde_json::to_value(state).unwrap(), state.as_str());
         }
+        for state in AgentCommandState::ALL {
+            assert_eq!(serde_json::to_value(state).unwrap(), state.as_str());
+        }
         for health in WorkerHealth::ALL {
             assert_eq!(serde_json::to_value(health).unwrap(), health.as_str());
+        }
+        for operation in CapabilityOperation::ALL {
+            assert_eq!(serde_json::to_value(operation).unwrap(), operation.as_str());
+        }
+        for severity in RevocationSeverity::ALL {
+            assert_eq!(serde_json::to_value(severity).unwrap(), severity.as_str());
         }
         for disposition in ReconciliationDisposition::ALL {
             assert_eq!(

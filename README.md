@@ -11,8 +11,8 @@ local/experimental.
 
 - [Install QWE](INSTALL.md): download the published Linux V0 package or build
   it from source, then start the systemd user service.
-- [Usage](USAGE.md): Sessions, Attach/detach, input, Leases, resources,
-  credentials, and teardown.
+- [Usage](USAGE.md): Sessions, Attach/detach, agent execution and capabilities,
+  Leases, resources, credentials, and teardown.
 - [QWE 0.1.1 notes](docs/releases/v0.1.1.md): current Linux x86_64 release
   notes; artifact publication remains a Stage 6 gate.
 - [Release](docs/release.md): supported platforms, package contract, and known
@@ -23,24 +23,32 @@ branch is the integration branch for the next release.
 
 ## Current Phase
 
-Stages 0-5 are complete for the Linux-first V0 release. Stage 6 is in progress:
-Linux V0 adoption and stabilization. Completed work includes hosted core CI and
-the dedicated Fedora release-gate workflow. Clean-source publication, the real
-Linux pilot, and the first `v0.1.x` patch release remain open.
+Stages 0-5 and the Linux V0 release candidate are complete. Stages 7 and 8 pass
+their resource-governance and Session-layout qualification gates.
 
 Stage 6.5 accepted the shared prerequisites for one worker per Pane,
 Pane-first ResourceScope, Pane-targeted channels, and the v10-to-v11 migration.
-Stage 7 is ready to start around Linux cgroup v2 resource governance for
-long-running Sessions. It extends QWE's existing `qwed`/PTY model and does not
-introduce a Docker runtime. See [ADR 0021](docs/adr/0021-shared-prerequisites.md),
-[Storage Migration](docs/storage-migration.md), and
-[Linux Resource Governance](docs/stage7-resource-governance.md).
+Stages 9.1-9.5 complete the accepted first Agent Execution Model delivery with
+`exec`, stable command handles, bounded event replay, qwed-restart recovery,
+explicit worker-loss states, Principal-bound capabilities, and administrative,
+freeze, and terminate revocation, descriptor credentials, streaming redaction,
+read-only observer push, merged PTY output, and interactive-shell foreground
+`idle`.
+See [ADR 0032](docs/adr/0032-agent-execution-model.md) and
+[Agent Execution Model](docs/agent-execution-model.md).
+
+[ADR 0033](docs/adr/0033-bubblewrap-sandbox-adapter.md) accepts Bubblewrap as
+the first Linux sandbox backend. Core FD3, cgroup, structured PID, interactive
+PTY, and parent-death probes pass. The capability-controlled non-PTY and PTY
+`AGENT_EXEC` slice passes real qwed/worker integration tests, including
+`TIOCSTI` denial, FD3 credentials, foreground idle, and process-tree cleanup.
+The full probe also passes on Ubuntu 22.04 and Debian 12 real VMs; Ubuntu 24.04
+fails closed under its tested AppArmor/user-namespace policy.
 
 macOS binary distribution is deferred post-V0 under ADR 0020 and limited to
 explicitly marked local self-signed packages under ADR 0019. Fedora Linux
-x86_64 remains the only supported V0 target. New Mesh, sandbox, plugin, and
-remote-scheduling features remain out of scope until a separate accepted plan
-and ADR.
+x86_64 remains the only supported V0 target. Other sandbox backends, Mesh,
+plugins, and remote scheduling remain out of scope until separately accepted.
 
 Implementation follows
 [`docs/design-baseline.md`](docs/design-baseline.md).

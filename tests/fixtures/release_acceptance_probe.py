@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 17
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -102,13 +102,28 @@ def wait_process_gone(pid, timeout=8):
     raise RuntimeError(f"process {pid} remained alive")
 
 
-def downgrade_to_v9(store_path):
+def create_v9_store(store_path):
+    for suffix in ("", "-wal", "-shm"):
+        path = Path(f"{store_path}{suffix}")
+        if path.exists():
+            path.unlink()
     with sqlite3.connect(store_path) as connection:
-        connection.execute("PRAGMA foreign_keys = OFF")
         connection.executescript(
             """
             BEGIN IMMEDIATE;
-            CREATE TABLE panes_v9 (
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                owner TEXT NOT NULL,
+                state TEXT NOT NULL,
+                pid INTEGER,
+                pgid INTEGER,
+                start_token TEXT,
+                worker_pid INTEGER,
+                worker_pgid INTEGER,
+                worker_start_token TEXT,
+                updated_at_ms INTEGER NOT NULL
+            );
+            CREATE TABLE panes (
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL UNIQUE
                     REFERENCES sessions(id) ON DELETE RESTRICT,
@@ -117,21 +132,64 @@ def downgrade_to_v9(store_path):
                 process_limit INTEGER,
                 updated_at_ms INTEGER NOT NULL
             );
-            INSERT INTO panes_v9 (
-                id, session_id, cpu_seconds, memory_bytes,
-                process_limit, updated_at_ms
-            )
-            SELECT
-                id, session_id, cpu_seconds, memory_bytes,
-                process_limit, updated_at_ms
-            FROM panes;
-            DROP TABLE panes;
-            ALTER TABLE panes_v9 RENAME TO panes;
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL
+                    REFERENCES sessions(id) ON DELETE RESTRICT,
+                pid INTEGER NOT NULL,
+                pgid INTEGER NOT NULL,
+                start_token TEXT NOT NULL,
+                state TEXT NOT NULL,
+                exit_code INTEGER,
+                exit_signal TEXT,
+                started_at_ms INTEGER NOT NULL,
+                ended_at_ms INTEGER
+            );
+            CREATE UNIQUE INDEX tasks_by_session ON tasks(session_id);
+            CREATE TABLE leases (
+                session_id TEXT PRIMARY KEY
+                    REFERENCES sessions(id) ON DELETE RESTRICT,
+                owner TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                deadline_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                released_at_ms INTEGER
+            );
+            CREATE TABLE attachment_authorities (
+                session_id TEXT PRIMARY KEY
+                    REFERENCES sessions(id) ON DELETE RESTRICT,
+                state TEXT NOT NULL,
+                owner TEXT,
+                generation INTEGER NOT NULL,
+                reclaim_token_hash TEXT,
+                deadline_ms INTEGER,
+                updated_at_ms INTEGER NOT NULL
+            );
+            CREATE TABLE idempotency_records (
+                idempotency_key TEXT PRIMARY KEY,
+                operation TEXT NOT NULL,
+                request_fingerprint TEXT NOT NULL,
+                state TEXT NOT NULL,
+                response_json TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                expires_at_ms INTEGER NOT NULL
+            );
+            CREATE INDEX idempotency_expiry
+                ON idempotency_records(expires_at_ms);
+            INSERT INTO sessions (
+                id, owner, state, updated_at_ms
+            ) VALUES ('release-upgrade', 'release-acceptance', 'closed', 0);
+            INSERT INTO panes (
+                id, session_id, updated_at_ms
+            ) VALUES (
+                '00000000-0000-7000-8000-000000000001',
+                'release-upgrade',
+                0
+            );
             PRAGMA user_version = 9;
             COMMIT;
             """
         )
-        connection.execute("PRAGMA foreign_keys = ON")
 
 
 def schema_version(store_path):
@@ -238,11 +296,21 @@ def main():
         installed = json.loads(run(install_command).stdout)
         assert installed["case"] == "PACK-002"
         bin_dir = prefix / ".local/bin"
-        for name in ("qwe", "qwed", "qwe-worker", "qwe-session-exec"):
+        for name in (
+            "qwe",
+            "qwed",
+            "qwe-worker",
+            "qwe-session-exec",
+            "qwe-sandbox-init",
+        ):
             binary = bin_dir / name
             assert binary.is_file()
             assert binary.stat().st_mode & 0o111
-        service_files = [bin_dir / "qwed-wrapper.sh"]
+        service_files = [
+            bin_dir / "qwed-wrapper.sh",
+            prefix / "share/qwe/apparmor/qwe-bwrap",
+            prefix / "share/qwe/apparmor/install.sh",
+        ]
         if manifest["target"].startswith("macos-"):
             service_files.append(prefix / "Library/LaunchAgents/com.qwe.qwed.plist")
         else:
@@ -257,7 +325,13 @@ def main():
         assert released["protocol"] == manifest["protocol_version"]
         assert manifest["version"] in run([bin_dir / "qwed", "--version"]).stdout
         if manifest["signing_mode"] == "self-signed":
-            for name in ("qwe", "qwed", "qwe-worker", "qwe-session-exec"):
+            for name in (
+                "qwe",
+                "qwed",
+                "qwe-worker",
+                "qwe-session-exec",
+                "qwe-sandbox-init",
+            ):
                 signature = run(
                     ["codesign", "-dv", "--verbose=4", bin_dir / name]
                 ).stderr
@@ -324,7 +398,7 @@ def main():
             worker_pid = None
             task_pid = None
 
-            downgrade_to_v9(store_path)
+            create_v9_store(store_path)
             assert schema_version(store_path) == 9
             qwed_process = start_qwed(bin_dir / "qwed", socket_path, store_path)
             assert schema_version(store_path) == SCHEMA_VERSION
@@ -360,7 +434,7 @@ def main():
                 "service_assets": "pass",
                 "database_preserved_during_reinstall": "pass",
                 "worker_adopted_after_restart": "pass",
-                "schema_v9_to_v10": "pass",
+                "schema_v9_to_current": "pass",
             },
             separators=(",", ":"),
         )

@@ -1,0 +1,28 @@
+[package]
+name = "qwe-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+qwe-runtime = { path = "../crates/qwe-runtime" }
+
+[workspace]
+
+[[bin]]
+name = "sandbox_control"
+path = "fuzz_targets/sandbox_control.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "terminal_output"
+path = "fuzz_targets/terminal_output.rs"
+test = false
+doc = false
+bench = false

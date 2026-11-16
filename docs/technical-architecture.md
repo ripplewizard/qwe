@@ -13,13 +13,13 @@ Client
 qwed supervisor ------------ SQLite WAL
   |
   +-- Session
-        +-- Pane worker
-        |     +-- PTY and VT state
-        |     +-- qwe-session-exec -> systemd scope (Linux) / task process group
-        |     +-- bounded output journal
+        +-- Pane ResourceScope (Linux systemd user scope)
+        |     +-- control cgroup: Pane worker and bounded metadata
+        |     +-- workload cgroup: PTY task and fresh-process agent commands
         |
-        +-- Pane worker
-              +-- ...
+        +-- Pane ResourceScope
+              +-- Pane worker
+                    +-- ...
 ```
 
 The diagram shows the implemented multi-Pane topology from
@@ -67,6 +67,10 @@ and liveness matrix work is tracked in
 - Renders JSON, terminal output, or TUI state.
 - Drives the long-lived Attach channel with raw terminal mode, terminal-size
   polling, and `Ctrl-]` detach.
+- Runs `session compose` as a client-side projection over one Pane-targeted
+  Attach channel per displayed Pane.
+- Implements Pane-clamped visible-screen copy and a quick menu without
+  forwarding menu bytes to PTY input.
 - Never accesses SQLite directly.
 
 ### qwed
@@ -74,20 +78,33 @@ and liveness matrix work is tracked in
 - Provides the stable public local API.
 - Authorizes clients and manages leases.
 - Stores metadata, topology, and task history in SQLite.
+- Authorizes security operations and agent requests against hashed,
+  Principal-bound capabilities; reloads ancestor epochs on every request and
+  runs the freeze-expiry invigilator.
 - Reconciles persisted state against worker inventory before accepting clients.
 - Starts and re-adopts Pane workers, observes `SIGCHLD`/`waitpid` events and
   persistent control EOF, and runs the bounded safety scan. Inventory,
   recovery, health, and control routing are keyed by Pane.
+- On Linux, starts each Pane worker inside its transient systemd user scope so
+  the worker's `control` child and the PTY/command `workload` child remain in
+  one Pane ResourceScope.
 - Authenticates and proxies the dedicated Attach socket to the selected Pane
-  worker. Observer access is a qwed-owned read-only projection.
+  worker. Attach may select an optional Pane; omission preserves the default
+  Pane. Observer access is a qwed-owned read-only projection.
 - Does not own PTYs or process groups.
 
 ### qwe-worker
 
 - One process per Pane. It owns the PTY, process group, VT state, and journal.
-- Starts the session process through the internal `qwe-session-exec` launcher.
-- On Linux, starts `qwe-session-exec` inside a transient systemd user scope.
-  The launcher reports the final task PID and cgroup path before exec.
+- Starts the session process as a child of the worker. In the production
+  Linux path, qwed has already placed the worker inside the Pane scope; the
+  worker moves its task and agent commands into the delegated `workload`
+  cgroup.
+- Starts Stages 9.1-9.5 agent commands in the same worker process tree with
+  separate stdout/stderr pipes or one merged PTY stream, bounded semantic event
+  replay, and streaming credential redaction.
+- Reads the PTY foreground process group for interactive shells so
+  `wait_idle` can distinguish prompt idle from a foreground child.
 - Serves a persistent request/response control channel and a typed Attach
   channel over owner-only Unix sockets.
 - Survives qwed crashes; qwed re-adopts it by socket path, SessionId, PaneId,
@@ -142,6 +159,10 @@ Operations:
 ```text
 session.create
 session.attach
+session.layout
+pane.focus
+pane.reorder
+pane.floating_update
 session.detach
 session.input
 session.resize
@@ -204,7 +225,7 @@ SESSION_CLOSE
 
 It does not replay an unbounded historical PTY stream.
 
-The journal is one bounded buffer per Session worker. Each Attach gets a
+The journal is one bounded buffer per Pane worker. Each Attach gets a
 private 1 MiB output queue; a slow client does not hold the PTY reader or
 another client's writer. The journal tail may begin mid-escape-sequence and is
 therefore diagnostic data, while the VT screen snapshot is authoritative.
@@ -229,6 +250,39 @@ snapshot's `next_stream_offset` is the first offset that may appear in an
 `OUTPUT` frame. A per-attachment queue overflows at 1 MiB and closes only that
 channel with `output_backpressure`.
 
+Stage 8 slice 1 adds optional Pane targeting to `ATTACH_OPEN`. qwed validates
+that the Pane belongs to the requested Session and proxies only to that Pane
+worker. A compositor can therefore hold one exclusive interactive channel per
+Pane. `SESSION_LAYOUT` returns viewport-relative rectangles from the shared
+`qwe-core` tiling function. Pane kind, order, relative weight, z-index, and
+Session focus are durable in schema v12; floating rectangles are durable in
+schema v13 and viewport layouts are derived.
+See [ADR 0022](adr/0022-session-layout-compositor.md) and
+[ADR 0023](adr/0023-durable-pane-layout.md). Relative insertion and reorder
+are authorized qwed mutations under
+[ADR 0024](adr/0024-pane-composition-controls.md).
+
+Copy mode and the quick menu remain client projections under
+[ADR 0025](adr/0025-copy-and-quick-menu.md). Copy text comes from the focused
+Pane's current client VT screen, never from native terminal selection or the
+diagnostic journal. Snapshot replacement, resize, process exit, and Attach close
+cancel active selections.
+
+Fixed floating Panes use the same worker/Attach/resource paths under
+[ADR 0026](adr/0026-fixed-floating-panes.md). Tiled geometry excludes them;
+the compositor derives a centered popup and renders floating Panes afterward in
+persisted z-order. [ADR 0027](adr/0027-floating-bounds-and-keyboard-move.md)
+persists optional rectangles and provides `Ctrl-A d` keyboard move/resize.
+[ADR 0028](adr/0028-mouse-drag-and-hit-testing.md) enables SGR button-event
+tracking, performs topmost-z hit-testing, and persists floating title drags on
+release. Content mouse events are forwarded only when the child VT mouse mode is
+enabled. [ADR 0029](adr/0029-mouse-resize-handle.md) adds bottom-right corner
+resize with the same draft and single-persist boundary.
+[ADR 0030](adr/0030-floating-z-order.md) raises a floating Pane on left press
+and reorders client views/targets by persisted z-index.
+[ADR 0031](adr/0031-scrollback-and-mouse-copy.md) exposes bounded client VT
+scrollback in copy mode and supports focused-Pane mouse selection.
+
 Stage 3 moves attachment authority to qwed. qwed validates `ATTACH_OPEN`,
 persists the active owner and SHA-256 reclaim-token hash, and only then sends
 `ATTACH_ACCEPTED`. It intercepts `DETACH` to create a positive-TTL hold or an
@@ -251,6 +305,7 @@ startup; only the matching token can resume the Session during that window.
 | Lease owner/deadline | `qwed` | SQLite |
 | Attachment authority | `qwed` | SQLite token hash, owner, generation, deadline; keyed by Pane after v11 |
 | Task history | `qwed` | SQLite |
+| Pane layout metadata, focus, and floating bounds | `qwed` | SQLite schema v13 |
 | Worker control, health, and inventory | `qwed` supervisor | Persistent channels keyed by Pane, rebuilt by reconciliation |
 | Configuration | Workspace files | Files |
 
@@ -262,7 +317,7 @@ startup; only the matching token can resume the Session during that window.
 | `qwed` SIGKILL | All session workers continue |
 | `qwed` restart | Rediscover workers and reconcile SQLite inventory |
 | Corrupt SQLite | Fail explicitly; do not start with silent data loss |
-| Pane worker SIGKILL | That Pane is lost; V0's one-Pane Session returns `terminal_lost`, while other Panes remain healthy after the multi-Pane migration |
+| Pane worker SIGKILL | That Pane is lost and returns `terminal_lost`; unrelated Panes remain healthy |
 | OS reboot | No V0 recovery |
 
 On restart, qwed scans its runtime directory and reconnects workers after
@@ -315,10 +370,15 @@ The process start token is mandatory. PID alone is never sufficient.
 - `CONTROL_STATUS.reconciliation` is computed from current Sessions, Tasks, and
   worker health. `last_scan_ms` reports the latest completed safety scan rather
   than a static startup value.
-- SQLite schema v11 removes the one-Pane/one-Task uniqueness assumptions and
+- SQLite schema v11 removed the one-Pane/one-Task uniqueness assumptions and
   stores Pane-worker, ResourceScope, and Principal records alongside
   Pane-keyed Tasks and attachment authority. `CONTROL_STATUS` exposes all
   inventory records.
+- Schema v12 adds durable Pane kind, layout order, relative weight, z-index,
+  and Session focus. Active layout membership includes only Pane workers in
+  `active` or `exited` state; closed/lost history remains queryable but does
+  not drive composition. Schema v13 adds optional floating rectangles and is
+  the current schema.
 - Lease release writes a generation tombstone; expiration does not kill Tasks.
 
 ## 10. Resource Model
@@ -328,14 +388,18 @@ The process start token is mandatory. PID alone is never sufficient.
 - Each Pane has a tree-scoped policy for memory high/max/swap,
   processes-plus-threads, CPU bandwidth, and cumulative CPU time.
 - Linux creates one transient systemd user scope per Pane, named from the
-  stable Pane identity. V0 still instantiates one Pane per Session; the scope
-  boundary is already Pane-level. `memory.max`, `memory.swap.max`, `pids.max`,
-  and `cpu.max` are hard limits; cumulative CPU time is monitored.
+  stable Pane identity. `memory.max`, `memory.swap.max`, `pids.max`, and
+  `cpu.max` are hard limits; cumulative CPU time is monitored.
   `memory.oom.group=1` treats the selected ResourceScope as one OOM unit.
+- Inside that scope, the worker uses delegated `control` and `workload`
+  children. Resource limits apply to `workload`, which contains the PTY task
+  and agent commands; worker threads remain in `control` and do not consume
+  the user's task allowance.
 - The topology acknowledgement blocks command exec until the worker owns the
   cgroup, has installed its event watch, and has applied the initial policy.
-  This preserves final PID/PGID and event ownership for very short-lived
-  programs.
+  The production Linux path starts the worker itself inside the scope; the
+  legacy nested `qwe-session-exec` topology remains available to worker-only
+  probes.
 - macOS traverses the task tree with `proc_listchildpids` and samples
   `proc_pid_rusage` every 100 ms. Memory, task-count, and CPU limits are
   `monitored`; a breach terminates the process group.
@@ -361,9 +425,8 @@ reported only when a reliable platform identifier exists.
 ## 11. Security Baseline
 
 - One local OS user for V0.
-- V0 has one interactive control client per Session. The accepted target has
-  one interactive writer per Pane and a separate Session Lease for lifecycle
-  control.
+- The runtime has one interactive writer per Pane and a separate Session Lease
+  for lifecycle control.
 - No TCP listener.
 - Socket mode `0600`.
 - Peer-UID verification.
@@ -380,8 +443,30 @@ reported only when a reliable platform identifier exists.
 - ChannelProfile separates projection and authorization from state ownership.
   `human_observer` is a qwed read-only projection; it cannot acquire input,
   resize, or lifecycle authority. AuthContext remains opaque to IPC clients.
+- Menu keys never enter PTY input. Clipboard provider failures are explicit and
+  are never reported as successful copies.
 - Principal records use monotonic epochs and tombstones. They do not elevate
   the V0 same-UID owner string into an authenticated identity.
+- Capability tokens are random, expiring values stored as SHA-256 hashes.
+  Capability scope is global, Session, Pane, or command, and each record pins
+  the complete Principal ancestor epoch snapshot. Every agent request reloads
+  that chain and fails on stale epochs or any revoked ancestor.
+- The local-root bootstrap management capability is written to a mode-0600
+  runtime file; agent tokens are read from explicit mode-0600 capability files.
+  Raw capability values are never stored in SQLite or passed to child argv or
+  environment.
+- Revocation is explicit. Administrative revocation invalidates authorization
+  while preserving running work; freeze stops affected command groups and
+  expires into termination; terminate kills them. Missing severity fails safe
+  to freeze.
+- Per-command credentials travel from the private provider through a one-shot
+  mode-0600 broker using Unix `SCM_RIGHTS`, then map to child FD3. The worker
+  keeps the same secret only in `Zeroizing` memory for streaming redaction
+  before event retention. Secret values never enter JSON, argv, environment
+  values, SQLite, event data, or logs.
+- Command observer subscriptions are qwed read-only projections over committed
+  worker events. They carry a bounded queue, recheck the live capability on
+  every poll, and have no command mutation operation.
 
 ## 12. Concurrency and Latency
 

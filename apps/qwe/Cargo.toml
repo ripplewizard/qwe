@@ -11,3 +11,4 @@ libc.workspace = true
 qwe-core = { path = "../../crates/qwe-core" }
 qwe-protocol = { path = "../../crates/qwe-protocol" }
 serde_json.workspace = true
+vt100.workspace = true

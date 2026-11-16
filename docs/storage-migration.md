@@ -1,9 +1,11 @@
-# Storage Migration: Shared-Prerequisites Schema v11
+# Storage Migration: Pane Layout, Agent Security, and Sandbox Profiles
 
-Status: Implemented in Stage 7; schema v11 is current
-Date: 2026-11-10
+Status: Implemented through sandboxed Pane orphan tracking; schema v20 is current
+Date: 2026-11-16
 Authority: [ADR 0021](adr/0021-shared-prerequisites.md) and the v11 schema in
-`crates/qwe-storage`.
+`crates/qwe-storage`; Pane layout metadata is governed by
+[ADR 0023](adr/0023-durable-pane-layout.md); command metadata is governed by
+[ADR 0032](adr/0032-agent-execution-model.md).
 
 ## 1. Purpose
 
@@ -92,6 +94,7 @@ order and indexes are defined by `crates/qwe-storage`.
 - Stable opaque `id`.
 - Optional `parent_id`, monotonic `epoch`, `created_at_ms`, and optional
   `revoked_at_ms`.
+- v15 adds `high_trust`, revocation severity/deadline, and security-hold state.
 - Principals are tombstoned. They are not hard-deleted while descendants or
   durable audit references may exist.
 - The migration creates or maps a local root Principal. Existing logical
@@ -150,6 +153,7 @@ Future implementation uses these stable test IDs:
 | SHARED-004 | Start the multi-Pane topology from migrated state | qwed discovers, adopts, reports health for, and routes commands to workers by Pane; one Pane loss does not mark unrelated Panes lost |
 | SHARED-005 | Exercise interactive and observer channels on one Pane | Interactive authority is exclusive for that Pane; the observer receives snapshot/output only and cannot input, resize, or control |
 | SHARED-006 | Tear down a Pane ResourceScope containing detached jobs | The complete scope closes, no process or controller state remains, and the cleanup tombstone records the outcome |
+| LAYOUT-006 | Restart qwed after changing focus in a multi-Pane Session | Pane IDs, layout order, weights, and focused Pane survive unchanged |
 
 Migration tests must cover a production-generated v10 database, concurrent
 writers at shutdown, interrupted migration rollback, history retention,
@@ -158,8 +162,166 @@ history.
 
 ## 8. Non-Goals
 
-- Pane geometry and compositor persistence.
-- `exec` versus `shell_exec` semantics or command-handle storage.
-- Capability-token encoding, AuthContext internals, or revocation severity.
+- Freeform Pane geometry, split trees, and floating-overlay persistence.
+- `exec` versus `shell_exec` semantics or command-handle storage in the v11
+  migration; Stage 9.1 adds metadata-only command storage in v14.
+- Raw capability-token storage. v15 stores token hashes and epoch snapshots;
+  raw capabilities remain in mode-600 capability files or response memory.
 - Sandbox, namespace, UID, filesystem, or network isolation.
 - Terminal replay persistence or disk-backed scrollback.
+
+## 9. v11 to v12: Durable Pane Layout
+
+Schema v12 preserves every v11 identity and adds:
+
+- `panes.kind` with `normal` as the migration default;
+- `panes.layout_order`, unique within active Session layout membership;
+- `panes.layout_weight`, default `1`;
+- `panes.z_index`, default `0`;
+- `session_layouts.focused_pane_id`.
+
+The migration orders existing Panes by stable Pane ID, gives every Pane equal
+weight, and selects the first ordered Pane as focus. The pre-migration backup
+and all validation remain transactional. Focus is a user preference, not
+attachment authority; `PANE_FOCUS` enforces the target Pane's attachment
+authority separately.
+
+The physical index on `(session_id, layout_order)` is non-unique because closed
+Panes remain history and retain tombstone orders. Active layout membership is
+limited to Pane workers in `active` or `exited` state; qwed and storage enforce
+unique, complete ordering for that live set transactionally.
+
+Floating Panes retain the same Pane identity and worker records, persist
+`kind=floating` plus increasing `z_index`, and are excluded from tiled reorder
+membership.
+
+## 10. v12 to v13: Durable Floating Bounds
+
+Schema v13 adds nullable `floating_x`, `floating_y`, `floating_rows`, and
+`floating_columns` to `panes`.
+
+- All four values are null or all are present.
+- Only floating Panes may store nonzero bounds.
+
+## 11. v13 to v14: Agent Command Metadata
+
+Schema v14 adds `agent_commands` without changing Session, Pane, Task, Lease,
+attachment authority, layout, or idempotency identities.
+
+Each row stores:
+
+- stable `AgentCommandId`, Session, Pane, and logical owner;
+- worker process identity;
+- optional process identity, which is null only while start is pending;
+- command state and output mode;
+- creation/update timestamps; and
+- optional exit code or signal.
+
+Command rows cascade with their Session or Pane history. `process_pid`,
+`process_pgid`, and `process_start_token` are null together or populated
+together. Program arguments, environment values, credentials, output bytes, and
+event replay are not stored in this table.
+
+The migration is transactional and sets `PRAGMA user_version = 14`. A v13
+binary must refuse a v14 database. Existing databases are backed up before the
+upgrade using the current migration procedure.
+
+## 12. v14 to v15: Capability and Revocation State
+
+Schema v15 adds:
+
+- `principals.high_trust`;
+- `principals.revocation_severity`;
+- `principals.revocation_deadline_ms`;
+- `principals.revocation_hold`;
+- `agent_commands.principal_id`;
+- `agent_commands.creator_capability_id`;
+- `agent_capabilities`, containing capability ID, token hash, Principal,
+  complete ancestor epoch snapshot, operation, scope, timestamps, expiry, and
+  revocation time.
+
+`local-root` migrates as high-trust. Existing agent command rows are attributed
+to `local-root` with no creator capability because they predate enforcement.
+New commands retain the exact creating Principal and capability.
+
+Capability scope columns are mutually exclusive by kind: global, Session, Pane,
+or command. A command scope includes both Pane and command identity. Raw tokens
+and Principal epoch chains are never placed in idempotency responses.
+
+The migration is transactional and sets `PRAGMA user_version = 15`. A v14
+binary must refuse a v15 database.
+
+## 13. v15 to v16: Capability Sandbox Profile
+
+Schema v16 adds nullable `agent_capabilities.sandbox_profile_json`.
+
+- `NULL` preserves the explicit unsandboxed capability path.
+- A present value stores the complete versioned `SandboxProfile`.
+- Existing v15 capabilities migrate with `NULL`; they never gain sandboxing
+  implicitly.
+- The pre-migration backup is named `.pre-v16-*`.
+
+The migration is transactional and sets `PRAGMA user_version = 16`. A v15
+binary must refuse a v16 database.
+
+## 14. v16 to v17: Sandbox Audit Metadata
+
+Schema v17 adds:
+
+- `agent_capabilities.sandbox_audit_json`, containing the sandbox profile
+  SHA-256 hash, effective seccomp cBPF SHA-256 hash, resolved Bubblewrap
+  path/version, optional Landlock ABI, and probe timestamp;
+- `agent_commands.sandbox_risk_json`, containing network-inherit, writable
+  workspace, and credential-exposure flags.
+
+Existing rows migrate with null audit metadata. The migration is transactional
+and sets `PRAGMA user_version = 17`. A v16 binary must refuse a v17 database.
+
+- Bounds are clamped to the current usable viewport at render time.
+- Migration leaves every existing floating Pane with null bounds, preserving
+  the centered popup default.
+
+`PANE_FLOATING_UPDATE` persists a complete rectangle under LayoutMutation
+authority and preserves Pane, worker, Task, and ResourceScope identity.
+
+## 15. v17 to v18: Pane Sandbox Metadata
+
+Schema v18 adds `pane_sandboxes`, keyed by Pane ID:
+
+- `profile_json` stores the exact capability-enforced v1 profile;
+- `audit_json` stores the backend, profile hash, seccomp hash, optional
+  Landlock ABI, and probe timestamp;
+- `capability_id` links the Pane to the `sandboxed_pane` capability that
+  authorized creation; and
+- `created_at_ms` records when creation committed.
+
+The row is inserted in the same transaction as the Session/Pane/Task or
+Pane/worker/Task records. A missing sandbox row therefore means an unsandboxed
+Pane, never an unknown downgrade. Deleting a Pane cascades its sandbox metadata.
+The migration is transactional and sets `PRAGMA user_version = 18`. A v17
+binary must refuse a v18 database.
+
+## 16. v18 to v19: Pane Input Audit
+
+Schema v19 adds `pane_input_audits` with:
+
+- Pane, Principal, and `pane_input` capability identity;
+- timestamp, input byte length, configured maximum, profile version, and
+  effective Landlock ABI;
+- `content_recorded = 0`, because content-bearing audit is not implemented.
+
+Rows are inserted before sandboxed input is forwarded. The table retains the
+newest 4096 rows globally. A failed insert rejects the input. The migration is
+transactional and sets `PRAGMA user_version = 19`; a v18 binary must refuse a
+v19 database.
+
+## 17. v19 to v20: Sandboxed Pane Orphan State
+
+Schema v20 adds `pane_orphan_states(pane_id, orphan_since_ms)`, keyed by Pane
+with cascade deletion. The first orphan timestamp is preserved across qwed
+restart and is cleared when a valid operation capability or active human
+attachment returns. qwed reconciles these rows on its security interval and
+enforces the frozen TTL and global orphan-count limit.
+
+The migration is transactional and sets `PRAGMA user_version = 20`; a v19
+binary must refuse a v20 database.

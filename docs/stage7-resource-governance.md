@@ -1,7 +1,8 @@
 # Stage 7: Linux Resource Governance
 
-Status: In progress; shared prerequisites and deterministic P0 gates implemented
-Date: 2026-11-10
+Status: Complete; installed-systemd matrix and extended long-run qualification
+pass
+Date: 2026-11-14
 
 ## Product Definition
 
@@ -48,8 +49,8 @@ Stage 6.4 validated a disposable one-worker-per-Pane topology and distinct
 cgroup v2 scopes in [Experiment 0028](experiments/0028-stage6-shared-prerequisites-spike.md).
 [ADR 0021](adr/0021-shared-prerequisites.md) accepts Pane-first enforcement.
 Production Pane-worker inventory, Pane-addressed control routing, schema v11,
-and multiple Panes per Session are implemented. The qwed-owned observer
-projection remains open.
+multiple Panes per Session, and the qwed-owned read-only observer projection
+are implemented.
 
 See [ADR 0018](adr/0018-pane-resource-enforcement.md), the
 [Technical Architecture](technical-architecture.md#10-resource-model), and
@@ -94,9 +95,11 @@ The first Stage 7 slice implements the deterministic P0 foundation:
 
 The deterministic probes exercise RG-001 through RG-004 and RG-006. Local
 Fedora installed-systemd qualification passes. Ubuntu 22.04, Ubuntu 24.04, and
-Debian 12 qualification are blocked until real-VM targets are available; no
-container result is accepted as a substitute. The bounded five-hour soak remains open
-until its release-mode run finishes. Results and environment details are in
+Debian 12 now pass real KVM VM resource, multi-Pane, systemd service, pressure,
+and 30-second soak probes. Podman remains only a compatibility environment and
+is not accepted as installed-systemd qualification. The bounded five-hour soak
+remains open until its release-mode run finishes. Results and environment
+details are in
 [Experiment 0029](experiments/0029-stage7-multipane-pressure-and-qualification.md).
 
 ### Resource Profiles
@@ -249,8 +252,18 @@ Priority: P0
 
 Exit:
 
-- A five-hour operation-dense qualification run passes on Fedora x86_64.
+- A five-hour operation-dense qualification run passes on a supported
+  installed-systemd Linux target.
+- The installed-systemd cross-distribution matrix remains covered separately
+  by R5.
 - A shorter deterministic soak is available for normal CI.
+
+The long-run exit is satisfied by two consecutive six-hour runs on Ubuntu
+22.04 x86_64. Each run used 16 Sessions by two Panes, completed 11 qwed
+restarts, retained bounded Attach tails, and ended without leaked workers,
+sockets, or scopes. Fedora, Ubuntu 22.04, Ubuntu 24.04, and Debian 12 pass the
+R5 installed-systemd matrix. Evidence is in
+[Experiment 0041](experiments/0041-linux-vm-qualification.md).
 
 ### R5. Linux Qualification Matrix
 

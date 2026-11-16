@@ -105,6 +105,7 @@ impl WorkerClient {
             idempotency_key: None,
             operation: operation.into(),
             payload,
+            auth_context: None,
         };
         let write_result = {
             let mut writer = self
@@ -159,6 +160,7 @@ impl WorkerClient {
         ProtocolErrorBody {
             code: "worker_unreachable".into(),
             message: message.into(),
+            details: None,
         }
     }
 }

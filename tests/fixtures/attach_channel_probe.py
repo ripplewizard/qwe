@@ -132,7 +132,14 @@ def main():
         ATTACH_OPEN,
         open_frame(args.session_id, "read-only", mode="read_only"),
     )
-    expect_error(read_only, "unsupported_mode")
+    frame_type, payload = receive_frame(read_only)
+    assert frame_type == ATTACH_ACCEPTED, payload
+    observer_accepted = json.loads(payload)
+    assert observer_accepted["session_id"] == args.session_id
+    frame_type, payload = receive_frame(read_only)
+    assert frame_type == SNAPSHOT, payload
+    send_payload(read_only, INPUT, b"observer-must-not-write\n")
+    expect_error(read_only, "read_only", allow_output=True)
 
     incompatible = connect(attach_path)
     send_json(

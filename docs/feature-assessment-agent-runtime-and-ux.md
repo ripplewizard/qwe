@@ -4,6 +4,9 @@ Status: Assessment complete for this review round; shared prerequisites
 accepted; remaining policy decisions open
 Date: 2026-11-09
 
+This is a historical assessment snapshot. Current implementation status is
+tracked by ADR 0032, ADR 0033, ADR 0034, and the development roadmap.
+
 This document evaluates the agent-native features proposed for QWE together
 with three human-facing terminal UX features:
 
@@ -79,23 +82,25 @@ These recommendations still require their own accepted contracts:
 - Keep sandbox external: prefer third-party isolation tools in early versions;
   do not make a core `SandboxBackend` a prerequisite.
 
-### 0.3 Still blocking implementation-plan closure
+### 0.3 Implementation-plan closure
 
-1. Accept the nested-tenant option A model: real-time ancestor epoch checks
-   over the accepted Principal tombstones.
-2. Accept the revocation reason/severity policy, fail-safe `freeze` default,
-   severity authorization, and freeze timeout/escalation.
-3. Decide `exec` versus `shell_exec`, and deliver `AR-002` plus `AR-007`
-   together.
-4. Decide whether copy includes scrollback, and if so keep it on the existing
-   in-memory buffer; defer persistence to AR-012.
+The prior blockers are resolved:
+
+1. Nested tenants use real-time ancestor epoch checks.
+2. Revocation severity fails safe to freeze, requires high-trust authorization
+   for administrative revocation, and escalates after a finite grace period.
+3. Fresh-process `exec` is selected first; `shell_exec` is deferred. Command
+   handle and `wait_idle` are one delivery.
+4. Copy includes the existing bounded in-memory scrollback; persistence remains
+   deferred.
+
+These decisions are recorded in
+[ADR 0032](adr/0032-agent-execution-model.md).
 
 ### 0.4 Stage conclusion
 
-If "this stage" means the **feature-assessment and conflict-analysis stage**,
-it is complete enough to close. If it means the **development-plan finalization
-stage**, it is not complete: the four remaining blockers above must be resolved
-and written into accepted ADRs first.
+The feature-assessment, conflict-analysis, and Agent Execution decision stage
+are complete. Implementation planning may proceed under ADR 0032.
 
 ### 0.5 Stage 6.5 disposition
 
@@ -114,13 +119,13 @@ persistence.
 | Authority | `qwed` is the sole authority for Session, Task, Lease, worker inventory, and persistent state | Agent channels must terminate in qwed or a qwed-controlled worker path, not a second daemon |
 | Worker ownership | V0 has one worker per Session. ADR 0021 accepts one worker per Pane after schema v11 | Pane-scoped features must use the accepted Pane topology and cannot retain Session-keyed worker assumptions |
 | Object cardinality | V0 has one Pane and one TaskInstance per Session. Schema v11 removes the uniqueness assumption | Pane-scoped copy and floating panes still require their own layout/storage decisions and implementation |
-| Attach | V0 Attach is exclusive and rejects `read_only` with `unsupported_mode` | `human_observer` uses the accepted qwed-owned read-only projection; other observer profiles still need their own policy |
+| Attach | Interactive Attach remains exclusive; `read_only` opens a qwed-owned observer alongside one interactive writer | `human_observer` is implemented; agent stream/observer profiles reuse the same projection rules under ADR 0032 |
 | IPC | Unix domain socket, length-prefixed JSON | Do not add gRPC, SSE, or a TCP listener for local operation |
 | Credentials | Secrets are delivered through a broker and inherited descriptor 3, never argv/environment/logs/SQLite | Per-command credential injection must preserve the descriptor model |
 | Resource control | Linux cgroup v2 limits resource usage; it is not a sandbox | Do not describe cgroups as filesystem, network, process, or UID isolation |
 | Journal | The journal is diagnostic-only and may start mid-ANSI/mid-UTF-8 | Semantic history and replay need a separate event/capture contract |
 | Scrollback | Workers configure 2000 lines of `vt100` scrollback in memory | A minimal history view is feasible, but persistence and protocol exposure are not implemented |
-| Product scope | Stage 7 is Linux resource governance; Stage 8 is not yet accepted | Agent-native execution is an E05-level product direction, not a Stage 7 extension |
+| Product scope | Stages 7 and 8 are complete; ADR 0032 accepts the Agent Execution Model | Agent execution reuses the shared Pane, Task, ResourceScope, and channel contracts rather than extending resource governance |
 
 ### 1.1 Product framing
 
@@ -577,6 +582,9 @@ command channel.
 
 Verdict: **Defer; prefer external third-party integration**
 
+Follow-up: [ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md) accepts Bubblewrap
+as the first Linux external backend.
+
 `normal / sandboxed / network-isolated` is a major security feature, not a
 variant of resource policy. It requires an ADR covering:
 
@@ -993,6 +1001,11 @@ stdin behavior, and output attribution into one unreliable API.
 
 ## 7. Open Decisions
 
+ADR 0032 resolves decisions 1-6 and 8-9 below.
+[ADR 0026](adr/0026-fixed-floating-panes.md) resolves decision 10. The
+remaining entries stay open for later shell-integration, core-dump, or
+privileged-management work.
+
 1. Is option A (real-time ancestor epoch checks) accepted for nested tenants?
 2. Is the revocation reason/severity policy accepted, including fail-safe
    `freeze` and severity authorization?
@@ -1063,9 +1076,9 @@ experiments, branches, test evidence, release notes, and issue discussions.
 
 | Proposed planning name | Repository equivalent | Current status |
 |---|---|---|
-| Stage 6: cgroup resource isolation/monitoring | Stage 7 / D6 Resource Governance | Planned; current Stage 6 is Linux V0 adoption |
-| Stage 7: tmux operations | Stage 8 Session Layout proposal | Not accepted |
-| Stage 8: agent runtime features | E05 Agent Runtime | Research / deferred |
+| Stage 6: cgroup resource isolation/monitoring | Stage 7 / D6 Resource Governance | Complete |
+| Stage 7: tmux operations | Stage 8 Session Layout | Complete |
+| Stage 8: agent runtime features | Agent Execution Model | ADR 0032 accepted; first delivery complete |
 | Stage 9: small UX features | no current milestone | Not accepted |
 
 Use stable names in new documents, for example "Resource Governance",
@@ -1289,10 +1302,10 @@ is still the shared Pane/Task identity and worker-topology decision. The agent
 channel can then start before the full human compositor, but it must use the
 same kernel and state.
 
-The Stage 6.4 spike and Stage 6.5 decision gate are complete. Stage 7 may
-start; see the
-[Development Plan](development-plan.md#stage-65-shared-prerequisites-decision-gate)
-and [Storage Migration](storage-migration.md).
+The Stage 6.4 spike, Stage 6.5 decision gate, Resource Governance, and Session
+Layout are complete. Agent Execution Model now has an accepted
+[ADR 0032](adr/0032-agent-execution-model.md); implementation may start using
+the shared Pane, Task, ChannelProfile, and ResourceScope contracts.
 
 ## 11. Relationship to Existing Documents
 

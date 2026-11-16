@@ -2,6 +2,7 @@
 
 Status: Linux-first V0 released; public macOS deferred post-V0
 Date: 2026-11-06
+Updated: 2026-11-16
 
 ## Supported Platform Matrix
 
@@ -11,8 +12,11 @@ V0 qualification currently targets these native development platforms:
 |---|---|---|---|---|
 | macOS ARM64 | Experimental local self-signed only; public release deferred post-V0 | launchd user agent | libproc monitoring, explicitly monitored | macOS Keychain |
 | Fedora Linux x86_64 | Supported for V0 | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
+| Ubuntu 22.04 / 24.04 x86_64 | Active development and sandbox qualification; promote only after the complete release gate | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
+| Debian 12 x86_64 | Active development and sandbox qualification; promote only after the complete release gate | systemd user service | cgroup v2 hard limits | private credential directory and one-shot broker |
 | macOS x86_64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
 | Linux ARM64 | Not qualified for V0 | unsupported claim | unsupported claim | unsupported claim |
+| openEuler, Kylin, Rocky | Not supported or scheduled in the current milestone | unsupported claim | unsupported claim | unsupported claim |
 | Other operating systems | Unsupported in V0 | unsupported claim | unsupported claim | unsupported claim |
 
 The matrix describes tested targets, not cross-compilation promises. A target
@@ -27,11 +31,12 @@ moves to supported only after the structured release gates pass on that target.
    reconciliation probes.
 3. An optimized workspace build.
 4. A checksummed native package containing `qwe`, `qwed`, `qwe-worker`,
-   `qwe-session-exec`, native service assets, and a release manifest.
+   `qwe-session-exec`, `qwe-sandbox-init`, native service assets, and a release
+   manifest.
 5. Safe archive extraction and installation into an isolated home prefix,
    followed by package-version and service-template verification.
 6. In-place reinstall with SQLite preservation, qwed crash/restart worker
-   adoption, and SQLite v9-to-v10 migration.
+   adoption, and SQLite v9-to-current migration.
 7. A release-mode benchmark with eight independent Sessions, rotating
    exclusive Attach, bounded memory sampling, and a sustained soak period.
 8. On Linux, a real installed-systemd probe covering binary reinstall,
@@ -56,11 +61,15 @@ qwe-VERSION-TARGET[-local]/
   bin/
     qwe
     qwed
+    qwe-sandbox-init
     qwe-session-exec
     qwe-worker
   share/qwe/service/
     launchd/
     systemd/
+  share/qwe/apparmor/
+    qwe-bwrap
+    install.sh
 ```
 
 `release.json` uses schema `qwe-release/v1` and records product and IPC
@@ -139,8 +148,8 @@ self-signed profiles before contacting Apple.
 ## Release Closure
 
 - Stage 5 is complete for Linux-first V0.
-- Stage 6 is in progress for Linux V0 distribution, CI, feedback triage, and
-  patch releases.
+- Stage 6 is complete for Linux V0 distribution, CI, feedback triage, and patch
+  release readiness.
 - Independent manual acceptance is recorded in
   [V0 Linux Manual Acceptance](v0-linux-manual-acceptance.md).
 - Linux V0 is published as supported; macOS remains local/experimental.

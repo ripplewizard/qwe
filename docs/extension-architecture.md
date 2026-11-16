@@ -103,10 +103,10 @@ Task
 
 ID	Extension	Priority	Current Status
 E01	QWE Mesh	High	Research
-E02	Resource Controller	High	V0 cgroup v2 controls implemented; Stage 7 hardening
+E02	Resource Controller	High	Stage 7 complete; Linux cgroup v2 and macOS monitoring implemented
 E03	Credential Broker	High	Research
-E04	Security Sandbox	Medium	Research
-E05	Agent Runtime	Medium	Research
+E04	Security Sandbox	Medium	Linux x86_64 implemented under ADR 0033/0034
+E05	Agent Runtime	Medium	ADR 0032 first delivery implemented
 E06	Environment Backend	Medium	Basic Definition
 E07	Terminal Backend	High	POC Required
 
@@ -479,6 +479,10 @@ Headless SSH Server 不能假设它一定可用。
 ⸻
 
 7. E04 — Security Sandbox
+
+Current decision: external Bubblewrap is the first Linux backend under
+[ADR 0033](adr/0033-bubblewrap-sandbox-adapter.md). Sandbox profile enforcement
+remains outside resource governance and fails closed.
 
 7.1 Objective
 

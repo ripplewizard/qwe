@@ -17,7 +17,10 @@ pub mod attach {
     use serde::{Deserialize, Serialize};
     use thiserror::Error;
 
-    use super::{ATTACH_PROTOCOL_VERSION, MAX_ATTACH_FRAME_PAYLOAD_BYTES, MAX_ATTACH_OUTPUT_BYTES};
+    use super::{
+        ATTACH_PROTOCOL_VERSION, AuthContext, MAX_ATTACH_FRAME_PAYLOAD_BYTES,
+        MAX_ATTACH_OUTPUT_BYTES,
+    };
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum Direction {
@@ -321,6 +324,8 @@ pub mod attach {
     pub struct AttachOpen {
         pub protocol_version: u16,
         pub session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub pane_id: Option<String>,
         pub owner: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub reclaim_token: Option<String>,
@@ -330,6 +335,14 @@ pub mod attach {
         pub columns: u16,
         #[serde(default)]
         pub mode: AttachMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub input_auth_context: Option<AuthContext>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub input_authorized: bool,
+    }
+
+    fn is_false(value: &bool) -> bool {
+        !*value
     }
 
     impl AttachOpen {
@@ -343,13 +356,34 @@ pub mod attach {
             Self {
                 protocol_version: ATTACH_PROTOCOL_VERSION,
                 session_id: session_id.into(),
+                pane_id: None,
                 owner: owner.into(),
                 reclaim_token: None,
                 lease_generation: None,
                 rows,
                 columns,
                 mode: AttachMode::default(),
+                input_auth_context: None,
+                input_authorized: false,
             }
+        }
+
+        #[must_use]
+        pub fn with_pane(mut self, pane_id: impl Into<String>) -> Self {
+            self.pane_id = Some(pane_id.into());
+            self
+        }
+
+        #[must_use]
+        pub fn with_input_auth_context(mut self, auth_context: AuthContext) -> Self {
+            self.input_auth_context = Some(auth_context);
+            self
+        }
+
+        #[must_use]
+        pub fn authorize_input(mut self) -> Self {
+            self.input_authorized = true;
+            self
         }
     }
 
@@ -375,6 +409,8 @@ pub mod attach {
     pub struct AttachAccepted {
         pub protocol_version: u16,
         pub session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub pane_id: Option<String>,
         pub owner: String,
         pub generation: u64,
         pub reclaim_token: String,
@@ -432,6 +468,20 @@ pub mod attach {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthContext {
+    pub capability: String,
+}
+
+impl std::fmt::Debug for AuthContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthContext")
+            .field("capability", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestEnvelope {
     pub version: u16,
@@ -439,6 +489,8 @@ pub struct RequestEnvelope {
     pub idempotency_key: Option<String>,
     pub operation: String,
     pub payload: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_context: Option<AuthContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -452,6 +504,30 @@ pub struct ResponseEnvelope {
 pub struct ProtocolErrorBody {
     pub code: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<ProtocolErrorDetails>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProtocolErrorDetails {
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub diagnostics: serde_json::Value,
+}
+
+impl ProtocolErrorBody {
+    #[must_use]
+    pub fn with_details(
+        mut self,
+        reason: impl Into<String>,
+        diagnostics: serde_json::Value,
+    ) -> Self {
+        self.details = Some(ProtocolErrorDetails {
+            reason: reason.into(),
+            diagnostics,
+        });
+        self
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -611,11 +687,15 @@ mod tests {
             idempotency_key: Some("key-1".into()),
             operation: "session.create".into(),
             payload: serde_json::json!({"name": "demo"}),
+            auth_context: Some(AuthContext {
+                capability: "test-capability".into(),
+            }),
         };
         let frame = encode_frame(&request).unwrap();
         let length = u32::from_be_bytes(frame[..4].try_into().unwrap());
         let decoded: RequestEnvelope = decode_body(length, &frame[4..]).unwrap();
         assert_eq!(decoded.request_id, "req-1");
+        assert_eq!(decoded.auth_context.unwrap().capability, "test-capability");
     }
 
     #[test]
@@ -624,6 +704,34 @@ mod tests {
             validate_version(99),
             Err(FramingError::IncompatibleVersion { .. })
         ));
+    }
+
+    #[test]
+    fn auth_context_debug_redacts_capability() {
+        let context = AuthContext {
+            capability: "secret-capability".into(),
+        };
+        let debug = format!("{context:?}");
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("secret-capability"));
+    }
+
+    #[test]
+    fn protocol_error_details_are_optional_and_backward_compatible() {
+        let legacy: ProtocolErrorBody = serde_json::from_value(serde_json::json!({
+            "code": "invalid_request",
+            "message": "missing field"
+        }))
+        .unwrap();
+        assert!(legacy.details.is_none());
+
+        let detailed = legacy.with_details(
+            "mount_denied",
+            serde_json::json!({"failed_stage": "mount", "target": "/proc"}),
+        );
+        let encoded = serde_json::to_value(&detailed).unwrap();
+        assert_eq!(encoded["details"]["reason"], "mount_denied");
+        assert_eq!(encoded["details"]["diagnostics"]["target"], "/proc");
     }
 
     #[test]
@@ -677,7 +785,38 @@ mod tests {
     fn attach_open_defaults_to_exclusive_mode() {
         let value = serde_json::to_value(attach::AttachOpen::versioned("s", "o", 24, 80)).unwrap();
         assert_eq!(value["mode"], "exclusive");
+        assert!(value.get("pane_id").is_none());
         assert!(value.get("reclaim_token").is_none());
+        assert!(value.get("input_auth_context").is_none());
+        assert!(value.get("input_authorized").is_none());
+    }
+
+    #[test]
+    fn attach_open_round_trips_optional_pane_target() {
+        let open = attach::AttachOpen::versioned("session-1", "owner", 24, 80).with_pane("pane-1");
+        let value = serde_json::to_value(&open).unwrap();
+        assert_eq!(value["pane_id"], "pane-1");
+        assert_eq!(
+            serde_json::from_value::<attach::AttachOpen>(value).unwrap(),
+            open
+        );
+    }
+
+    #[test]
+    fn attach_open_round_trips_input_authority_and_redacts_debug() {
+        let open = attach::AttachOpen::versioned("session-1", "owner", 24, 80)
+            .with_input_auth_context(AuthContext {
+                capability: "sensitive-capability".into(),
+            })
+            .authorize_input();
+        let debug = format!("{open:?}");
+        assert!(!debug.contains("sensitive-capability"));
+        let value = serde_json::to_value(&open).unwrap();
+        assert_eq!(value["input_authorized"], true);
+        assert_eq!(
+            serde_json::from_value::<attach::AttachOpen>(value).unwrap(),
+            open
+        );
     }
 
     #[test]

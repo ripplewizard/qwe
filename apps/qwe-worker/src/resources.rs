@@ -44,10 +44,15 @@ pub struct ResourceMetrics {
     pub last_violation: Option<String>,
     pub stats: qwe_runtime::CgroupStats,
     pub events: VecDeque<ResourceEvent>,
+    #[cfg(target_os = "linux")]
     memory_event_max_seen: u64,
+    #[cfg(target_os = "linux")]
     memory_oom_seen: u64,
+    #[cfg(target_os = "linux")]
     memory_oom_kill_seen: u64,
+    #[cfg(target_os = "linux")]
     pids_event_max_seen: u64,
+    #[cfg(target_os = "linux")]
     cpu_throttled_seen: u64,
 }
 
@@ -63,10 +68,15 @@ impl Default for ResourceMetrics {
             last_violation: None,
             stats: qwe_runtime::CgroupStats::default(),
             events: VecDeque::with_capacity(RESOURCE_EVENT_LIMIT),
+            #[cfg(target_os = "linux")]
             memory_event_max_seen: 0,
+            #[cfg(target_os = "linux")]
             memory_oom_seen: 0,
+            #[cfg(target_os = "linux")]
             memory_oom_kill_seen: 0,
+            #[cfg(target_os = "linux")]
             pids_event_max_seen: 0,
+            #[cfg(target_os = "linux")]
             cpu_throttled_seen: 0,
         }
     }
@@ -169,11 +179,26 @@ pub struct ResourceController {
     #[cfg(target_os = "linux")]
     event_watcher_stop: Arc<AtomicBool>,
     cgroup_dir: Option<PathBuf>,
+    owns_cgroup_scope: bool,
 }
 
 impl ResourceController {
-    pub fn new(policy: ResourcePolicy, cgroup_dir: Option<PathBuf>) -> Self {
-        Self {
+    pub fn new(
+        policy: ResourcePolicy,
+        cgroup_dir: Option<PathBuf>,
+        owns_cgroup_scope: bool,
+        worker_pid: u32,
+        pane_pid: u32,
+    ) -> std::io::Result<Self> {
+        let workload_dir = if !owns_cgroup_scope {
+            cgroup_dir
+                .as_deref()
+                .map(|scope| isolate_workload(scope, worker_pid, pane_pid))
+                .transpose()?
+        } else {
+            cgroup_dir
+        };
+        Ok(Self {
             policy: Arc::new(Mutex::new(policy.clone())),
             effective_policy: Arc::new(Mutex::new(Some(policy))),
             metrics: Arc::new(Mutex::new(ResourceMetrics::default())),
@@ -182,8 +207,9 @@ impl ResourceController {
             event_watcher_started: Arc::new(AtomicBool::new(false)),
             #[cfg(target_os = "linux")]
             event_watcher_stop: Arc::new(AtomicBool::new(false)),
-            cgroup_dir,
-        }
+            cgroup_dir: workload_dir,
+            owns_cgroup_scope,
+        })
     }
 
     pub fn update(&self, policy: ResourcePolicy) -> std::io::Result<()> {
@@ -238,6 +264,27 @@ impl ResourceController {
             format!("resource policy updated: {policy:?}"),
         );
         Ok(())
+    }
+
+    pub fn attach_process(&self, pid: u32) -> std::io::Result<()> {
+        let Some(cgroup) = &self.cgroup_dir else {
+            return Ok(());
+        };
+        let procs = cgroup.join("cgroup.procs");
+        std::fs::write(&procs, pid.to_string()).map_err(|failure| {
+            std::io::Error::new(
+                failure.kind(),
+                format!(
+                    "failed to attach process {pid} to {}: {failure}",
+                    procs.display()
+                ),
+            )
+        })
+    }
+
+    #[must_use]
+    pub fn commands_in_scope(&self) -> bool {
+        self.cgroup_dir.is_none() || !self.owns_cgroup_scope
     }
 
     pub fn update_requested(&self, policy: ResourcePolicy) {
@@ -345,7 +392,10 @@ impl ResourceController {
     pub fn cleanup_cgroup(&self) {
         #[cfg(target_os = "linux")]
         self.event_watcher_stop.store(true, Ordering::SeqCst);
-        if let Some(cgroup) = &self.cgroup_dir {
+        if self.owns_cgroup_scope {
+            let Some(cgroup) = &self.cgroup_dir else {
+                return;
+            };
             if let Some(scope) = cgroup
                 .file_name()
                 .and_then(|value| value.to_str())
@@ -364,8 +414,12 @@ impl ResourceController {
     }
 
     fn monitor(&self, pid: u32, pgid: u32) {
+        let pidfd = qwe_runtime::PidFd::open(pid).ok();
         loop {
-            let alive = process_alive(pid);
+            let alive = pidfd
+                .as_ref()
+                .and_then(|pidfd| pidfd.is_running().ok())
+                .unwrap_or_else(|| process_alive(pid));
             #[cfg(target_os = "linux")]
             {
                 let _ = self.sample_linux();
@@ -403,6 +457,10 @@ impl ResourceController {
                 break;
             }
             thread::sleep(SAMPLE_INTERVAL);
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(cgroup) = &self.cgroup_dir {
+            let _ = qwe_runtime::kill_cgroup(cgroup);
         }
         for _ in 0..50 {
             if self.final_sample_taken.load(Ordering::SeqCst) {
@@ -640,6 +698,42 @@ fn watch_cgroup_events(
     }
 }
 
+#[cfg(target_os = "linux")]
+fn isolate_workload(
+    scope: &std::path::Path,
+    worker_pid: u32,
+    pane_pid: u32,
+) -> std::io::Result<PathBuf> {
+    let control = scope.join("control");
+    let workload = scope.join("workload");
+    std::fs::create_dir_all(&control)?;
+    std::fs::create_dir_all(&workload)?;
+    std::fs::write(workload.join("cgroup.procs"), pane_pid.to_string())?;
+    std::fs::write(control.join("cgroup.procs"), worker_pid.to_string())?;
+    let controllers = std::fs::read_to_string(scope.join("cgroup.controllers"))?;
+    let enable = controllers
+        .split_whitespace()
+        .map(|controller| format!("+{controller}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !enable.is_empty() {
+        std::fs::write(scope.join("cgroup.subtree_control"), enable)?;
+    }
+    Ok(workload)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn isolate_workload(
+    _scope: &std::path::Path,
+    _worker_pid: u32,
+    _pane_pid: u32,
+) -> std::io::Result<PathBuf> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "workload cgroup isolation is only available on Linux",
+    ))
+}
+
 fn record_event(metrics: &mut ResourceMetrics, kind: &str, severity: &str, message: String) {
     while metrics.events.len() >= RESOURCE_EVENT_LIMIT {
         metrics.events.pop_front();
@@ -652,6 +746,7 @@ fn record_event(metrics: &mut ResourceMetrics, kind: &str, severity: &str, messa
     });
 }
 
+#[cfg(target_os = "linux")]
 fn counter_value(counters: &[(String, u64)], name: &str) -> u64 {
     counters
         .iter()
@@ -659,6 +754,7 @@ fn counter_value(counters: &[(String, u64)], name: &str) -> u64 {
         .unwrap_or_default()
 }
 
+#[cfg(target_os = "linux")]
 fn observe_stats(metrics: &mut ResourceMetrics, stats: &qwe_runtime::CgroupStats) {
     let memory_max = counter_value(&stats.memory_events, "max");
     if memory_max > metrics.memory_event_max_seen {
