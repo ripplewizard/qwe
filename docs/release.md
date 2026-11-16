@@ -1,6 +1,6 @@
 # V0 Release
 
-Status: Linux-first V0 released; v0.2.7 release candidate; public macOS
+Status: Linux-first V0 released; v0.2.7 published; public macOS
 deferred post-V0
 Date: 2026-11-06
 Updated: 2026-11-16
@@ -152,7 +152,7 @@ self-signed profiles before contacting Apple.
 - Stage 6 has a clean `v0.1.1` release candidate and passing local Fedora
   release gate. Dedicated-runner, publication, pilot, and patch-release gates
   remain open.
-- `dev` is preparing [QWE 0.2.7](releases/v0.2.7.md) for promotion to `main`.
+- `main` contains the published [QWE 0.2.7](releases/v0.2.7.md) release.
 - Stable tags must point to commits reachable from `main`; the release workflow
   rejects other tags before publishing.
 - Independent manual acceptance is recorded in
