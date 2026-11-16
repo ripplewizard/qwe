@@ -236,6 +236,25 @@ fn legacy_worker_attach_socket(runtime_dir: &Path, session_id: &str) -> PathBuf 
     runtime_dir.join(format!("{}.a", hex_encode(session_id.as_bytes())))
 }
 
+fn legacy_session_id_from_runtime_path(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    if stem.is_empty() || !stem.bytes().all(|byte| byte.is_ascii_hexdigit()) || stem.len() % 2 != 0
+    {
+        return None;
+    }
+    let bytes = stem
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let digits = std::str::from_utf8(pair).ok()?;
+            u8::from_str_radix(digits, 16).ok()
+        })
+        .collect::<Option<Vec<_>>>()?;
+    String::from_utf8(bytes)
+        .ok()
+        .filter(|value| !value.is_empty())
+}
+
 fn public_attach_socket(socket: &str) -> String {
     format!("{socket}.attach")
 }
@@ -3639,15 +3658,25 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
         let Some(status) = status else {
             continue;
         };
-        let pane_id = status
+        let reported_pane_id = status
             .get("pane_id")
             .and_then(Value::as_str)
-            .map(str::to_string)
-            .or_else(|| {
-                let session_id = status.get("session_id").and_then(Value::as_str)?;
-                let candidates = pane_by_session.get(session_id)?;
-                (candidates.len() == 1).then(|| candidates[0].id.to_string())
-            });
+            .map(str::to_string);
+        let stored_panes = status
+            .get("session_id")
+            .and_then(Value::as_str)
+            .and_then(|session_id| pane_by_session.get(session_id));
+        let pane_id = match (reported_pane_id, stored_panes) {
+            (Some(reported), Some(candidates))
+                if candidates
+                    .iter()
+                    .any(|pane| pane.id.to_string() == reported) =>
+            {
+                Some(reported)
+            }
+            (_, Some(candidates)) if candidates.len() == 1 => Some(candidates[0].id.to_string()),
+            (reported, _) => reported,
+        };
         if let Some(pane_id) = pane_id {
             healthy_groups
                 .entry(pane_id)
@@ -3690,9 +3719,18 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
             continue;
         };
         if session.state == "closed" {
-            let socket = worker_socket(&context.runtime_dir, &pane_key);
-            if socket.exists() {
+            let sockets = [
+                worker_socket(&context.runtime_dir, &pane_key),
+                legacy_worker_socket(&context.runtime_dir, &session.id),
+            ];
+            let existing = sockets
+                .into_iter()
+                .filter(|socket| socket.exists())
+                .collect::<Vec<_>>();
+            if !existing.is_empty() {
                 report.conflict_sessions += 1;
+            }
+            for socket in existing {
                 report.incidents.push(RuntimeIncident {
                     session_id: Some(session.id.clone()),
                     pane_id: Some(pane_key.clone()),
@@ -3704,7 +3742,7 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
                     },
                     socket: socket.clone(),
                 });
-                quarantine_worker(context, &pane_key);
+                quarantine_runtime_family(&socket);
             }
             continue;
         }
@@ -3833,7 +3871,8 @@ fn startup_reconcile(context: &Context) -> Result<Reconciliation, Box<dyn std::e
         let session_id = probe
             .and_then(|status| status.get("session_id"))
             .and_then(Value::as_str)
-            .map(str::to_string);
+            .map(str::to_string)
+            .or_else(|| legacy_session_id_from_runtime_path(&runtime_path));
         let pane_id = probe
             .and_then(|status| status.get("pane_id"))
             .and_then(Value::as_str)
@@ -7044,5 +7083,22 @@ mod startup_tests {
                 .code,
             "sandbox_orphan_limit"
         );
+    }
+
+    #[test]
+    fn legacy_runtime_path_recovers_session_id() {
+        assert_eq!(
+            legacy_session_id_from_runtime_path(Path::new("6f727068616e2d6865616c746879.sock"))
+                .as_deref(),
+            Some("orphan-healthy")
+        );
+        assert_eq!(
+            legacy_session_id_from_runtime_path(Path::new("6f727068616e2d6865616c746879.a"))
+                .as_deref(),
+            Some("orphan-healthy")
+        );
+        assert!(legacy_session_id_from_runtime_path(Path::new("p1234abcd.sock")).is_none());
+        assert!(legacy_session_id_from_runtime_path(Path::new("abc.sock")).is_none());
+        assert!(legacy_session_id_from_runtime_path(Path::new("ff.sock")).is_none());
     }
 }
