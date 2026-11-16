@@ -14,9 +14,11 @@ macOS ARM64 remains local/experimental.
   it from source, then start the systemd user service.
 - [Usage](USAGE.md): Sessions, Attach/detach, agent execution and capabilities,
   Leases, resources, credentials, and teardown.
-- [QWE 0.2.1 notes](docs/releases/v0.2.1.md): current `dev` release candidate
-  with Session layout, Agent Execution, Linux sandboxing, and macOS build
-  repair.
+- [QWE 0.2.2 notes](docs/releases/v0.2.2.md): current `dev` release candidate
+  with Session layout, Agent Execution, Linux sandboxing, and automated
+  versioned publishing.
+- [QWE 0.2.1 notes](docs/releases/v0.2.1.md): superseded pre-publication
+  candidate.
 - [QWE 0.2.0 notes](docs/releases/v0.2.0.md): superseded pre-publication
   candidate.
 - [QWE 0.1.1 notes](docs/releases/v0.1.1.md): historical Stage 6 release
