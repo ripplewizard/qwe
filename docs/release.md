@@ -152,8 +152,9 @@ self-signed profiles before contacting Apple.
 - Stage 6 has a clean `v0.1.1` release candidate and passing local Fedora
   release gate. Dedicated-runner, publication, pilot, and patch-release gates
   remain open.
-- `dev` is preparing [QWE 0.2.0](releases/v0.2.0.md) with the merged Session
-  layout, Agent Execution, and Bubblewrap sandbox slices.
+- `dev` has a clean-source [QWE 0.2.0](releases/v0.2.0.md) candidate with the
+  merged Session layout, Agent Execution, and Bubblewrap sandbox slices. The
+  dedicated-runner replay and publication remain open.
 - Independent manual acceptance is recorded in
   [V0 Linux Manual Acceptance](v0-linux-manual-acceptance.md).
 - Linux V0 is published as supported; macOS remains local/experimental.
