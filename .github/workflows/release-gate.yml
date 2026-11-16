@@ -138,14 +138,18 @@ jobs:
         run: python3 -m pip install -r scripts/requirements-protocol.txt
 
       - name: Run workspace gate
-        run: just check-qwe
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+          python3 scripts/check_protocol_schema.py
+          cargo build --release --workspace
 
       - name: Build release package
         shell: bash
         run: |
           set -euo pipefail
-          just release-build
-          package_json="$(just release-package)"
+          package_json="$(python3 packaging/build_release.py --force)"
           package="$(printf '%s' "$package_json" |
             python3 -c 'import json,sys; print(json.load(sys.stdin)["package"])')"
           archive="$(printf '%s' "$package_json" |
