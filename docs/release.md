@@ -187,3 +187,7 @@ A version tag matching the workspace version is rebuilt and checked on a
 GitHub-hosted Linux runner, then published with its SHA-256 through the
 workflow token. The complete dedicated Fedora release gate remains a separate
 manual `workflow_dispatch` gate.
+
+If the `GITEE_TOKEN` repository secret is configured, the same tag workflow
+creates or updates the Gitee release and uploads the identical archive and
+checksum. Without the secret, Gitee publication is explicitly skipped.

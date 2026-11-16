@@ -193,3 +193,31 @@ jobs:
             --checksum "${archive}.sha256" \
             --notes "$notes"
 
+      - name: Publish Gitee release
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_REPOSITORY: uranus-yy/bianca
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GITEE_TOKEN:-}" ]; then
+            printf 'Gitee release skipped: GITEE_TOKEN is not configured\n'
+            exit 0
+          fi
+          version="$(cargo metadata --no-deps --format-version 1 |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          tag="${GITHUB_REF_NAME}"
+          archive="dist/qwe-${version}-linux-x86_64.tar.gz"
+          notes="docs/releases/${tag}.md"
+          test "$tag" = "v${version}"
+          test -f "$archive"
+          test -f "${archive}.sha256"
+          test -f "$notes"
+          python3 scripts/publish_gitee_release.py \
+            --repo "$GITEE_REPOSITORY" \
+            --tag "$tag" \
+            --target "$tag" \
+            --archive "$archive" \
+            --checksum "${archive}.sha256" \
+            --notes "$notes"
+
