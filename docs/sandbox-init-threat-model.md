@@ -127,8 +127,9 @@ additional differential matrices remain open.
 The init binary should keep direct dependencies limited to argument parsing,
 the project runtime, and libc. Changes that add parsing frameworks, async
 runtimes, dynamic plugin loading, or network-capable crates require explicit
-review. CI should eventually enforce `cargo-deny` advisory/source policy and
-`cargo-vet` review status for this binary and its transitive dependencies.
+review. `cargo-deny` now enforces advisory, license, registry/source, duplicate
+version visibility, and wildcard visibility in CI via the dependency policy.
+`cargo-vet` review status remains open.
 
 ## 8. Future sandboxed-Pane controls
 

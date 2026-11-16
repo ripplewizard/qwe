@@ -46,6 +46,9 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Check dependency policy
+        uses: EmbarkStudios/cargo-deny-action@v2
+
       - name: Run workspace tests
         run: cargo test --workspace
 

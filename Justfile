@@ -590,6 +590,9 @@ check-qwe:
     cargo test --workspace
     python3 "{{ justfile_directory() }}/scripts/check_protocol_schema.py"
 
+supply-chain-check:
+    cargo deny check
+
 stage6-shared-prerequisites-spike panes="4":
     cargo build -p qwe-worker -p qwed --bins
     python3 spikes/stage6.4/shared_prerequisites_spike.py \
