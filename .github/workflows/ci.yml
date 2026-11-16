@@ -57,7 +57,7 @@ jobs:
           --test sandbox_fault_injection_contract -- --nocapture
 
       - name: Run workspace tests
-        run: cargo test --workspace
+        run: cargo test --workspace -- --test-threads=1
 
       - name: Check canonical protocol schema
         run: python3 scripts/check_protocol_schema.py
