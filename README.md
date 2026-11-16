@@ -76,7 +76,7 @@ gaps and the implementation start gate.
 Remote repositories:
 
 - GitHub: `git@github.com:ripplewizard/qwe.git`
-- Gitee: `git@gitee.com:uranus-yy/bianca.git`
+- Gitee source mirror only: `git@gitee.com:uranus-yy/bianca.git`
 
 The working POC evidence checkout is
 `/Users/huangjian/project/uranus/bianca-poc` on branch `poc`. The `dev`

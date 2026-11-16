@@ -187,3 +187,6 @@ A version tag matching the workspace version is rebuilt and checked on a
 GitHub-hosted Linux runner, then published with its SHA-256 through the
 workflow token. The complete dedicated Fedora release gate remains a separate
 manual `workflow_dispatch` gate.
+
+GitHub is the only release publication target. Gitee is retained as a source
+mirror and does not receive Release assets.
