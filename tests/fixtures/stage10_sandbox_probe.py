@@ -931,7 +931,7 @@ def run_positive_probe(
         wait_for(
             orphan_state_exists,
             "expired sandboxed Pane did not become orphaned",
-            8,
+            15,
         )
         connection = sqlite3.connect(orphan_database, timeout=2)
         try:

@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify dedicated runner
         shell: bash
@@ -102,7 +102,7 @@ jobs:
           cp dist/qwe-*-linux-x86_64.tar.gz.sha256 "$candidate_dir/"
 
       - name: Upload release-gate evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: qwe-linux-x86_64-release-${{ github.sha }}
           if-no-files-found: error
