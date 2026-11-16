@@ -182,3 +182,7 @@ Stage 6 closes only after real pilot reports are triaged and a `v0.1.x` patch
 release completes the same Fedora evidence path. See
 [Experiment 0026](experiments/0026-stage6-adoption-baseline.md) for the current
 entry state.
+
+Pushing a version tag matching the workspace version runs the dedicated
+Fedora release gate and publishes the archive plus SHA-256 as a versioned
+GitHub release using the workflow token.
